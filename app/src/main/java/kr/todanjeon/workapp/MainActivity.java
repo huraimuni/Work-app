@@ -21,6 +21,7 @@ import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Spinner;
@@ -2656,7 +2657,7 @@ public class MainActivity extends Activity {
             {"처음 시작하기 · 로그인", "1. 앱을 켜면 잠깐 시작 화면이 나오고, 처음에는 로그인 화면이 나옵니다.\n2. 관리자가 등록해 둔 내 휴대폰 번호(예: 01012345678)를 입력하고 '인증번호 받기'를 누릅니다.\n3. 문자로 온 인증번호 6자리를 입력하고 '확인'을 누릅니다.\n4. 한 번 로그인하면 계속 유지됩니다. 다시 묻지 않아요.\n\n※ '등록되지 않은 번호입니다'가 나오면 관리자에게 내 번호 등록을 요청하세요.\n※ 로그아웃은 맨 아래 탭 '전체' → 맨 아래 '로그아웃'입니다. 폰을 바꾸면 같은 번호로 다시 인증하면 됩니다."},
             {"업무 탭", "내게 지시된 업무를 확인하고 처리하는 곳입니다.\n\n■ 화면 구성\n- 맨 위 금색 카드: 남은 업무 수, 새 업무·진행·오늘 완료 수와 진행 막대\n- 계약 만료 알림: 만료가 3개월 안으로 남은 계약이 있으면 카드가 나타납니다. 누르면 계약 관리로 이동합니다.\n- 업무 카드: 종류(설치·AS·영업·서류·카드), 제목, 거래처, 기한, 상태\n\n■ 업무 처리\n1. 카드를 누르면 상세가 열립니다.\n2. 아래 버튼으로 상태를 바꿉니다: 확인함 → 진행중 → 완료(또는 보류).\n3. '완료'를 누르면 완료 메시지를 적을 수 있어요. 모든 처리 기록은 이력으로 남습니다.\n\n■ 업무 지시하기 (업무 지시 권한이 있는 사람)\n- 오른쪽 아래 + 버튼 → 제목, 종류, 거래처, 전화, 주소, 기한, 메모, 담당 직원 입력 후 '지시하기'.\n- '가맹점 조회'를 누르면 등록된 가맹점을 검색해 선택할 수 있고, 거래처·전화·주소가 자동으로 채워집니다.\n- '전체 업무' 보기 권한이 있으면 위쪽 '내 업무 / 전체 업무' 버튼이 보입니다."},
             {"프로젝트 탭", "여러 사람이 오래 진행하는 일을 관리합니다.\n\n1. 오른쪽 아래 + 로 프로젝트를 만듭니다 (제목, 기한, 메모, 책임자).\n2. 프로젝트를 누르면 진행률(%) 슬라이더, '점검 필요' 체크, 메모를 수정할 수 있습니다.\n3. 저장할 때마다 진행 기록이 쌓여서 누가 언제 무엇을 바꿨는지 볼 수 있어요."},
-            {"채팅 탭", "직원끼리 대화하는 곳이에요. 원하는 만큼 채팅방을 만들 수 있습니다.\n\n■ 채팅방 만들기\n- 맨 위 '+ 새 채팅방 만들기' → 이름을 적고 '만들기'. (예: 거래처 A/S, 서류 접수, 입금 확인)\n- 방이 하나도 없으면 '기본 채팅방 만들기'로 전체방·서류접수·입금확인·신규계약·AS설치·공지 방을 한 번에 만들 수 있어요.\n\n■ 대화방\n- 방을 누르면 전체 화면 대화방이 열리고, 입력줄은 맨 아래에 고정됩니다. 왼쪽 위 ‹ 또는 폰의 뒤로가기로 목록에 돌아갑니다.\n- 내 말풍선은 금색·오른쪽, 다른 사람은 흰색·왼쪽이고 옆에 이름과 프로필 사진이 나옵니다. 같은 사람이 같은 분에 이어 보내면 사진·이름은 한 번만 나와요.\n- 사람 사진을 누르면 그 직원의 프로필(이름·상태 메시지·전화번호)이 나오고, '전화하기'로 바로 걸 수 있어요.\n\n■ 답장 · 반응 · 삭제 (v0.8.0, 텔레그램처럼)\n- 말풍선을 두 번 빠르게 누르면 ❤️ 좋아요가 붙습니다. 같은 걸 다시 두 번 누르면 취소돼요.\n- 말풍선을 길게 누르면 메뉴가 열립니다: 답장 / 이모티콘 반응(👍 ❤️ 😂 😮 😢 🙏 🔥 👏) / 복사(글만) / 삭제(내 메시지만).\n- 답장을 고르면 입력줄 위에 '○○에게 답장' 띠가 생기고, 그 상태로 보내면 말풍선 위에 인용이 붙어요. 띠의 ✕ 로 취소합니다.\n- 말풍선 아래 이모티콘 숫자를 누르면 내 반응을 켜고 끌 수 있습니다.\n- 삭제한 내 메시지는 대화에서 사라지고, 서버에는 기록이 보관됩니다.\n\n■ 사진·파일·이모지·스티커\n- 입력줄 왼쪽 '+' → 사진 보내기(앨범) / 사진 찍어 보내기 / 파일 보내기.\n- 사진은 자동으로 줄여서 올라가요. 대화 속 사진을 누르면 크게 보이고, '다른 앱으로 열기·저장'으로 저장할 수 있습니다.\n- 파일은 3MB까지 보낼 수 있어요(문서·엑셀·PDF용). 더 큰 파일은 지금은 보낼 수 없습니다. 파일 말풍선을 누르면 내려받아 열립니다.\n- 입력줄 오른쪽 ☺ 를 누르면 판이 열려요. '이모지' 탭은 글 사이에 들어가고, '나인이 스티커' 탭은 누르면 바로 스티커가 전송됩니다.\n- 나인이는 우리 회사 캐릭터예요. 화이팅!, 수고했어요, 최고예요!, 대박!, 감사합니다, 힘내세요!, 오늘도 굿!, 퇴근각, 확인했어요, 잠시만요, 계약 성공!, 같이 해요! 12종이 있습니다.\n\n■ 보내는 중 안내\n- 사진·파일은 인터넷이 연결돼야 올라가요. '보내는 중…'이 뜬 뒤 대화에 나타납니다. 안 나타나면 인터넷을 확인하고 다시 보내 주세요.\n\n※ 모든 직원이 모든 채팅방을 볼 수 있습니다. 민감한 개인 이야기·개인정보 파일은 올리지 마세요."},
+            {"채팅 탭", "직원끼리 대화하는 곳이에요. 원하는 만큼 채팅방을 만들 수 있습니다.\n\n■ 채팅방 만들기\n- 맨 위 '+ 새 채팅방 만들기' → 이름을 적고 '만들기'. (예: 거래처 A/S, 서류 접수, 입금 확인)\n- 방이 하나도 없으면 '기본 채팅방 만들기'로 전체방·서류접수·입금확인·신규계약·AS설치·공지 방을 한 번에 만들 수 있어요.\n\n■ 대화방\n- 방을 누르면 전체 화면 대화방이 열리고, 입력줄은 맨 아래에 고정됩니다. 왼쪽 위 ‹ 또는 폰의 뒤로가기로 목록에 돌아갑니다.\n- 내 말풍선은 금색·오른쪽, 다른 사람은 흰색·왼쪽이고 옆에 이름과 프로필 사진이 나옵니다. 같은 사람이 같은 분에 이어 보내면 사진·이름은 한 번만 나와요.\n- 사람 사진을 누르면 그 직원의 프로필(이름·상태 메시지·전화번호)이 나오고, '전화하기'로 바로 걸 수 있어요.\n\n■ 답장 · 반응 · 삭제 (v0.8.0, 텔레그램처럼)\n- 말풍선을 두 번 빠르게 누르면 ❤️ 좋아요가 붙습니다. 같은 걸 다시 두 번 누르면 취소돼요.\n- 말풍선을 길게 누르면 맨 위에 이모티콘 줄(👍 ❤️ 😂 😮 😢 🙏 🔥 👏)이 뜨고, 그 아래에 답장 / 복사(글만) / 삭제(내 메시지만)가 있어요. 이모티콘을 한 번 누르면 바로 붙습니다.\n- 답장을 고르면 입력줄 위에 '○○에게 답장' 띠가 생기고, 그 상태로 보내면 말풍선 위에 인용이 붙어요. 띠의 ✕ 로 취소합니다.\n- 이미 붙은 이모티콘을 누르면 같은 목록이 떠서 다른 이모티콘으로 바꾸거나, 내 이모티콘을 한 번 더 눌러 지울 수 있어요(텔레그램처럼).\n- 삭제한 내 메시지는 대화에서 사라지고, 서버에는 기록이 보관됩니다.\n\n■ 사진·파일·이모지·스티커\n- 입력줄 왼쪽 '+' → 사진 보내기(앨범) / 사진 찍어 보내기 / 파일 보내기.\n- 사진은 자동으로 줄여서 올라가요. 대화 속 사진을 누르면 크게 보이고, '다른 앱으로 열기·저장'으로 저장할 수 있습니다.\n- 파일은 3MB까지 보낼 수 있어요(문서·엑셀·PDF용). 더 큰 파일은 지금은 보낼 수 없습니다. 파일 말풍선을 누르면 내려받아 열립니다.\n- 입력줄 오른쪽 ☺ 를 누르면 판이 열려요. 맨 위 탭: 이모지(글 사이에 들어감) / 나인이 / 복이 / 호야 / 깍이 / 도리. 스티커는 누르면 바로 전송됩니다.\n- '나인이 프렌즈'는 우리 회사 캐릭터 5마리예요(아홉꼬리 여우 나인이, 복두꺼비 복이, 아기 호랑이 호야, 까치 깍이, 다람쥐 도리). 마리당 16종, 모두 80종으로 신규계약 성공·축하·대단해·빡쳐·정신 차려·힘내와 우리 일(POS 설치, 현장 AS, 랜선 공사, 단말기 수리·도색, 토스 영업, 테이블오더, 회의, 서류, 보고서, 차에서 꿀잠 등)이 들어 있어요.\n- 예전(v0.8.0)에 보낸 나인이 스티커 메시지는 그대로 보입니다.\n\n■ 보내는 중 안내\n- 사진·파일은 인터넷이 연결돼야 올라가요. '보내는 중…'이 뜬 뒤 대화에 나타납니다. 안 나타나면 인터넷을 확인하고 다시 보내 주세요.\n\n※ 모든 직원이 모든 채팅방을 볼 수 있습니다. 민감한 개인 이야기·개인정보 파일은 올리지 마세요."},
             {"일정 탭 (달력)", "한국 달력과 앞으로의 일정을 함께 봅니다.\n\n■ 달력\n- 일요일·공휴일은 빨간색, 토요일은 파란색, 오늘은 금색 원입니다. 공휴일 이름도 표시돼요. (2026~2028년 기준)\n- ‹ › 로 달을 넘기고 '오늘'을 누르면 오늘로 돌아옵니다.\n- 일정이나 업무 기한이 있는 날은 작은 금색 점이 찍혀요.\n- 날짜를 누르면 그날의 일정과 업무가 아래에 나옵니다.\n\n■ 일정 남기기\n1. 오른쪽 아래 + 버튼.\n2. 제목과 날짜를 적고, 시간은 선택입니다.\n3. '가맹점 조회·선택'을 누르면 등록된 가맹점 중에서 찾아 고릅니다 (초성 검색 가능). 고르면 사업자번호·연락처·주소·계약조건·등급이 불러와지고, 장소에는 가맹점 주소가 자동으로 들어갑니다.\n4. '추가'를 누르면 달력에 바로 표시되고, 달력 아래 '다가오는 일정'에도 올라갑니다.\n\n■ 다가오는 일정\n- 오늘부터 앞으로의 일정과 내 업무 기한이 날짜 순으로 나와서, 언제 어디로 가야 하는지 한눈에 확인할 수 있습니다.\n- 가맹점이 연결된 일정을 누르면 가맹점 상세 정보가 열립니다."},
             {"전체 탭", "나머지 모든 기능으로 들어가는 메뉴판입니다.\n\n■ 기능 검색 (v0.8.0)\n- 맨 위 프로필 카드 아래 '🔍 기능 검색' 칸에 단어나 초성을 치면 그 기능이 바로 나옵니다. 예: '재고', 'ㅈㄱ', '문자', '수익', '바코드', '프로필'.\n- 눌러서 바로 이동해요. 지우면 원래 메뉴판으로 돌아갑니다. (업무·채팅·일정 같은 탭도 검색됩니다.)\n\n■ 메뉴\n- 맨 위 내 카드를 누르면 프로필 사진과 상태 메시지를 바꿀 수 있어요.\n- 재고: 장비 재고 관리 (바코드 스캔, 단가)\n- 가맹점: 가맹점 정보 관리\n- 신규 계약 올리기 / 계약 관리: 계약 등록과 설치 완료 처리, 만료 알림\n- 단체 문자 보내기: 가맹점에 안내 문자\n- 내 실적: 나만 보는 월별 실적과 지난달 비교\n- 전체 실적·직원별 순위 / 수익 현황 / 실적 보고서 올리기: (권한이 있는 사람만 보임)\n- 일일보고 쓰기, 일일보고 종합 보기(권한자)\n- 지난 업무 기록: 완료된 업무 검색\n- 사용설명서, 버전·업데이트 내역, 공지사항\n- 직원과 권한: (관리자만) 직원 추가·권한 설정\n- 로그아웃\n\n※ 맨 아래에 현재 앱 버전이 표시됩니다. 문의할 때 이 버전을 알려 주세요."},
             {"재고", "장비를 우리가 직접 입력해서 관리합니다. (전체 → 재고)\n\n■ 재고 추가\n1. 오른쪽 아래 + 버튼.\n2. 모델명을 적고, 시리얼은 한 줄에 하나씩 적습니다. 여러 줄을 붙여 넣으면 장비가 한꺼번에 등록돼요.\n3. 시리얼이 없는 소모품(롤지 등)은 시리얼 대신 '수량'만 적습니다.\n4. 안전재고: 이 수 아래로 내려가면 빨간색으로 '부족해요!'가 표시됩니다.\n5. 입고 단가: 실적 권한자에게만 보이는 칸입니다. 1대당 산 값을 적으면 시리얼 전체에 같이 적용돼요.\n\n■ 바코드 스캔\n- '바코드 스캔'을 누르면 카메라가 열리고, 읽으면 번호가 시리얼 칸에 한 줄 들어갑니다. 한 번 누르면 한 번만 읽어요. 다음 장비는 버튼을 다시 눌러 주세요. 같은 번호는 두 번 들어가지 않아요.\n- 재고 목록 위 '바코드로 찾기'를 누르면 바코드를 읽어 그 시리얼을 바로 검색합니다.\n- 계약에서 '+ 장비 추가'를 누르고 '바코드 스캔(한 번에 한 대)'을 누르면, 읽은 번호가 재고에 있을 때 그 장비가 바로 추가돼요. 다음 장비는 다시 '+ 장비 추가'를 눌러 같은 방식으로 넣습니다. 재고에 없는 번호면 모델명만 적어 직접 입력하게 열려요.\n\n■ 시리얼 촬영 인식 (v0.7.0)\n- '시리얼 촬영'을 누르고 장비 뒷면의 S/N 라벨을 가까이서 찍으면 글자를 읽어 줍니다.\n- 시리얼처럼 보이는 글자 후보가 목록으로 나오고, 맞는 것을 체크해서 '넣기'를 누르세요. 0(영)과 O(오), 1과 I처럼 헷갈리기 쉬운 글자는 꼭 눈으로 확인해 주세요.\n- 바코드가 같이 있으면 바코드 스캔이 더 정확합니다.\n- 스캔과 촬영은 구글 서비스가 있는 폰에서 동작합니다.\n\n■ 보기·검색\n- 모델별로 묶여서 '재고 n대'가 보이고, 그 아래에 시리얼이 나열됩니다.\n- 검색창에 모델명·시리얼을 치면 찾아줘요. 'ㅌㅅㅍㅅ' 같은 초성도 됩니다.\n\n■ 수정·삭제\n- 시리얼 줄을 누르면 수정창이 열립니다. 시리얼 칸에도 스캔·촬영 버튼이 있어요. '삭제'를 누르면 목록에서 지워져요 (기록은 서버에 남아 복구 가능).\n\n■ 단가와 수익 (실적 권한자 전용)\n- 재고 줄을 누르면 입고 단가(산 값)와 출고 단가(판 값)를 적을 수 있어요.\n- 재고 화면 맨 위에 보유 재고 자산(입고 단가 합계)이 나오고, '수익 현황 보기'로 이동합니다.\n- 단가는 서버에서도 실적 권한자만 읽을 수 있게 따로 보관됩니다. 권한이 없는 직원에게는 칸 자체가 보이지 않아요.\n\n■ 상태가 바뀌는 순서\n재고 → (계약에서 선택하면) 출고중 → (설치 완료 처리하면) 재고 목록에서 사라짐"},
@@ -2704,6 +2705,7 @@ public class MainActivity extends Activity {
 
     /** {버전, 날짜, 내용}. 새 버전은 맨 위에 추가. CI 가 현재 versionName 항목이 있는지 검사한다. */
     private static final String[][] CHANGELOG = {
+            {"0.9.0", "2026-10-24", "• 새 스티커 '나인이 프렌즈' 5마리 80종: 나인이(아홉꼬리 여우)·복이(두꺼비)·호야(아기 호랑이)·깍이(까치)·도리(다람쥐). 신규계약 성공·축하·빡쳐·힘내 + 우리 업무(POS 설치, AS, 랜선, 단말기 수리·도색, 토스 영업, 차에서 꿀잠…)\n• 채팅 반응을 텔레그램처럼: 두 번 탭하면 ❤️, 붙은 이모티콘을 누르면 하트·엄지 등 목록이 떠서 바로 고르기, 길게 누르면 맨 위에 이모티콘 줄"},
             {"0.8.0", "2026-10-24", "• 채팅: 말풍선 두 번 누르면 ❤️ 좋아요, 길게 누르면 답장·이모티콘 반응·복사·삭제 (텔레그램 방식)\n• 우리 회사 캐릭터 '나인이' 스티커 12종, 이모지/스티커 판\n• 채팅 파일을 3MB까지 보낼 수 있게 확대\n• 가맹점 삭제 (최고관리자만, 수정 창에도 삭제 버튼)\n• 바코드는 한 번 누르면 한 번만 입력, 계약 장비 추가에서 바코드를 읽으면 그 장비가 바로 추가\n• 전체 탭 맨 위 기능 검색(단어·초성)\n• 가맹점 단체 문자: 폰 문자 앱으로 한 곳씩, {상호} 자동 치환"},
             {"0.7.0", "2026-10-24", "• 채팅 개편: 입력줄 맨 아래 고정, 내 말풍선·상대 말풍선 구분, 시간 표시, 날짜 띠\n• 채팅에 사진·파일(700KB까지)·이모티콘 보내기\n• 프로필 사진과 상태 메시지, 채팅에서 사진을 누르면 프로필·전화하기\n• 재고 바코드 스캔(연속 스캔, 바코드로 찾기)과 시리얼 라벨 촬영 인식\n• 재고 입고·출고 단가(권한자 전용), 보유 재고 자산, 수익 현황(누적·월별·직원별)\n• 실적: 지난달 대비 성장률과 최근 6개월 그래프\n• 일일보고 종합 보기를 관리자와 분리해 권한 항목 하나로만 켜고 끔\n• 앱 버전 표시와 업데이트 내역, 가맹점 등급 코드를 밴피 기준으로 변경"},
             {"0.6.0", "2026-10-24", "• 일정: 달력에서 일정을 눌러 상세 보기·삭제, 회사 일정은 최고관리자만 추가\n• 내 실적(본인만) / 전체 실적·직원별 순위(권한자)\n• 일일보고 쓰기, 대표님용 일일보고 종합, 실적 보고서"},
@@ -2912,26 +2914,34 @@ public class MainActivity extends Activity {
         fillMsgs();
     }
 
-    private static final String[] STK_NAMES = {"화이팅!", "수고했어요", "최고예요!", "대박!", "감사합니다", "힘내세요!", "오늘도 굿!", "퇴근각", "확인했어요", "잠시만요", "계약 성공!", "같이 해요!"};
+    private static final String[] FRIENDS = {"나인이", "복이", "호야", "깍이", "도리"};
+    private static final String[][] STK_CAPS = {
+        {"신규계약 성공!", "축하축하~!", "대단해 대단해", "아 빡쳐!!", "정신 차려!", "힘내요 우리!", "POS 설치 중", "여보세요~ 나인입니다", "현장 AS 출동!", "공부하는 대표님", "굿샷~ 접대골프", "토스단말기 어떠세요", "회의 또 회의", "사장님 수다 삼매경", "수수료 입금 완료", "OK 접수 완료"},
+        {"복 터졌다 계약!", "복 받으세요~", "캬 대단하다", "복이도 화나!", "정신 줄 잡아요", "힘내면 복와요", "랜선 공사 중", "전화 응대 중", "단말기 도색 중", "독서 삼매경", "차에서 꿀잠", "단말기 수리 중", "서류 접수했습니다", "돈복 터졌다", "점심 뭐 먹지", "복 감사합니다"},
+        {"어흥! 계약 따냈다", "축하 어흥~", "대단하다 어흥", "어흥 빡쳤다!!", "정신 차려 어흥", "힘내라 어흥!", "AS 출동 어흥", "랜선 깔자 어흥", "테이블오더 설치", "호야 홀인원!", "토스 영업 어흥", "서류 작성 중", "보고서 쓰는 중", "퇴근하고 싶다", "죄송합니다...", "알겠습니다 어흥"},
+        {"깍깍! 계약 성공", "까치가 물어왔다", "깍! 대단해", "깍깍 빡쳐!!", "깍! 정신 차려", "힘내 깍깍", "깍깍 전화 중", "상담원 연결 중", "블로그 작업 중", "보고서 쓰는 중", "깍깍 회의 중", "사장님 깍깍 수다", "서류 접수 완료", "엉엉 깍깍", "감사합니다 깍", "점심은 뭐 쪼지"},
+        {"도리 계약 땄다!", "도토리 축하~", "도리도리 대단해", "도리 빡쳐!!", "정신 차려 도리", "힘내 도리도리", "쇼핑몰 작업 중", "서류 작성 중", "공부하는 도리", "POS 설치 중", "차에서 농땡이", "도리 골프 연습", "토스 영업 중", "월요일 싫어", "도토리값 입금", "도리 반성중"}};
+    private static final String[] STK_OLD = {"화이팅!", "수고했어요", "최고예요!", "대박!", "감사합니다", "힘내세요!", "오늘도 굿!", "퇴근각", "확인했어요", "잠시만요", "계약 성공!", "같이 해요!"};
     private static final String[] REACTS = {"👍", "❤️", "😂", "😮", "😢", "🙏", "🔥", "👏"};
     private JSONObject replyTo = null;
     private LinearLayout replyBar;
     private TextView replyTv;
 
-    /** 아래쪽 이모지·스티커 판: 위 탭으로 바꾼다. */
+    /** 아래쪽 이모지·스티커 판: 위 탭(이모지 + 나인이 프렌즈 5마리)으로 바꾼다. */
     private LinearLayout buildEmojiPanel() {
         final LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setBackgroundColor(Ui.CARD);
-        final LinearLayout tabs = new LinearLayout(this);
-        final TextView t1 = Ui.chip(this, "이모지", Ui.GOLD, Ui.DARK);
-        final TextView t2 = Ui.chip(this, "나인이 스티커", Ui.FIELD, Ui.INK);
-        LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        tp.rightMargin = Ui.dp(this, 8);
+        final int n = FRIENDS.length + 1;
+        final TextView[] tabv = new TextView[n];
+        final View[] pages = new View[n];
+        HorizontalScrollView hs = new HorizontalScrollView(this);
+        hs.setHorizontalScrollBarEnabled(false);
+        LinearLayout tabs = new LinearLayout(this);
         tabs.setPadding(Ui.dp(this, 10), Ui.dp(this, 8), Ui.dp(this, 10), Ui.dp(this, 4));
-        tabs.addView(t1, tp);
-        tabs.addView(t2, tp);
-        box.addView(tabs);
+        hs.addView(tabs);
+        box.addView(hs);
+        FrameLayout body = new FrameLayout(this);
 
         ScrollView emojiSv = new ScrollView(this);
         LinearLayout grid = new LinearLayout(this);
@@ -2954,52 +2964,59 @@ public class MainActivity extends Activity {
             row.addView(t, new LinearLayout.LayoutParams(0, Ui.dp(this, 46), 1f));
         }
         emojiSv.addView(grid);
-
-        final ScrollView stkSv = new ScrollView(this);
-        LinearLayout sg = new LinearLayout(this);
-        sg.setOrientation(LinearLayout.VERTICAL);
-        sg.setPadding(Ui.dp(this, 8), Ui.dp(this, 2), Ui.dp(this, 8), Ui.dp(this, 8));
-        LinearLayout srow = null;
-        for (int i = 0; i < STK_NAMES.length; i++) {
-            if (i % 4 == 0) {
-                srow = new LinearLayout(this);
-                sg.addView(srow);
+        pages[0] = emojiSv;
+        for (int c = 0; c < FRIENDS.length; c++) {
+            final int ci = c + 1;
+            ScrollView sv = new ScrollView(this);
+            LinearLayout sg = new LinearLayout(this);
+            sg.setOrientation(LinearLayout.VERTICAL);
+            sg.setPadding(Ui.dp(this, 8), Ui.dp(this, 2), Ui.dp(this, 8), Ui.dp(this, 8));
+            LinearLayout srow = null;
+            for (int i = 0; i < STK_CAPS[c].length; i++) {
+                if (i % 4 == 0) {
+                    srow = new LinearLayout(this);
+                    sg.addView(srow);
+                }
+                final int idx = i + 1;
+                final String key = String.format(Locale.US, "c%d_%02d", ci, idx);
+                ImageView iv = new ImageView(this);
+                iv.setImageResource(stkRes(key));
+                iv.setAdjustViewBounds(true);
+                iv.setPadding(Ui.dp(this, 3), Ui.dp(this, 3), Ui.dp(this, 3), Ui.dp(this, 3));
+                final String cap = STK_CAPS[c][i];
+                iv.setOnClickListener(v -> {
+                    sendMsg(cap, "stk", key, "", 0, 0);
+                    emojiPanel.setVisibility(View.GONE);
+                });
+                srow.addView(iv, new LinearLayout.LayoutParams(0, Ui.dp(this, 90), 1f));
             }
-            final int idx = i + 1;
-            ImageView iv = new ImageView(this);
-            iv.setImageResource(stkRes(idx));
-            iv.setAdjustViewBounds(true);
-            iv.setPadding(Ui.dp(this, 4), Ui.dp(this, 4), Ui.dp(this, 4), Ui.dp(this, 4));
-            iv.setOnClickListener(v -> {
-                sendMsg(STK_NAMES[idx - 1], "stk", String.valueOf(idx), "", 0, 0);
-                emojiPanel.setVisibility(View.GONE);
-            });
-            srow.addView(iv, new LinearLayout.LayoutParams(0, Ui.dp(this, 88), 1f));
+            sv.addView(sg);
+            pages[ci] = sv;
         }
-        stkSv.addView(sg);
-        stkSv.setVisibility(View.GONE);
-        FrameLayout body = new FrameLayout(this);
-        body.addView(emojiSv);
-        body.addView(stkSv);
+        for (int i = 0; i < n; i++) {
+            final int ti = i;
+            TextView t = Ui.chip(this, i == 0 ? "이모지" : FRIENDS[i - 1], i == 0 ? Ui.GOLD : Ui.FIELD, i == 0 ? Ui.DARK : Ui.INK);
+            tabv[i] = t;
+            LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            tp.rightMargin = Ui.dp(this, 8);
+            tabs.addView(t, tp);
+            body.addView(pages[i]);
+            pages[i].setVisibility(i == 0 ? View.VISIBLE : View.GONE);
+            t.setOnClickListener(v -> {
+                for (int j = 0; j < n; j++) {
+                    pages[j].setVisibility(j == ti ? View.VISIBLE : View.GONE);
+                    tabv[j].setBackground(Ui.round(j == ti ? Ui.GOLD : Ui.FIELD, 10, this));
+                }
+            });
+        }
         box.addView(body, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 236)));
-        final ScrollView esv = emojiSv;
-        t1.setOnClickListener(v -> {
-            esv.setVisibility(View.VISIBLE);
-            stkSv.setVisibility(View.GONE);
-            t1.setBackground(Ui.round(Ui.GOLD, 10, this));
-            t2.setBackground(Ui.round(Ui.FIELD, 10, this));
-        });
-        t2.setOnClickListener(v -> {
-            esv.setVisibility(View.GONE);
-            stkSv.setVisibility(View.VISIBLE);
-            t2.setBackground(Ui.round(Ui.GOLD, 10, this));
-            t1.setBackground(Ui.round(Ui.FIELD, 10, this));
-        });
         return box;
     }
 
-    private int stkRes(int idx) {
-        return getResources().getIdentifier(String.format(Locale.US, "stk_%02d", idx), "drawable", getPackageName());
+    /** 스티커 그림 찾기: 새 키("c2_05") 또는 예전 번호("7"). */
+    private int stkRes(String key) {
+        String nm = key.startsWith("c") ? "stk_" + key : String.format(Locale.US, "stk_%02d", Integer.parseInt(key));
+        return getResources().getIdentifier(nm, "drawable", getPackageName());
     }
 
     private static String snippet(JSONObject m) {
@@ -3379,49 +3396,64 @@ public class MainActivity extends Activity {
         fillMsgs();
     }
 
-    /** 길게 누르면: 답장 · 반응 · 복사 · (내 글) 삭제. */
+    /** 반응 고르기: 하트·엄지 등 목록 + (내 반응이 있으면) 지우기. 텔레그램처럼. */
+    private void showReactPicker(final JSONObject m) {
+        showMsgMenu(m);
+    }
+
+    /** 길게 누르면(또는 붙은 이모티콘을 누르면): 맨 위 이모티콘 줄 + 답장 · 복사 · (내 글) 삭제. */
     private void showMsgMenu(final JSONObject m) {
         final boolean mine = m.optInt("who") == myId();
         final boolean hasText = m.optString("kind").isEmpty();
+        final AlertDialog[] dd = new AlertDialog[1];
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setPadding(Ui.dp(this, 8), Ui.dp(this, 14), Ui.dp(this, 8), Ui.dp(this, 6));
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER);
+        String myR = "";
+        JSONObject rr = m.optJSONObject("react");
+        if (rr != null) myR = rr.optString(String.valueOf(myId()));
+        for (final String e : REACTS) {
+            TextView t = Ui.text(this, e, 26, Ui.INK, false);
+            t.setGravity(Gravity.CENTER);
+            if (e.equals(myR)) t.setBackground(Ui.round(Ui.TINT, 12, this));
+            t.setOnClickListener(v -> {
+                dd[0].dismiss();
+                toggleReaction(m, e);
+            });
+            row.addView(t, new LinearLayout.LayoutParams(0, Ui.dp(this, 44), 1f));
+        }
+        col.addView(row);
         final List<String> items = new ArrayList<>();
         items.add("답장");
-        items.add("이모티콘 반응");
         if (hasText) items.add("복사");
         if (mine) items.add("삭제");
-        new AlertDialog.Builder(this).setItems(items.toArray(new String[0]), (d, w) -> {
-            String it = items.get(w);
-            if ("답장".equals(it)) setReply(m);
-            else if ("복사".equals(it)) {
-                ((android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE))
-                        .setPrimaryClip(android.content.ClipData.newPlainText("메시지", m.optString("text")));
-                Ui.toast(this, "복사했어요.");
-            } else if ("삭제".equals(it)) {
-                new AlertDialog.Builder(this).setTitle("내 메시지를 삭제할까요?").setMessage("대화에서 사라지고, 서버에는 기록이 보관돼요.")
-                        .setNegativeButton("취소", null).setPositiveButton("삭제", (d2, w2) -> {
-                            try {
-                                m.put("deleted", true);
-                            } catch (Exception ignored) {
-                            }
-                            store.save();
-                            fillMsgs();
-                        }).show();
-            } else {
-                LinearLayout row = new LinearLayout(this);
-                row.setGravity(Gravity.CENTER);
-                row.setPadding(Ui.dp(this, 8), Ui.dp(this, 16), Ui.dp(this, 8), Ui.dp(this, 8));
-                final AlertDialog[] dd = new AlertDialog[1];
-                for (final String e : REACTS) {
-                    TextView t = Ui.text(this, e, 28, Ui.INK, false);
-                    t.setGravity(Gravity.CENTER);
-                    t.setOnClickListener(v -> {
-                        dd[0].dismiss();
-                        toggleReaction(m, e);
-                    });
-                    row.addView(t, new LinearLayout.LayoutParams(0, Ui.dp(this, 46), 1f));
+        for (final String it : items) {
+            TextView b = Ui.text(this, it, 16, "삭제".equals(it) ? Color.parseColor("#C0392B") : Ui.INK, false);
+            b.setPadding(Ui.dp(this, 16), Ui.dp(this, 14), Ui.dp(this, 16), Ui.dp(this, 14));
+            b.setOnClickListener(v -> {
+                dd[0].dismiss();
+                if ("답장".equals(it)) setReply(m);
+                else if ("복사".equals(it)) {
+                    ((android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE))
+                            .setPrimaryClip(android.content.ClipData.newPlainText("메시지", m.optString("text")));
+                    Ui.toast(this, "복사했어요.");
+                } else {
+                    new AlertDialog.Builder(this).setTitle("내 메시지를 삭제할까요?").setMessage("대화에서 사라지고, 서버에는 기록이 보관돼요.")
+                            .setNegativeButton("취소", null).setPositiveButton("삭제", (d2, w2) -> {
+                                try {
+                                    m.put("deleted", true);
+                                } catch (Exception ignored) {
+                                }
+                                store.save();
+                                fillMsgs();
+                            }).show();
                 }
-                dd[0] = new AlertDialog.Builder(this).setTitle("반응 고르기").setView(row).setNegativeButton("닫기", null).show();
-            }
-        }).show();
+            });
+            col.addView(b);
+        }
+        dd[0] = new AlertDialog.Builder(this).setView(col).show();
     }
 
     /** 한 번 탭 = onTap, 두 번 탭 = ❤️ 좋아요, 길게 = 메뉴. */
@@ -3502,7 +3534,7 @@ public class MainActivity extends Activity {
         } else if ("stk".equals(kind)) {
             if (rto != null) wrap.addView(quoteView(rto, false), new LinearLayout.LayoutParams(maxW, ViewGroup.LayoutParams.WRAP_CONTENT));
             ImageView iv = new ImageView(this);
-            iv.setImageResource(stkRes(Integer.parseInt(m.optString("blob", "1"))));
+            iv.setImageResource(stkRes(m.optString("blob", "1")));
             iv.setAdjustViewBounds(true);
             iv.setMaxWidth(Ui.dp(this, 150));
             iv.setMaxHeight(Ui.dp(this, 158));
@@ -3548,7 +3580,7 @@ public class MainActivity extends Activity {
             for (final java.util.Map.Entry<String, Integer> en : cnt.entrySet()) {
                 boolean my = en.getKey().equals(re.optString(myKey));
                 TextView c = Ui.chip(this, en.getKey() + " " + en.getValue(), my ? Ui.TINT : Color.WHITE, my ? Ui.DEEP : Ui.GRAY);
-                c.setOnClickListener(v -> toggleReaction(m, en.getKey()));
+                c.setOnClickListener(v -> showReactPicker(m));
                 LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
                 cp.rightMargin = Ui.dp(this, 4);
                 rr.addView(c, cp);
