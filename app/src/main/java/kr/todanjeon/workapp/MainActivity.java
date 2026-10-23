@@ -505,6 +505,7 @@ public class MainActivity extends Activity {
         else if ("sms".equals(k)) renderSms();
         else if ("deposit".equals(k)) renderDeposits();
         else if ("contacts".equals(k)) renderContacts();
+        else if ("library".equals(k)) renderLibrary();
         else if ("profit".equals(k) && canPerf()) renderProfit();
         else renderAll();
         updateFab();
@@ -555,6 +556,10 @@ public class MainActivity extends Activity {
             fab.setVisibility(View.VISIBLE);
             fab.setContentDescription("연락처 추가");
             fab.setOnClickListener(v -> showEditContact(null));
+        } else if ("library".equals(k)) {
+            fab.setVisibility(View.VISIBLE);
+            fab.setContentDescription("자료 올리기");
+            fab.setOnClickListener(v -> showEditLibrary(null));
         } else if ("stock".equals(k)) {
             fab.setVisibility(View.VISIBLE);
             fab.setContentDescription("재고 추가");
@@ -1339,6 +1344,7 @@ public class MainActivity extends Activity {
         e.add(c);
         e.add(new Entry("일", "신규 계약 올리기", "신규 계약 올리기 CMS 판매 렌탈", () -> showAddContract()));
         e.add(new Entry("일", "입금 확인 (입금 내역 올리기)", "입금 확인 입금 내역 미납금 판매대금 정보변경수수료 입금확인", () -> goSub("deposit")));
+        e.add(new Entry("회사", "자료실", "자료실 게시판 양식 서식 계약서 파일 문서 자료 올리기 내려받기", () -> goSub("library")));
         e.add(new Entry("회사", "비상연락망 (눌러서 전화)", "비상연락망 연락처 전화 번호 비상 본사 카드사 밴사", () -> goSub("contacts")));
         e.add(new Entry("일", "단체 문자 보내기 (가맹점)", "단체 문자 sms 발송 가맹점 문자 안내", () -> goSub("sms")));
         e.add(new Entry("일", "내 실적", "내 실적 월별 성장률 계약", () -> goSub("myperf")));
@@ -2495,7 +2501,7 @@ public class MainActivity extends Activity {
         Button nb = Ui.button(this, "+  새 채팅방 만들기", Ui.GOLD, Ui.DARK);
         nb.setOnClickListener(v -> showAddRoom());
         content.addView(nb, Ui.lp(this, 8));
-        content.addView(Ui.text(this, "직원  (눌러서 1:1 대화 · 둘만 보여요)", 13, Ui.GRAY, true), Ui.lp(this, 10));
+        content.addView(Ui.text(this, "직원  (눌러서 1:1 대화)", 13, Ui.GRAY, true), Ui.lp(this, 10));
         HorizontalScrollView sh = new HorizontalScrollView(this);
         sh.setHorizontalScrollBarEnabled(false);
         LinearLayout srow = new LinearLayout(this);
@@ -2552,8 +2558,7 @@ public class MainActivity extends Activity {
         for (final JSONObject r : rooms) {
             LinearLayout row = Ui.cardH(this);
             String ttl = roomTitle(r);
-            String tl = ttl.replace("🔒 ", "");
-            row.addView(Ui.tile(this, r.optBoolean("dm") ? "🔒" : (tl.isEmpty() ? "?" : tl.substring(0, 1)), Ui.TINT, Ui.DEEP));
+            row.addView(Ui.tile(this, ttl.isEmpty() ? "?" : ttl.substring(0, 1), Ui.TINT, Ui.DEEP));
             LinearLayout mid = new LinearLayout(this);
             mid.setOrientation(LinearLayout.VERTICAL);
             mid.setPadding(Ui.dp(this, 14), 0, 0, 0);
@@ -2727,7 +2732,7 @@ public class MainActivity extends Activity {
             {"처음 시작하기 · 로그인", "1. 앱을 켜면 잠깐 시작 화면이 나오고, 처음에는 로그인 화면이 나옵니다.\n2. 관리자가 등록해 둔 내 휴대폰 번호(예: 01012345678)를 입력하고 '인증번호 받기'를 누릅니다.\n3. 문자로 온 인증번호 6자리를 입력하고 '확인'을 누릅니다.\n4. 한 번 로그인하면 계속 유지됩니다. 다시 묻지 않아요.\n\n※ '등록되지 않은 번호입니다'가 나오면 관리자에게 내 번호 등록을 요청하세요.\n※ 로그아웃은 맨 아래 탭 '전체' → 맨 아래 '로그아웃'입니다. 폰을 바꾸면 같은 번호로 다시 인증하면 됩니다."},
             {"업무 탭", "내게 지시된 업무를 확인하고 처리하는 곳입니다.\n\n■ 화면 구성\n- 맨 위 금색 카드: 남은 업무 수, 새 업무·진행·오늘 완료 수와 진행 막대\n- 계약 만료 알림: 만료가 3개월 안으로 남은 계약이 있으면 카드가 나타납니다. 누르면 계약 관리로 이동합니다.\n- 업무 카드: 종류(설치·AS·영업·서류·카드), 제목, 거래처, 기한, 상태\n\n■ 업무 처리\n1. 카드를 누르면 상세가 열립니다.\n2. 아래 버튼으로 상태를 바꿉니다: 확인함 → 진행중 → 완료(또는 보류).\n3. '완료'를 누르면 완료 메시지를 적을 수 있어요. 모든 처리 기록은 이력으로 남습니다.\n\n■ 업무 지시하기 (업무 지시 권한이 있는 사람)\n- 오른쪽 아래 + 버튼 → 제목, 종류, 거래처, 전화, 주소, 기한, 메모, 담당 직원 입력 후 '지시하기'.\n- '가맹점 조회'를 누르면 등록된 가맹점을 검색해 선택할 수 있고, 거래처·전화·주소가 자동으로 채워집니다.\n- '전체 업무' 보기 권한이 있으면 위쪽 '내 업무 / 전체 업무' 버튼이 보입니다."},
             {"프로젝트 탭", "여러 사람이 오래 진행하는 일을 관리합니다.\n\n1. 오른쪽 아래 + 로 프로젝트를 만듭니다 (제목, 기한, 메모, 책임자).\n2. 프로젝트를 누르면 진행률(%) 슬라이더, '점검 필요' 체크, 메모를 수정할 수 있습니다.\n3. 저장할 때마다 진행 기록이 쌓여서 누가 언제 무엇을 바꿨는지 볼 수 있어요."},
-            {"채팅 탭", "직원끼리 대화하는 곳이에요. 원하는 만큼 채팅방을 만들 수 있습니다.\n\n■ 채팅방 만들기\n- 맨 위 '+ 새 채팅방 만들기' → 이름을 적고 '만들기'. (예: 거래처 A/S, 서류 접수, 입금 확인)\n- 방이 하나도 없으면 '기본 채팅방 만들기'로 전체방·서류접수·입금확인·신규계약·AS설치·공지 방을 한 번에 만들 수 있어요.\n\n■ 대화방\n- 방을 누르면 전체 화면 대화방이 열리고, 입력줄은 맨 아래에 고정됩니다. 왼쪽 위 ‹ 또는 폰의 뒤로가기로 목록에 돌아갑니다.\n- 내 말풍선은 금색·오른쪽, 다른 사람은 흰색·왼쪽이고 옆에 이름과 프로필 사진이 나옵니다. 같은 사람이 같은 분에 이어 보내면 사진·이름은 한 번만 나와요.\n- 사람 사진을 누르면 그 직원의 프로필(이름·상태 메시지·전화번호)이 나오고, '전화하기'로 바로 걸 수 있어요.\n\n■ 답장 · 반응 · 삭제 (v0.8.0, 텔레그램처럼)\n- 말풍선을 두 번 빠르게 누르면 ❤️ 좋아요가 붙습니다. 같은 걸 다시 두 번 누르면 취소돼요.\n- 말풍선을 길게 누르면 맨 위에 이모티콘 줄(👍 ❤️ 😂 😮 😢 🙏 🔥 👏)이 뜨고, 그 아래에 답장 / 복사(글만) / 삭제(내 메시지만)가 있어요. 이모티콘을 한 번 누르면 바로 붙습니다.\n- 답장을 고르면 입력줄 위에 '○○에게 답장' 띠가 생기고, 그 상태로 보내면 말풍선 위에 인용이 붙어요. 띠의 ✕ 로 취소합니다.\n- 이미 붙은 이모티콘을 누르면 같은 목록이 떠서 다른 이모티콘으로 바꾸거나, 내 이모티콘을 한 번 더 눌러 지울 수 있어요(텔레그램처럼).\n- 삭제한 내 메시지는 대화에서 사라지고, 서버에는 기록이 보관됩니다.\n\n■ 링크 (v0.9.1)\n- 글에 웹 주소(예: https://… 또는 naver.com)를 적어 보내면 파란 밑줄로 표시되고, 말풍선을 한 번 누르면 브라우저로 열립니다. 주소가 여러 개면 목록에서 고르세요. 길게 누르기·두 번 누르기는 그대로 됩니다.\n\n■ 사진·파일·이모지·스티커\n- 입력줄 왼쪽 '+' → 사진 보내기(앨범) / 사진 찍어 보내기 / 파일 보내기.\n- 사진은 자동으로 줄여서 올라가요. 대화 속 사진을 누르면 크게 보이고, '다른 앱으로 열기·저장'으로 저장할 수 있습니다.\n- 파일은 3MB까지 보낼 수 있어요(문서·엑셀·PDF용). 더 큰 파일은 지금은 보낼 수 없습니다. 파일 말풍선을 누르면 내려받아 열립니다.\n- 입력줄 오른쪽 ☺ 를 누르면 판이 열려요. 맨 위 탭: 이모지(글 사이에 들어감) / 나인이 / 복이 / 호야 / 깍이 / 도리. 스티커는 누르면 바로 전송됩니다.\n- '나인이 프렌즈'는 우리 회사 캐릭터 5마리예요(아홉꼬리 여우 나인이, 복두꺼비 복이, 아기 호랑이 호야, 까치 깍이, 다람쥐 도리). 마리당 16종, 모두 80종으로 신규계약 성공·축하·대단해·빡쳐·정신 차려·힘내와 우리 일(POS 설치, 현장 AS, 랜선 공사, 단말기 수리·도색, 토스 영업, 테이블오더, 회의, 서류, 보고서, 차에서 꿀잠 등)이 들어 있어요.\n- 예전(v0.8.0)에 보낸 나인이 스티커 메시지는 그대로 보입니다.\n\n■ 보내는 중 안내\n- 사진·파일은 인터넷이 연결돼야 올라가요. '보내는 중…'이 뜬 뒤 대화에 나타납니다. 안 나타나면 인터넷을 확인하고 다시 보내 주세요.\n\n■ 1:1 비공개 대화 (v0.12.0)\n- 채팅 탭 맨 위 직원 목록에서 직원을 누르거나, 채팅에서 직원 사진을 눌러 '1:1 대화'를 누르면 둘만의 방이 열려요. 같은 사람과는 항상 같은 방이 열립니다.\n- 이 방은 서버 규칙으로 두 사람에게만 내려가요. 다른 직원도, 최고관리자도 볼 수 없습니다. 목록에는 🔒와 상대 이름으로 보여요.\n- 답장·반응·스티커·사진·파일은 일반 방과 같이 쓸 수 있어요. (사진·파일 자체는 보관 주소를 아는 사람만 열 수 있어 사실상 두 사람만 열어요.)\n- 이 방은 이름을 바꿀 수 없고, 업데이트(v0.12.0) 전의 앱에는 보이지 않아요.\n\n※ 1:1 대화를 뺀 나머지 채팅방은 모든 직원이 볼 수 있습니다. 민감한 개인 이야기·개인정보 파일은 1:1 대화로 나누세요."},
+            {"채팅 탭", "직원끼리 대화하는 곳이에요. 원하는 만큼 채팅방을 만들 수 있습니다.\n\n■ 채팅방 만들기\n- 맨 위 '+ 새 채팅방 만들기' → 이름을 적고 '만들기'. (예: 거래처 A/S, 서류 접수, 입금 확인)\n- 방이 하나도 없으면 '기본 채팅방 만들기'로 전체방·서류접수·입금확인·신규계약·AS설치·공지 방을 한 번에 만들 수 있어요.\n\n■ 대화방\n- 방을 누르면 전체 화면 대화방이 열리고, 입력줄은 맨 아래에 고정됩니다. 왼쪽 위 ‹ 또는 폰의 뒤로가기로 목록에 돌아갑니다.\n- 내 말풍선은 금색·오른쪽, 다른 사람은 흰색·왼쪽이고 옆에 이름과 프로필 사진이 나옵니다. 같은 사람이 같은 분에 이어 보내면 사진·이름은 한 번만 나와요.\n- 사람 사진을 누르면 그 직원의 프로필(이름·상태 메시지·전화번호)이 나오고, '전화하기'로 바로 걸 수 있어요.\n\n■ 답장 · 반응 · 삭제 (v0.8.0, 텔레그램처럼)\n- 말풍선을 두 번 빠르게 누르면 ❤️ 좋아요가 붙습니다. 같은 걸 다시 두 번 누르면 취소돼요.\n- 말풍선을 길게 누르면 맨 위에 이모티콘 줄(👍 ❤️ 😂 😮 😢 🙏 🔥 👏)이 뜨고, 그 아래에 답장 / 복사(글만) / 삭제(내 메시지만)가 있어요. 이모티콘을 한 번 누르면 바로 붙습니다.\n- 답장을 고르면 입력줄 위에 '○○에게 답장' 띠가 생기고, 그 상태로 보내면 말풍선 위에 인용이 붙어요. 띠의 ✕ 로 취소합니다.\n- 이미 붙은 이모티콘을 누르면 같은 목록이 떠서 다른 이모티콘으로 바꾸거나, 내 이모티콘을 한 번 더 눌러 지울 수 있어요(텔레그램처럼).\n- 삭제한 내 메시지는 대화에서 사라지고, 서버에는 기록이 보관됩니다.\n\n■ 링크 (v0.9.1)\n- 글에 웹 주소(예: https://… 또는 naver.com)를 적어 보내면 파란 밑줄로 표시되고, 말풍선을 한 번 누르면 브라우저로 열립니다. 주소가 여러 개면 목록에서 고르세요. 길게 누르기·두 번 누르기는 그대로 됩니다.\n\n■ 사진·파일·이모지·스티커\n- 입력줄 왼쪽 '+' → 사진 보내기(앨범) / 사진 찍어 보내기 / 파일 보내기.\n- 사진은 자동으로 줄여서 올라가요. 대화 속 사진을 누르면 크게 보이고, '다른 앱으로 열기·저장'으로 저장할 수 있습니다.\n- 파일은 3MB까지 보낼 수 있어요(문서·엑셀·PDF용). 더 큰 파일은 지금은 보낼 수 없습니다. 파일 말풍선을 누르면 내려받아 열립니다.\n- 입력줄 오른쪽 ☺ 를 누르면 판이 열려요. 맨 위 탭: 이모지(글 사이에 들어감) / 나인이 / 복이 / 호야 / 깍이 / 도리. 스티커는 누르면 바로 전송됩니다.\n- '나인이 프렌즈'는 우리 회사 캐릭터 5마리예요(아홉꼬리 여우 나인이, 복두꺼비 복이, 아기 호랑이 호야, 까치 깍이, 다람쥐 도리). 마리당 16종, 모두 80종으로 신규계약 성공·축하·대단해·빡쳐·정신 차려·힘내와 우리 일(POS 설치, 현장 AS, 랜선 공사, 단말기 수리·도색, 토스 영업, 테이블오더, 회의, 서류, 보고서, 차에서 꿀잠 등)이 들어 있어요.\n- 예전(v0.8.0)에 보낸 나인이 스티커 메시지는 그대로 보입니다.\n\n■ 보내는 중 안내\n- 사진·파일은 인터넷이 연결돼야 올라가요. '보내는 중…'이 뜬 뒤 대화에 나타납니다. 안 나타나면 인터넷을 확인하고 다시 보내 주세요.\n\n■ 1:1 비공개 대화 (v0.12.0)\n- 채팅 탭 맨 위 직원 목록에서 직원을 누르거나, 채팅에서 직원 사진을 눌러 '1:1 대화'를 누르면 둘만의 방이 열려요. 같은 사람과는 항상 같은 방이 열립니다.\n- 이 방은 두 사람 사이의 대화라서 다른 직원에게는 내려가지 않아요(최고관리자 포함). 목록에는 상대 이름으로 보여요.\n- 답장·반응·스티커·사진·파일은 일반 방과 같이 쓸 수 있어요. (사진·파일 자체는 보관 주소를 아는 사람만 열 수 있어 사실상 두 사람만 열어요.)\n- 이 방은 이름을 바꿀 수 없고, 업데이트(v0.12.0) 전의 앱에는 보이지 않아요.\n\n※ 1:1 대화를 뺀 나머지 채팅방은 모든 직원이 볼 수 있습니다. 민감한 개인 이야기·개인정보 파일은 1:1 대화로 나누세요."},
             {"일정 탭 (달력)", "한국 달력과 앞으로의 일정을 함께 봅니다.\n\n■ 달력\n- 일요일·공휴일은 빨간색, 토요일은 파란색, 오늘은 금색 원입니다. 공휴일 이름도 표시돼요. (2026~2028년 기준)\n- ‹ › 로 달을 넘기고 '오늘'을 누르면 오늘로 돌아옵니다.\n- 일정이나 업무 기한이 있는 날은 작은 금색 점이 찍혀요.\n- 날짜를 누르면 그날의 일정과 업무가 아래에 나옵니다.\n\n■ 일정 남기기\n1. 오른쪽 아래 + 버튼.\n2. 제목과 날짜를 적고, 시간은 선택입니다.\n3. '가맹점 조회·선택'을 누르면 등록된 가맹점 중에서 찾아 고릅니다 (초성 검색 가능). 고르면 사업자번호·연락처·주소·계약조건·등급이 불러와지고, 장소에는 가맹점 주소가 자동으로 들어갑니다.\n4. '추가'를 누르면 달력에 바로 표시되고, 달력 아래 '다가오는 일정'에도 올라갑니다.\n\n■ 다가오는 일정\n- 오늘부터 앞으로의 일정과 내 업무 기한이 날짜 순으로 나와서, 언제 어디로 가야 하는지 한눈에 확인할 수 있습니다.\n- 가맹점이 연결된 일정을 누르면 가맹점 상세 정보가 열립니다."},
             {"전체 탭", "나머지 모든 기능으로 들어가는 메뉴판입니다.\n\n■ 기능 검색 (v0.8.0)\n- 맨 위 프로필 카드 아래 '🔍 기능 검색' 칸에 단어나 초성을 치면 그 기능이 바로 나옵니다. 예: '재고', 'ㅈㄱ', '문자', '수익', '바코드', '프로필'.\n- 눌러서 바로 이동해요. 지우면 원래 메뉴판으로 돌아갑니다. (업무·채팅·일정 같은 탭도 검색됩니다.)\n\n■ 메뉴\n- 맨 위 내 카드를 누르면 프로필 사진과 상태 메시지를 바꿀 수 있어요.\n- 재고: 장비 재고 관리 (바코드 스캔, 단가)\n- 가맹점: 가맹점 정보 관리\n- 신규 계약 올리기 / 계약 관리: 계약 등록과 설치 완료 처리, 만료 알림\n- 단체 문자 보내기: 가맹점에 안내 문자\n- 내 실적: 나만 보는 월별 실적과 지난달 비교\n- 전체 실적·직원별 순위 / 수익 현황 / 실적 보고서 올리기: (권한이 있는 사람만 보임)\n- 일일보고 쓰기, 일일보고 종합 보기(권한자)\n- 지난 업무 기록: 완료된 업무 검색\n- 사용설명서, 버전·업데이트 내역, 공지사항\n- 직원과 권한: (관리자만) 직원 추가·권한 설정\n- 로그아웃\n\n※ 맨 아래에 현재 앱 버전이 표시됩니다. 문의할 때 이 버전을 알려 주세요."},
             {"재고", "장비를 우리가 직접 입력해서 관리합니다. (전체 → 재고)\n\n■ 재고 추가\n1. 오른쪽 아래 + 버튼.\n2. 모델명을 적고, 시리얼은 한 줄에 하나씩 적습니다. 여러 줄을 붙여 넣으면 장비가 한꺼번에 등록돼요.\n3. 시리얼이 없는 소모품(롤지 등)은 시리얼 대신 '수량'만 적습니다.\n4. 안전재고: 이 수 아래로 내려가면 빨간색으로 '부족해요!'가 표시됩니다.\n5. 입고 단가: 실적 권한자에게만 보이는 칸입니다. 1대당 산 값을 적으면 시리얼 전체에 같이 적용돼요.\n\n■ 바코드 스캔\n- '바코드 스캔'을 누르면 카메라가 열리고, 읽으면 번호가 시리얼 칸에 한 줄 들어갑니다. 한 번 누르면 한 번만 읽어요. 다음 장비는 버튼을 다시 눌러 주세요. 같은 번호는 두 번 들어가지 않아요.\n- 재고 목록 위 '바코드로 찾기'를 누르면 바코드를 읽어 그 시리얼을 바로 검색합니다.\n- 계약에서 '+ 장비 추가'를 누르고 '바코드 스캔(한 번에 한 대)'을 누르면, 읽은 번호가 재고에 있을 때 그 장비가 바로 추가돼요. 다음 장비는 다시 '+ 장비 추가'를 눌러 같은 방식으로 넣습니다. 재고에 없는 번호면 모델명만 적어 직접 입력하게 열려요.\n\n■ 시리얼 촬영 인식 (v0.7.0)\n- '시리얼 촬영'을 누르고 장비 뒷면의 S/N 라벨을 가까이서 찍으면 글자를 읽어 줍니다.\n- 시리얼처럼 보이는 글자 후보가 목록으로 나오고, 맞는 것을 체크해서 '넣기'를 누르세요. 0(영)과 O(오), 1과 I처럼 헷갈리기 쉬운 글자는 꼭 눈으로 확인해 주세요.\n- 바코드가 같이 있으면 바코드 스캔이 더 정확합니다.\n- 스캔과 촬영은 구글 서비스가 있는 폰에서 동작합니다.\n\n■ 보기·검색\n- 모델별로 묶여서 '재고 n대'가 보이고, 그 아래에 시리얼이 나열됩니다.\n- 검색창에 모델명·시리얼을 치면 찾아줘요. 'ㅌㅅㅍㅅ' 같은 초성도 됩니다.\n\n■ 수정·삭제\n- 시리얼 줄을 누르면 수정창이 열립니다. 시리얼 칸에도 스캔·촬영 버튼이 있어요. '삭제'를 누르면 목록에서 지워져요 (기록은 서버에 남아 복구 가능).\n\n■ 단가와 수익 (실적 권한자 전용)\n- 재고 줄을 누르면 입고 단가(산 값)와 출고 단가(판 값)를 적을 수 있어요.\n- 재고 화면 맨 위에 보유 재고 자산(입고 단가 합계)이 나오고, '수익 현황 보기'로 이동합니다.\n- 단가는 서버에서도 실적 권한자만 읽을 수 있게 따로 보관됩니다. 권한이 없는 직원에게는 칸 자체가 보이지 않아요.\n\n■ 상태가 바뀌는 순서\n재고 → (계약에서 선택하면) 출고중 → (설치 완료 처리하면) 재고 목록에서 사라짐"},
@@ -2737,6 +2742,7 @@ public class MainActivity extends Activity {
             {"실적 (권한자 전용)", "■ 내 실적 (전체 → 내 실적)\n- 나만 볼 수 있습니다. 이번 달 신규 계약 대수, 판매금액, 올린 계약 목록, 지난달과의 비교가 나와요.\n\n■ 전체 실적·직원별 순위 (실적 보기 권한자)\n- 위 ‹ › 로 월을 바꿉니다.\n- 신규 계약 대수와 판매금액, 직원별 순위 막대 그래프, 올라온 계약 목록이 나옵니다.\n- 월별 성과 (v0.7.0): '지난달 → 선택한 달' 계약 대수와 성장률(▲ 늘어남 / ▼ 줄어듦, 지난달이 0이면 '신규')을 직원별 막대 두 개(회색 지난달, 금색 이번 달)로 보여 줍니다. 그 아래 최근 6개월 추이 그래프도 있어요.\n- 계약을 누르면 상세 정보와 장비를 볼 수 있어요.\n\n■ 수익 현황 (실적 보기 권한자, 전체 → 수익 현황)\n- 지금까지 총 수익, 선택한 달 수익(매출·매입), 최근 6개월 수익 그래프, 직원별 수익이 나옵니다.\n- 계약에 올라가 출고된 장비(출고중·설치완료)의 '출고 단가 − 입고 단가'를 합산하고, 월은 계약일 기준이에요.\n- 단가를 아직 안 적은 장비는 수익에서 빠지고, 맨 아래 목록에 나옵니다. 눌러서 단가를 적으면 바로 반영돼요."},
             {"가맹점 일괄 가져오기 (엑셀·CSV)", "(v0.11.0, 전체 → 가맹점 → 맨 위 '가맹점 일괄 가져오기')\n\n■ 준비\n- 이카운트(또는 다른 곳)에서 거래처 목록을 엑셀로 내려받아요. 형식은 .xlsx 또는 CSV 입니다. 옛 .xls 는 엑셀에서 .xlsx 로 다시 저장해 주세요.\n- 첫 줄(머리글)에 '거래처명'(또는 상호·가맹점명)이 있어야 합니다. 사업자등록번호, 거래처코드, 대표자, 전화, 핸드폰, 주소, 등급, 업태, 종목, 메모 열이 있으면 함께 가져와요.\n\n■ 가져오기\n1. 버튼을 눌러 파일을 고릅니다.\n2. 미리보기에서 새로 등록·갱신·건너뜀 개수와 읽은 열을 확인합니다.\n3. '가져오기'를 누르면 등록됩니다.\n\n■ 다시 올려도 안전해요\n- 같은 거래처코드, 사업자번호, 상호가 있으면 새로 만들지 않고 갱신합니다. 파일에 값이 있는 칸만 덮어쓰고 빈 칸은 그대로예요.\n- 새 가맹점의 등급은 파일에 등급이 없으면 '5코드 · 신규가맹점'으로 들어갑니다.\n- 핸드폰 열이 있으면 단체 문자에 그 번호를 씁니다."},
             {"입금 확인 · 비상연락망 · 알림 · 백업", "(v0.10.0)\n\n■ 입금 확인 (전체 → 입금 확인)\n- 오른쪽 아래 + → 종류(판매대금/미납금/정보변경수수료/기타), 금액, 가맹점 선택, 메모를 넣고 '올리기'.\n- 올리면 '입금확인' 채팅방에 자동으로 글이 올라가요(방이 없으면 만들어요). 다른 직원 폰에는 알림이 갑니다.\n- 내역을 눌러 '확인 처리'를 하면 확인한 사람 이름이 남고 채팅방에도 알려요.\n\n■ 비상연락망 (전체 → 비상연락망)\n- + 로 이름·구분(본사, 카드사, 밴사, 직원 등)·번호를 등록해요. 연락처를 누르면 전화 화면이 열립니다. 길게 누르면 수정·삭제.\n\n■ 서류 업무 자동 알림\n- 업무 지시에서 종류가 '서류 접수' 또는 '카드사 서류'이면 '서류접수' 채팅방에 담당자·거래처·기한이 자동으로 올라갑니다.\n\n■ 폰 알림\n- 내게 새 업무가 지시되거나, 새 채팅·공지·입금 요청이 오면 폰 알림이 떠요. 처음 한 번 알림 허용을 눌러 주세요. 앱이 완전히 종료된 뒤에는 알림이 오지 않을 수 있습니다(완전한 푸시는 서버 요금제 전환 후 지원).\n\n■ 데이터 백업 (관리자)\n- 전체 → 데이터 백업 내려받기: 업무·가맹점·계약·재고·채팅 글 등 전체 자료를 파일로 만들어 드라이브 등에 보관할 수 있어요. 정기적으로(예: 매주) 받아 두세요."},
+            {"자료실 (v0.13.0)", "양식·계약서·안내문 같은 파일을 올려 두고 직원 모두가 내려받아 쓰는 게시판이에요.\n\n■ 찾아가기\n- 전체 탭 → 회사 → 자료실\n\n■ 자료 올리기\n- 오른쪽 아래 + 를 누르고 제목(필수)·설명·분류를 적어요.\n- '📎 파일 추가'로 파일을 고르면 바로 올라가고, 한 글에 5개까지 붙일 수 있어요. 사진은 자동으로 줄여서 올라가고, 문서·엑셀·PDF 같은 파일은 3MB까지입니다.\n- 파일이 다 올라간 뒤(올리는 중 표시가 사라지면) '올리기'를 누르세요.\n- 분류: 양식·서식 / 계약·약정 / 가맹점 안내 / 교육·매뉴얼 / 사진·홍보물 / 기타\n\n■ 찾기·내려받기\n- 위쪽 분류 버튼으로 걸러 보고, 검색창에 제목·설명·파일 이름(초성도 가능)을 적어 찾아요.\n- 글을 누르면 설명과 첨부 파일이 나와요. 파일을 누르면 내려받아 열리고, 열린 앱에서 저장·공유할 수 있어요.\n\n■ 고치기·지우기\n- 올린 사람과 최고관리자만 수정·삭제할 수 있어요. 삭제해도 서버에는 기록이 남습니다.\n- 새 자료가 올라오면 다른 직원 폰에 알림이 떠요(앱이 켜져 있을 때).\n\n※ 개인정보가 든 파일(신분증 사본 등)은 올리지 마세요. 모든 직원이 볼 수 있습니다."},
             {"가맹점 보호·복원 (최고관리자)", "가맹점 정보가 사라지지 않도록 여러 겹으로 지켜요.\n\n■ 지켜 주는 장치\n1) 서버에서는 어떤 자료도 지울 수 없게 막아 두었어요.\n2) 가맹점 삭제는 목록에서 '숨김' 처리일 뿐이라 언제든 복원할 수 있어요.\n3) 가맹점을 열면 '🕘 변경 이력 · 되돌리기'가 있어요. 누가 언제 무엇을 바꿨는지 보고, 눌러서 그 시점으로 되돌립니다.\n4) 엑셀 가져오기 직전, 복원 직전, 이력 되돌리기 직전에 현재 상태를 자동 저장해요('되돌리기 기준점'). 저장에 실패하면 작업을 시작하지 않습니다.\n5) 최고관리자 폰은 앱을 열면 하루 한 번 전체 자료를 14일치까지 자동 백업해요.\n6) 전체 → '데이터 백업 내려받기'로 만든 파일은 드라이브·카톡 등 폰 밖에 따로 보관하세요.\n\n■ 복원하는 방법\n- 가맹점 화면 위쪽 '🛡 가맹점 보호·복원' (또는 전체 → 관리자 → 가맹점 보호·복원)\n- '삭제한 가맹점 복원': 숨긴 가맹점 목록에서 눌러 복원\n- '백업·되돌리기 목록에서 복원': 자동백업이나 되돌리기 기준점을 고르면 지금과 비교해 미리 보여 주고, 확인하면 복원해요. 가져오기를 취소하고 싶으면 '가져오기전' 기준점을 고르세요(그 뒤 새로 생긴 가맹점은 숨김 처리됩니다).\n- '백업 파일을 직접 골라 복원': 내려받아 둔 백업(.json)을 골라요.\n- 복원할 때도 직전 상태가 자동 저장되니, 잘못 복원해도 다시 돌릴 수 있어요.\n\n※ 폰 안 백업은 이 폰을 바꾸거나 앱을 지우면 함께 사라져요. 중요한 시점(큰 가져오기 전)에는 '데이터 백업 내려받기'로 파일을 따로 받아 두세요. 카드(Blaze) 등록 후에는 서버 자동 백업도 켜겠습니다."},
             {"공지사항 · 직원과 권한", "■ 공지사항 (전체 → 공지사항)\n- 공지 쓰기 권한이 있으면 + 버튼으로 작성합니다. '맨 위에 고정'을 켜면 항상 위에 보여요.\n- 읽지 않은 공지는 ● 표시와 전체 탭 숫자로 알려줍니다. 누르면 읽음 처리돼요.\n\n■ 직원과 권한 (관리자 전용)\n- + 버튼 → 이름, 휴대폰 번호, 권한 묶음을 선택해 직원을 등록합니다. 등록된 번호로만 로그인할 수 있어요.\n- 직원을 누르면 항목별 권한을 켜고 끌 수 있고, '사용 중지'로 퇴사자의 접근을 막습니다.\n- 마지막 관리자는 중지하거나 권한을 끌 수 없습니다.\n\n※ '실적 보기'(수익 현황과 재고 단가 포함)와 '일일보고·실적보고 종합 보기'는 서버에서 강제로 막혀 안전합니다. 나머지 권한은 화면에서 숨기는 방식이에요."},
             {"일일보고 · 실적 보고서", "■ 일일보고 쓰기 (전체 → 일일보고 쓰기)\n- 날짜를 확인하고, 오늘 한 일·특이사항·내일 계획을 적어 '제출하기'를 누릅니다.\n- 그날 완료한 업무와 올린 계약은 자동으로 같이 집계돼요.\n- 같은 날 다시 쓰면 수정본으로 덮어씁니다. 아래에서 내가 낸 보고를 다시 열어 볼 수 있어요.\n\n■ 일일보고 종합 (대표님)\n- 전체 → 일일보고 종합 보기: 날짜별로 직원별 보고가 한 화면에 모이고, 미제출자는 빨간색으로 표시됩니다.\n- 이 메뉴는 '일일보고·실적보고 종합 보기' 권한이 켜진 사람만 봅니다. 관리자도 예외가 아니에요(v0.7.0부터). 처음에는 관리자에게 켜져 있고, 대표님을 등록하면 대표님께 켜 드린 뒤 관리자 쪽을 끄면 됩니다.\n\n■ 실적 보고서 (본부장 → 대표님)\n- 전체 → 실적 보고서 올리기: 이번 달 실적이 자동 집계되어 채워져 있고, 고쳐서 '대표님께 보고하기'를 누릅니다.\n- 대표님은 같은 메뉴에서 올라온 보고서를 봅니다.\n\n※ 보고서 양식은 정해지면 그 모양에 맞춰 바꿀 수 있어요."},
@@ -2778,8 +2784,9 @@ public class MainActivity extends Activity {
 
     /** {버전, 날짜, 내용}. 새 버전은 맨 위에 추가. CI 가 현재 versionName 항목이 있는지 검사한다. */
     private static final String[][] CHANGELOG = {
+            {"0.13.0", "2026-10-24", "• 자료실 게시판: 양식·계약서·안내문 등 파일을 올리고 내려받기 (분류·검색·수정·삭제, 한 글에 파일 5개, 사진은 자동으로 줄임)\n• 채팅에서 자물쇠 표시와 '둘만 보여요' 문구를 없앰 (1:1 대화는 그대로 두 사람 사이에서만 오가요)"},
             {"0.12.1", "2026-10-24", "• 채팅 탭 맨 위에 직원 목록(사진·이름)이 생겨서, 직원을 누르면 바로 1:1 대화가 열려요 (이미 있으면 그 방으로)\n• 1:1 대화도 단체방과 같은 기능(답장·반응·스티커·사진·파일·링크·삭제)을 그대로 씁니다"},
-            {"0.12.0", "2026-10-24", "• 가맹점 정보 보호 장치 6겹: ① 서버에서 지우기 금지 ② 삭제는 '숨김'이라 휴지통에서 복원 ③ 가맹점마다 변경 이력을 보고 그 시점으로 되돌리기 ④ 엑셀 가져오기·복원 직전에 자동 저장 ⑤ 관리자 폰이 하루 한 번 14일치 자동 백업 ⑥ 백업 파일(내려받은 것 포함)로 가맹점 복원\n• 가맹점 → 🛡 가맹점 보호·복원 메뉴 신설 (최고관리자)\n• 1:1 비공개 대화: 채팅 → 🔒 1:1 대화 시작, 직원 프로필의 '1:1 대화' 버튼. 서버 규칙으로 두 사람에게만 보이고 관리자도 볼 수 없어요\n• 엑셀 가져오기 직전 상태를 자동 저장하고, 저장에 실패하면 가져오기를 시작하지 않음"},
+            {"0.12.0", "2026-10-24", "• 가맹점 정보 보호 장치 6겹: ① 서버에서 지우기 금지 ② 삭제는 '숨김'이라 휴지통에서 복원 ③ 가맹점마다 변경 이력을 보고 그 시점으로 되돌리기 ④ 엑셀 가져오기·복원 직전에 자동 저장 ⑤ 관리자 폰이 하루 한 번 14일치 자동 백업 ⑥ 백업 파일(내려받은 것 포함)로 가맹점 복원\n• 가맹점 → 🛡 가맹점 보호·복원 메뉴 신설 (최고관리자)\n• 1:1 비공개 대화: 채팅 탭 직원 목록, 직원 프로필의 '1:1 대화' 버튼. 서버 규칙으로 두 사람에게만 보이고 관리자도 볼 수 없어요\n• 엑셀 가져오기 직전 상태를 자동 저장하고, 저장에 실패하면 가져오기를 시작하지 않음"},
             {"0.11.0", "2026-10-24", "• 가맹점 일괄 가져오기: 이카운트 등에서 내려받은 엑셀(.xlsx)·CSV 를 올리면 머리글을 알아보고 미리보기 후 등록·갱신 (같은 거래처코드·사업자번호·상호는 중복 없이 갱신)\n• 휴대폰 번호 열이 따로 있으면 단체 문자에 사용"},
             {"0.10.1", "2026-10-24", "• 나인이 프렌즈 스티커 80종을 다시 그림: 점프·기울기·발 구르기·눈물·연기·소품 등 문구에 맞는 동작으로 다양하게"},
             {"0.10.0", "2026-10-24", "• 입금 확인: 입금 내역(판매대금·미납금·정보변경수수료·기타)을 올리고 가맹점을 표시, '입금확인' 채팅방에 자동 알림, 확인 처리\n• 비상연락망: 이름·구분·번호 목록, 누르면 바로 전화, 검색·수정·삭제\n• 서류 업무를 지시하면 '서류접수' 채팅방에 자동으로 알림 글\n• 새 업무·채팅·공지·입금이 올라오면 폰 알림\n• 관리자: 데이터 백업 내려받기(JSON 파일)"},
@@ -2813,7 +2820,7 @@ public class MainActivity extends Activity {
     private EditText roomInput;
     private LinearLayout emojiPanel;
     private int lastMsgCount = -1;
-    private static final int REQ_IMG = 101, REQ_FILE = 102, REQ_PROFILE = 103, REQ_OCR = 104, REQ_CAM = 105, REQ_IMPORT = 106, REQ_RESTORE = 107;
+    private static final int REQ_IMG = 101, REQ_FILE = 102, REQ_PROFILE = 103, REQ_OCR = 104, REQ_CAM = 105, REQ_IMPORT = 106, REQ_RESTORE = 107, REQ_LIB = 108;
     private final java.util.Map<String, android.graphics.Bitmap> bmpCache = new java.util.HashMap<>();
     private File camFile;
 
@@ -2887,11 +2894,7 @@ public class MainActivity extends Activity {
         if (room.optBoolean("dm")) ren.setVisibility(View.GONE);
         hd.addView(ren);
         root.addView(hd);
-        if (room.optBoolean("dm")) {
-            TextView pv = Ui.text(this, "이 대화는 두 사람에게만 보여요. 관리자도 볼 수 없습니다.", 12, Ui.GRAY, false);
-            pv.setPadding(Ui.dp(this, 18), 0, Ui.dp(this, 16), Ui.dp(this, 6));
-            root.addView(pv);
-        }
+
         View line = new View(this);
         line.setBackgroundColor(Ui.FIELD);
         root.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 1)));
@@ -3246,6 +3249,16 @@ public class MainActivity extends Activity {
                 runOnUiThread(() -> {
                     if (raw == null) Ui.toast(this, "파일을 읽지 못했어요. (8MB 이하만 가능)");
                     else previewImport(raw, Media.name(cr, u));
+                });
+            }).start();
+        } else if (req == REQ_LIB) {
+            final Uri u = data.getData();
+            if (u == null) return;
+            new Thread(() -> {
+                final Object[] got = readLibFile(cr, u);
+                runOnUiThread(() -> {
+                    if (got[0] == null) Ui.toast(this, "파일을 읽지 못했어요. 3MB 이하만 올릴 수 있어요.");
+                    else uploadLibFile((byte[]) got[0], (String) got[1], (String) got[2]);
                 });
             }).start();
         } else if (req == REQ_RESTORE) {
@@ -3762,6 +3775,9 @@ public class MainActivity extends Activity {
             } else if ("msgs".equals(coll) && o.optInt("who") != me2 && o.optInt("ts", 1) != 0 && System.currentTimeMillis() - o.optLong("ts") < 120000) {
                 title = store.userName(o.optInt("who"));
                 body = snippet(o);
+            } else if ("library".equals(coll) && o.optInt("who") != me2) {
+                title = "자료실에 새 자료";
+                body = o.optString("title");
             } else if ("notices".equals(coll) && o.optInt("author") != me2) {
                 title = "새 공지";
                 body = o.optString("title");
@@ -3893,6 +3909,263 @@ public class MainActivity extends Activity {
         if (!v.isEmpty() || force) m.put(k, v);
     }
 
+
+    // ======================= v0.13: 자료실 =======================
+    private static final String[] LIB_CATS = {"양식·서식", "계약·약정", "가맹점 안내", "교육·매뉴얼", "사진·홍보물", "기타"};
+    private String libCat = "", libQuery = "";
+    private final List<JSONObject> libPending = new ArrayList<>();
+    private int libUploading = 0;
+    private TextView libFilesTv;
+
+    private static String sizeText(long n) {
+        if (n >= 1024 * 1024) return String.format(Locale.US, "%.1fMB", n / 1048576.0);
+        return Math.max(1, n / 1024) + "KB";
+    }
+
+    private void renderLibrary() {
+        content.addView(Ui.text(this, "자료실", 22, Ui.INK, true));
+        content.addView(Ui.text(this, "양식·계약서·안내문 같은 파일을 올려 두고 직원 모두가 내려받아 쓰는 곳이에요. 오른쪽 아래 + 로 올립니다.", 13, Ui.GRAY, false), Ui.lp(this, 4));
+        final EditText q = Ui.field(this, "🔍 제목·설명·파일 이름 검색 (초성 가능)", false);
+        q.setText(libQuery);
+        content.addView(q, Ui.lp(this, 8));
+        q.setOnEditorActionListener((v, a, ev) -> {
+            libQuery = q.getText().toString();
+            render();
+            return true;
+        });
+        HorizontalScrollView hs = new HorizontalScrollView(this);
+        hs.setHorizontalScrollBarEnabled(false);
+        LinearLayout chips = new LinearLayout(this);
+        chips.setOrientation(LinearLayout.HORIZONTAL);
+        final List<String> labels = new ArrayList<>();
+        labels.add("전체");
+        labels.addAll(java.util.Arrays.asList(LIB_CATS));
+        for (final String lb : labels) {
+            boolean on = lb.equals("전체") ? libCat.isEmpty() : lb.equals(libCat);
+            TextView t = Ui.text(this, lb, 13, on ? Ui.DARK : Ui.INK, true);
+            t.setPadding(Ui.dp(this, 14), Ui.dp(this, 8), Ui.dp(this, 14), Ui.dp(this, 8));
+            t.setBackground(Ui.round(on ? Ui.GOLD : Ui.FIELD, 16, this));
+            t.setOnClickListener(v -> {
+                libCat = lb.equals("전체") ? "" : lb;
+                render();
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.rightMargin = Ui.dp(this, 6);
+            chips.addView(t, lp);
+        }
+        hs.addView(chips);
+        content.addView(hs, Ui.lp(this, 8));
+        List<JSONObject> list = store.list(store.arr("library"));
+        Collections.sort(list, (a, b) -> b.optString("created").compareTo(a.optString("created")));
+        int shown = 0;
+        for (final JSONObject p : list) {
+            if (!libCat.isEmpty() && !libCat.equals(p.optString("cat"))) continue;
+            JSONArray fs = p.optJSONArray("files");
+            StringBuilder names = new StringBuilder();
+            if (fs != null) for (int i = 0; i < fs.length(); i++) names.append(fs.optJSONObject(i).optString("fname")).append(' ');
+            if (!libQuery.isEmpty() && !Kor.match(p.optString("title") + " " + p.optString("desc") + " " + names + store.userName(p.optInt("who")), libQuery)) continue;
+            shown++;
+            LinearLayout c = Ui.card(this);
+            c.addView(Ui.text(this, p.optString("title"), 16, Ui.INK, true));
+            c.addView(Ui.text(this, p.optString("cat") + " · " + store.userName(p.optInt("who")) + " · " + p.optString("created"), 12, Ui.GRAY, false), Ui.lp(this, 2));
+            if (!p.optString("desc").isEmpty()) {
+                TextView d = Ui.text(this, p.optString("desc"), 14, Ui.INK, false);
+                d.setMaxLines(2);
+                d.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                c.addView(d, Ui.lp(this, 4));
+            }
+            if (fs != null && fs.length() > 0) c.addView(Ui.text(this, "📎 파일 " + fs.length() + "개", 13, Ui.DEEP, true), Ui.lp(this, 4));
+            c.setOnClickListener(v -> showLibraryPost(p));
+            content.addView(c, Ui.lp(this, 8));
+        }
+        if (shown == 0) content.addView(Ui.text(this, list.isEmpty() ? "아직 올라온 자료가 없어요. + 를 눌러 첫 자료를 올려 보세요." : "찾는 자료가 없어요.", 15, Ui.GRAY, false), Ui.lp(this, 24));
+    }
+
+    private void showLibraryPost(final JSONObject p) {
+        LinearLayout l = form();
+        l.addView(Ui.text(this, p.optString("title"), 19, Ui.INK, true));
+        l.addView(Ui.text(this, p.optString("cat") + " · " + store.userName(p.optInt("who")) + " · " + p.optString("created"), 12, Ui.GRAY, false), Ui.lp(this, 2));
+        if (!p.optString("desc").isEmpty()) {
+            TextView d = Ui.text(this, p.optString("desc"), 15, Ui.INK, false);
+            d.setLineSpacing(0, 1.25f);
+            d.setTextIsSelectable(true);
+            android.text.util.Linkify.addLinks(d, android.text.util.Linkify.WEB_URLS);
+            l.addView(d, Ui.lp(this, 10));
+        }
+        JSONArray fs = p.optJSONArray("files");
+        if (fs != null && fs.length() > 0) {
+            l.addView(Ui.text(this, "첨부 파일 (눌러서 열기·저장)", 13, Ui.GRAY, true), Ui.lp(this, 14));
+            for (int i = 0; i < fs.length(); i++) {
+                final JSONObject f = fs.optJSONObject(i);
+                TextView t = Ui.text(this, "📎 " + f.optString("fname") + "  (" + sizeText(f.optLong("size")) + ")", 15, Ui.DEEP, true);
+                t.setPadding(0, Ui.dp(this, 10), 0, Ui.dp(this, 10));
+                t.setOnClickListener(v -> {
+                    Ui.toast(this, "파일을 받는 중…");
+                    openBlob(f.optString("blob"), f.optInt("chunks"), f.optString("fname"), false);
+                });
+                l.addView(t);
+            }
+        }
+        ScrollView sv = new ScrollView(this);
+        sv.addView(l);
+        AlertDialog.Builder b = new AlertDialog.Builder(this).setView(sv).setNegativeButton("닫기", null);
+        if (p.optInt("who") == myId() || can(Perm.STAFF_MANAGE)) {
+            b.setPositiveButton("수정", (d, w) -> showEditLibrary(p));
+            b.setNeutralButton("삭제", (d, w) -> new AlertDialog.Builder(this).setTitle("'" + p.optString("title") + "' 삭제할까요?")
+                    .setMessage("자료실 목록에서 사라져요. 서버에는 기록이 보관됩니다.").setNegativeButton("취소", null)
+                    .setPositiveButton("삭제", (d2, w2) -> {
+                        try {
+                            p.put("deleted", true);
+                        } catch (Exception ignored) {
+                        }
+                        store.save();
+                        Ui.toast(this, "삭제했어요.");
+                        render();
+                    }).show());
+        }
+        b.show();
+    }
+
+    private void showEditLibrary(final JSONObject p) {
+        LinearLayout f = form();
+        final EditText title = Ui.field(this, "제목 (필수, 예: 가맹점 계약서 양식)", false);
+        final EditText desc = Ui.field(this, "설명 (선택)", false);
+        desc.setSingleLine(false);
+        desc.setMinLines(3);
+        final Spinner cat = spinner(LIB_CATS);
+        if (p != null) {
+            title.setText(p.optString("title"));
+            desc.setText(p.optString("desc"));
+            for (int i = 0; i < LIB_CATS.length; i++) if (LIB_CATS[i].equals(p.optString("cat"))) cat.setSelection(i);
+        }
+        f.addView(title);
+        f.addView(desc);
+        f.addView(Ui.text(this, "분류", 13, Ui.GRAY, true), Ui.lp(this, 10));
+        f.addView(cat);
+        if (p == null) {
+            libPending.clear();
+            libUploading = 0;
+            libFilesTv = Ui.text(this, "첨부 파일 없음", 14, Ui.GRAY, false);
+            Button add = Ui.button(this, "📎 파일 추가 (사진·문서, 3MB까지)", Ui.TINT, Ui.DEEP);
+            add.setOnClickListener(v -> {
+                if (libPending.size() + libUploading >= 5) {
+                    Ui.toast(this, "한 글에 파일은 5개까지 올릴 수 있어요.");
+                    return;
+                }
+                try {
+                    Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+                    i.setType("*/*");
+                    i.addCategory(Intent.CATEGORY_OPENABLE);
+                    startActivityForResult(Intent.createChooser(i, "올릴 파일 고르기"), REQ_LIB);
+                } catch (Exception e) {
+                    Ui.toast(this, "열 수 있는 앱이 없어요.");
+                }
+            });
+            f.addView(add, Ui.lp(this, 12));
+            f.addView(libFilesTv, Ui.lp(this, 6));
+        }
+        ScrollView sv = new ScrollView(this);
+        sv.addView(f);
+        final AlertDialog dlg = new AlertDialog.Builder(this).setTitle(p == null ? "자료 올리기" : "자료 수정").setView(sv)
+                .setNegativeButton("취소", (d, w) -> libFilesTv = null).setPositiveButton(p == null ? "올리기" : "저장", null).create();
+        dlg.show();
+        dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            String t = title.getText().toString().trim();
+            if (t.isEmpty()) {
+                Ui.toast(this, "제목을 입력해 주세요.");
+                return;
+            }
+            if (p == null && libUploading > 0) {
+                Ui.toast(this, "파일을 올리는 중이에요. 잠시 뒤 다시 눌러 주세요.");
+                return;
+            }
+            JSONObject o = p != null ? p : store.create("library");
+            try {
+                o.put("title", t);
+                o.put("desc", desc.getText().toString().trim());
+                o.put("cat", (String) cat.getSelectedItem());
+                if (p == null) {
+                    o.put("who", myId());
+                    o.put("files", new JSONArray(libPending.toString()));
+                }
+            } catch (Exception ignored) {
+            }
+            store.save();
+            libFilesTv = null;
+            dlg.dismiss();
+            Ui.toast(this, p == null ? "자료를 올렸어요." : "저장했어요.");
+            render();
+        });
+    }
+
+    private void refreshLibFiles() {
+        if (libFilesTv == null) return;
+        StringBuilder sb = new StringBuilder();
+        for (JSONObject f : libPending) sb.append("📎 ").append(f.optString("fname")).append("  (").append(sizeText(f.optLong("size"))).append(")\n");
+        if (libUploading > 0) sb.append("올리는 중… ").append(libUploading).append("개");
+        libFilesTv.setText(sb.length() == 0 ? "첨부 파일 없음" : sb.toString().trim());
+    }
+
+    /** 고른 파일을 읽는다. 사진은 줄여서, 그 밖의 파일은 3MB까지 그대로. {바이트(없으면 null), 형식, 이름} */
+    private Object[] readLibFile(android.content.ContentResolver cr, Uri u) {
+        String mime = cr.getType(u);
+        String name = Media.name(cr, u);
+        if (name == null || name.isEmpty()) name = "파일";
+        byte[] b;
+        if (mime != null && mime.startsWith("image/")) {
+            android.graphics.Bitmap bm = Media.decode(cr, u, 1600);
+            b = bm == null ? null : Media.jpeg(bm, 900 * 1024);
+            mime = "image/jpeg";
+            if (!name.toLowerCase(Locale.ROOT).matches(".*\\.(jpg|jpeg)$")) name = name.replaceAll("\\.[A-Za-z0-9]+$", "") + ".jpg";
+        } else {
+            b = Media.readAll(cr, u, Media.MAX_FILE);
+            if (mime == null) mime = "application/octet-stream";
+        }
+        return new Object[]{b, mime, name};
+    }
+
+    /** 파일을 서버 보관함(blobs)에 조각으로 올리고, 다 올라가면 첨부 목록에 넣는다. */
+    private void uploadLibFile(final byte[] data, final String mime, final String fname) {
+        final String id = String.valueOf(store.nextId());
+        Media.write(Media.blobFile(this, id), data);
+        final int n = Math.max(1, (data.length + Media.CHUNK - 1) / Media.CHUNK);
+        final java.util.concurrent.atomic.AtomicInteger left = new java.util.concurrent.atomic.AtomicInteger(n);
+        final java.util.concurrent.atomic.AtomicBoolean failed = new java.util.concurrent.atomic.AtomicBoolean(false);
+        libUploading++;
+        refreshLibFiles();
+        for (int i = 0; i < n; i++) {
+            int from = i * Media.CHUNK, to = Math.min(data.length, from + Media.CHUNK);
+            java.util.Map<String, Object> d = new java.util.HashMap<>();
+            d.put("d", Media.b64(java.util.Arrays.copyOfRange(data, from, to)));
+            d.put("mime", mime);
+            d.put("name", fname);
+            d.put("i", (long) i);
+            d.put("n", (long) n);
+            d.put("u", System.currentTimeMillis());
+            d.put("by", (long) myId());
+            Cloud.fs().collection("blobs").document(id + "_" + i).set(d).addOnSuccessListener(x -> {
+                if (left.decrementAndGet() == 0 && !failed.get()) {
+                    try {
+                        JSONObject f = new JSONObject();
+                        f.put("blob", id);
+                        f.put("chunks", n);
+                        f.put("fname", fname);
+                        f.put("size", data.length);
+                        libPending.add(f);
+                    } catch (Exception ignored) {
+                    }
+                    libUploading = Math.max(0, libUploading - 1);
+                    refreshLibFiles();
+                }
+            }).addOnFailureListener(e -> {
+                if (failed.compareAndSet(false, true)) {
+                    libUploading = Math.max(0, libUploading - 1);
+                    refreshLibFiles();
+                    Ui.toast(this, "올리지 못했어요. 인터넷을 확인해 주세요.");
+                }
+            });
+        }
+    }
 
     // ======================= v0.12: 가맹점 보호 장치 · 1:1 비공개 대화 =======================
     private static String stamp() {
@@ -4129,7 +4402,7 @@ public class MainActivity extends Activity {
         JSONArray mm = r.optJSONArray("members");
         int other = 0;
         if (mm != null) for (int i = 0; i < mm.length(); i++) if (mm.optInt(i) != myId()) other = mm.optInt(i);
-        return "🔒 " + (other == 0 ? "나와의 대화" : store.userName(other));
+        return other == 0 ? "나와의 대화" : store.userName(other);
     }
 
     private void showStartDm() {
@@ -4146,7 +4419,7 @@ public class MainActivity extends Activity {
         Collections.sort(us, (x, y) -> x.optString("name").compareTo(y.optString("name")));
         String[] names = new String[us.size()];
         for (int i = 0; i < names.length; i++) names[i] = us.get(i).optString("name");
-        new AlertDialog.Builder(this).setTitle("누구와 1:1 대화할까요? (둘만 보여요)").setItems(names, (d, w) -> startDm(us.get(w).optInt("id"))).setNegativeButton("취소", null).show();
+        new AlertDialog.Builder(this).setTitle("누구와 1:1 대화할까요?").setItems(names, (d, w) -> startDm(us.get(w).optInt("id"))).setNegativeButton("취소", null).show();
     }
 
     private void startDm(int uid) {
