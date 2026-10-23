@@ -26,7 +26,8 @@ import java.util.Map;
  * 자료는 삭제하지 않는다. 바뀐 문서는 서버에 올리면서 변경 기록(audit)도 남긴다.
  */
 final class Store {
-    static final String[] COLLS = {"users", "tasks", "notices", "projects", "contracts", "events"};
+    static final String[] COLLS = {"users", "tasks", "notices", "projects", "contracts", "events", "merchants", "stock", "rooms", "msgs"};
+    static final String[] GRADES = {"우량", "중상", "중간", "중하", "주의", "신규"};
 
     private final SharedPreferences sp;
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -93,6 +94,7 @@ final class Store {
         for (final String coll : COLLS) {
             Query q = Cloud.fs().collection(coll);
             if ("contracts".equals(coll) && !canPerf) q = q.whereEqualTo("who", (long) uid);
+            if ("msgs".equals(coll)) q = q.orderBy("u", Query.Direction.DESCENDING).limit(400);
             regs.add(q.addSnapshotListener((snap, err) -> {
                 if (snap == null) return;
                 boolean changed = false;
@@ -174,6 +176,10 @@ final class Store {
                         m.put("date", o.optString("date"));
                     }
                     Cloud.fs().collection(coll).document(String.valueOf(id)).set(m);
+                    if ("msgs".equals(coll)) {
+                        pushed.put(key, s);
+                        continue;
+                    }
                     Map<String, Object> au = new HashMap<>();
                     au.put("c", coll);
                     au.put("id", (long) id);
@@ -487,5 +493,51 @@ final class Store {
         List<JSONObject> out = new ArrayList<>();
         for (int i = 0; i < a.length(); i++) out.add(a.optJSONObject(i));
         return out;
+    }
+
+    // ---------- 가맹점·재고·채팅·계약 공통 ----------
+    JSONArray arr(String coll) {
+        return db.optJSONArray(coll);
+    }
+
+    JSONObject byId(String coll, int id) {
+        JSONArray a = arr(coll);
+        for (int i = 0; i < a.length(); i++) if (a.optJSONObject(i).optInt("id") == id) return a.optJSONObject(i);
+        return null;
+    }
+
+    /** 새 문서를 만들어 목록에 넣고 돌려준다. 값을 채운 뒤 save()를 부르면 서버에 올라간다. */
+    JSONObject create(String coll) {
+        try {
+            JSONObject o = new JSONObject();
+            o.put("id", nextId());
+            o.put("created", now());
+            arr(coll).put(o);
+            return o;
+        } catch (JSONException e) {
+            return null;
+        }
+    }
+
+    /** 재고 한 줄을 출고 처리(수량 여러 개짜리는 1개만 떼어 낸다). 쓰인 줄을 돌려준다. */
+    JSONObject takeStock(JSONObject row, int merchant, int contract) {
+        try {
+            JSONObject use = row;
+            if (row.optString("serial").isEmpty() && row.optInt("qty", 1) > 1) {
+                row.put("qty", row.optInt("qty", 1) - 1);
+                use = create("stock");
+                use.put("model", row.optString("model"));
+                use.put("serial", "");
+                use.put("safe", row.optInt("safe"));
+                use.put("deleted", false);
+            }
+            use.put("qty", 1);
+            use.put("status", "출고중");
+            use.put("merchant", merchant);
+            use.put("contract", contract);
+            return use;
+        } catch (JSONException e) {
+            return row;
+        }
     }
 }
