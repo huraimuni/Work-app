@@ -5,6 +5,7 @@ import android.app.AlertDialog;
 import android.content.Intent;
 import android.graphics.Color;
 import android.net.Uri;
+import android.content.res.Configuration;
 import android.os.Bundle;
 import android.os.Handler;
 import android.widget.ImageView;
@@ -50,6 +51,7 @@ public class MainActivity extends Activity {
     private boolean showAll;
     private String historyQuery = "";
     private String sub = null;
+    private Runnable lastAuth = null;
     private int calY = 0, calM = 0;
     private String calSel = "";
     private int perfY = 0, perfM = 0;
@@ -60,9 +62,38 @@ public class MainActivity extends Activity {
         store = new Store(this);
         showSplash();
         new Handler().postDelayed(() -> {
-            if (store.hasUsers()) showLogin();
+            JSONObject saved = store.sessionUser();
+            if (saved != null) {
+                me = saved;
+                buildMain();
+            } else if (store.hasUsers()) showLogin();
             else showSetup();
         }, 1800);
+    }
+
+    /** 폴드를 펼치거나 돌려도 앱이 새로 시작되지 않고, 화면 폭에 맞게 다시 그린다. */
+    @Override
+    public void onConfigurationChanged(Configuration c) {
+        super.onConfigurationChanged(c);
+        if (me != null) buildMain();
+        else if (lastAuth != null) lastAuth.run();
+    }
+
+    private int widthDp() {
+        return getResources().getConfiguration().screenWidthDp;
+    }
+
+    /** 폴드 펼침·태블릿 등 넓은 화면(너비 600dp 이상). */
+    private boolean wide() {
+        return widthDp() >= 600;
+    }
+
+    private static final int RAIL_DP = 96;
+    private static final int MAX_CONTENT_DP = 680;
+
+    /** 넓은 화면에서 내용이 가운데 오도록 양옆에 두는 여백(dp). */
+    private int centerOffsetDp() {
+        return Math.max(0, (widthDp() - RAIL_DP - MAX_CONTENT_DP) / 2);
     }
 
     /** 앱을 켜면 잠깐 보이는 시작 화면. */
@@ -116,7 +147,8 @@ public class MainActivity extends Activity {
         l.setOrientation(LinearLayout.VERTICAL);
         l.setGravity(Gravity.CENTER_VERTICAL);
         l.setBackgroundColor(Color.WHITE);
-        l.setPadding(Ui.dp(this, 24), Ui.dp(this, 24), Ui.dp(this, 24), Ui.dp(this, 24));
+        int side = Math.max(Ui.dp(this, 24), (getResources().getDisplayMetrics().widthPixels - Ui.dp(this, 440)) / 2);
+        l.setPadding(side, Ui.dp(this, 24), side, Ui.dp(this, 24));
         android.widget.ImageView logo = new android.widget.ImageView(this);
         logo.setImageResource(R.drawable.logo9);
         logo.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
@@ -134,6 +166,7 @@ public class MainActivity extends Activity {
 
     // ---------------- 첫 실행: 관리자 만들기 ----------------
     private void showSetup() {
+        lastAuth = this::showSetup;
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         final EditText name = Ui.field(this, "관리자 이름", false);
@@ -152,6 +185,7 @@ public class MainActivity extends Activity {
                 Ui.toast(this, "비밀번호는 숫자 4자리 이상이고 두 칸이 같아야 합니다.");
             } else {
                 me = store.addUser(n, p, Perm.preset("관리자"));
+                store.setSession(me.optInt("id"));
                 buildMain();
             }
         });
@@ -160,6 +194,7 @@ public class MainActivity extends Activity {
     }
 
     private void showLogin() {
+        lastAuth = this::showLogin;
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         final EditText name = Ui.field(this, "이름", false);
@@ -173,6 +208,7 @@ public class MainActivity extends Activity {
                 Ui.toast(this, "이름 또는 비밀번호가 맞지 않거나 사용이 중지된 계정입니다.");
             } else {
                 me = u;
+                store.setSession(u.optInt("id"));
                 buildMain();
             }
         });
@@ -192,6 +228,8 @@ public class MainActivity extends Activity {
     private TextView fab;
 
     private void buildMain() {
+        final boolean wide = wide();
+        final int off = wide ? centerOffsetDp() : 0;
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.WHITE);
 
@@ -202,7 +240,7 @@ public class MainActivity extends Activity {
         LinearLayout head = new LinearLayout(this);
         head.setOrientation(LinearLayout.HORIZONTAL);
         head.setGravity(Gravity.CENTER_VERTICAL);
-        head.setPadding(Ui.dp(this, 20), Ui.dp(this, 8), Ui.dp(this, 20), Ui.dp(this, 12));
+        head.setPadding(Ui.dp(this, 20 + off), Ui.dp(this, 8), Ui.dp(this, 20 + off), Ui.dp(this, 12));
         LinearLayout hl = new LinearLayout(this);
         hl.setOrientation(LinearLayout.VERTICAL);
         hl.addView(Ui.text(this, new SimpleDateFormat("M월 d일 EEEE", Locale.KOREA).format(new Date()), 13, Ui.GRAY, false));
@@ -219,12 +257,42 @@ public class MainActivity extends Activity {
 
         ScrollView sv = new ScrollView(this);
         sv.setVerticalScrollBarEnabled(false);
+        FrameLayout holder = new FrameLayout(this);
         content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(Ui.dp(this, 20), 0, Ui.dp(this, 20), Ui.dp(this, 160));
-        sv.addView(content);
+        content.setPadding(Ui.dp(this, 20), 0, Ui.dp(this, 20), Ui.dp(this, wide ? 48 : 160));
+        int cw = wide ? Ui.dp(this, Math.min(MAX_CONTENT_DP, widthDp() - RAIL_DP)) : ViewGroup.LayoutParams.MATCH_PARENT;
+        FrameLayout.LayoutParams cl = new FrameLayout.LayoutParams(cw, ViewGroup.LayoutParams.WRAP_CONTENT);
+        cl.gravity = Gravity.CENTER_HORIZONTAL;
+        holder.addView(content, cl);
+        sv.addView(holder);
         main.addView(sv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
-        root.addView(main, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        nav = new LinearLayout(this);
+        nav.setBackgroundColor(Color.WHITE);
+        nav.setElevation(Ui.dp(this, wide ? 4 : 10));
+        if (wide) {
+            nav.setOrientation(LinearLayout.VERTICAL);
+            nav.setPadding(Ui.dp(this, 8), Ui.dp(this, 56), Ui.dp(this, 8), Ui.dp(this, 16));
+            ImageView logo = new ImageView(this);
+            logo.setImageResource(R.drawable.logo9);
+            logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            logo.setContentDescription("나인페이먼츠 로고");
+            LinearLayout.LayoutParams lg = new LinearLayout.LayoutParams(Ui.dp(this, 56), Ui.dp(this, 56));
+            lg.gravity = Gravity.CENTER_HORIZONTAL;
+            lg.bottomMargin = Ui.dp(this, 20);
+            nav.addView(logo, lg);
+            LinearLayout outer = new LinearLayout(this);
+            outer.setOrientation(LinearLayout.HORIZONTAL);
+            outer.addView(nav, new LinearLayout.LayoutParams(Ui.dp(this, RAIL_DP), ViewGroup.LayoutParams.MATCH_PARENT));
+            outer.addView(main, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+            root.addView(outer, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        } else {
+            nav.setOrientation(LinearLayout.HORIZONTAL);
+            nav.setGravity(Gravity.CENTER_VERTICAL);
+            nav.setPadding(Ui.dp(this, 4), Ui.dp(this, 6), Ui.dp(this, 4), Ui.dp(this, 6));
+            root.addView(main, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        }
 
         fab = Ui.text(this, "+", 28, Ui.DARK, false);
         fab.setGravity(Gravity.CENTER);
@@ -232,19 +300,15 @@ public class MainActivity extends Activity {
         fab.setElevation(Ui.dp(this, 6));
         FrameLayout.LayoutParams fp = new FrameLayout.LayoutParams(Ui.dp(this, 56), Ui.dp(this, 56));
         fp.gravity = Gravity.BOTTOM | Gravity.END;
-        fp.rightMargin = Ui.dp(this, 20);
-        fp.bottomMargin = Ui.dp(this, 84);
+        fp.rightMargin = Ui.dp(this, wide ? 24 + off : 20);
+        fp.bottomMargin = Ui.dp(this, wide ? 32 : 84);
         root.addView(fab, fp);
 
-        nav = new LinearLayout(this);
-        nav.setOrientation(LinearLayout.HORIZONTAL);
-        nav.setGravity(Gravity.CENTER_VERTICAL);
-        nav.setBackgroundColor(Color.WHITE);
-        nav.setElevation(Ui.dp(this, 10));
-        nav.setPadding(Ui.dp(this, 4), Ui.dp(this, 6), Ui.dp(this, 4), Ui.dp(this, 6));
-        FrameLayout.LayoutParams np = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 64));
-        np.gravity = Gravity.BOTTOM;
-        root.addView(nav, np);
+        if (!wide) {
+            FrameLayout.LayoutParams np = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 64));
+            np.gravity = Gravity.BOTTOM;
+            root.addView(nav, np);
+        }
         setContentView(root);
         render();
     }
@@ -264,7 +328,9 @@ public class MainActivity extends Activity {
     }
 
     private void render() {
-        nav.removeAllViews();
+        // 넓은 화면의 왼쪽 메뉴는 맨 위 로고(첫 번째 자식)를 남기고 메뉴만 다시 만든다.
+        int keep = wide() ? 1 : 0;
+        while (nav.getChildCount() > keep) nav.removeViewAt(nav.getChildCount() - 1);
         addNav("task", "업무", newCount());
         addNav("project", "프로젝트", 0);
         addNav("chat", "채팅", 0);
@@ -341,7 +407,13 @@ public class MainActivity extends Activity {
             sub = null;
             render();
         });
-        nav.addView(t, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+        if (wide()) {
+            LinearLayout.LayoutParams wp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 52));
+            wp.bottomMargin = Ui.dp(this, 6);
+            nav.addView(t, wp);
+        } else {
+            nav.addView(t, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+        }
     }
 
     private int statusColor(String s) {
@@ -1179,6 +1251,7 @@ public class MainActivity extends Activity {
                 .setMessage("로그아웃 할까요?").setNegativeButton("취소", null)
                 .setPositiveButton("로그아웃", (d, w) -> {
                     me = null;
+                    store.setSession(0);
                     sub = null;
                     tab = "task";
                     showLogin();

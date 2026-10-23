@@ -70,6 +70,17 @@ final class Store {
         }
     }
 
+    // ---------- 로그인 유지 ----------
+    void setSession(int id) {
+        sp.edit().putInt("session", id).apply();
+    }
+
+    JSONObject sessionUser() {
+        int id = sp.getInt("session", 0);
+        JSONObject u = id == 0 ? null : user(id);
+        return u != null && u.optBoolean("active", true) ? u : null;
+    }
+
     // ---------- 직원 ----------
     boolean hasUsers() {
         return db.optJSONArray("users").length() > 0;
