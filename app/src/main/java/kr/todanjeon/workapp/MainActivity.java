@@ -1328,6 +1328,10 @@ public class MainActivity extends Activity {
         }));
         e.add(new Entry("일", "재고", "재고 장비 바코드 시리얼 단가 입고 출고 스캔", () -> goSub("stock")));
         e.add(new Entry("일", "가맹점", "가맹점 거래처 상호 사업자 등급 삭제", () -> goSub("merchants")));
+        e.add(new Entry("일", "가맹점 일괄 가져오기 (엑셀·이카운트)", "가맹점 일괄 가져오기 업로드 엑셀 csv 이카운트 거래처 등록", () -> {
+            goSub("merchants");
+            startMerchantImport();
+        }));
         Entry c = new Entry("일", "계약 관리 (설치 완료·만료 알림)", "계약 설치 완료 만료 알림 장비 추가", () -> goSub("contracts"));
         int ex = expiringContracts().size();
         c.badge = ex > 0 ? "만료 " + ex : "";
@@ -1820,6 +1824,9 @@ public class MainActivity extends Activity {
     private void renderMerchants() {
         content.addView(title("가맹점"));
         content.addView(Ui.text(this, "우리가 관리하는 가맹점 목록이에요. 오른쪽 아래 + 로 새로 등록하고, 눌러서 수정합니다.", 13, Ui.GRAY, false));
+        Button imp = Ui.button(this, "📥 엑셀·CSV 로 가맹점 일괄 가져오기 (이카운트 등)", Ui.TINT, Ui.DEEP);
+        imp.setOnClickListener(v -> startMerchantImport());
+        content.addView(imp, Ui.lp(this, 10));
         final EditText q = Ui.field(this, "상호·번호·주소 검색 (초성도 돼요)", false);
         content.addView(q, Ui.lp(this, 10));
         final LinearLayout list = new LinearLayout(this);
@@ -2684,6 +2691,7 @@ public class MainActivity extends Activity {
             {"신규 계약 올리기", "계약이 되면 바로 올려 주세요. (전체 → 신규 계약 올리기, 또는 계약 관리 화면의 + 버튼)\n\n1. 가맹점 조회·선택: 등록된 가맹점을 고릅니다. 없으면 '새 가맹점 등록'.\n2. 결제 연동: VAN사 또는 PG사, 업체명 (예: 다우데이타).\n3. 구분을 고르면 금액 입력 이름이 바뀝니다.\n   - 판매 → 판매금액\n   - CMS → CMS 금액\n   - 렌탈 → 월 렌탈료\n4. 나가는 장비: '+ 장비 추가'를 눌러 재고에서 체크해 고릅니다. 재고에 없으면 '직접 입력'으로 모델명·시리얼을 적어요. 잘못 고른 장비는 오른쪽 − 로 뺍니다. 장비를 여러 번 + 해서 여러 대를 넣을 수 있어요.\n5. 장비 메모: 설치 조건 등 자유롭게 적습니다.\n6. 계약일과 만료일: 만료일 아래 '+12개월 / +24개월 / +36개월' 버튼을 누르면 계약일 기준으로 자동 계산됩니다.\n7. '올리기'.\n\n※ 올리면 고른 장비는 재고에서 '출고중'이 됩니다."},
             {"계약 관리 · 설치 완료 · 만료 알림", "(전체 → 계약 관리)\n\n■ 계약 보기\n- 위쪽에 '만료가 가까운 계약(3개월 이내)'이 빨간 D-숫자와 함께 먼저 나옵니다. 아래는 전체 계약입니다.\n- 일반 직원은 내가 올린 계약만, 실적 권한이 있는 사람은 전체 계약이 보입니다.\n\n■ 설치 완료\n- 계약을 누르고 '설치 완료'를 누르면 나간 장비가 재고에서 완전히 빠집니다.\n\n■ 장비 추가\n- 같은 가맹점에 장비가 더 나가면 계약을 열어 '장비 추가'를 눌러 모델명·시리얼을 이어서 추가합니다.\n\n■ 만료 알림\n- 만료가 90일 이하로 남은 계약이 있으면 '업무' 탭 위에 알림 카드가 뜨고, 전체 탭에도 숫자가 표시됩니다."},
             {"실적 (권한자 전용)", "■ 내 실적 (전체 → 내 실적)\n- 나만 볼 수 있습니다. 이번 달 신규 계약 대수, 판매금액, 올린 계약 목록, 지난달과의 비교가 나와요.\n\n■ 전체 실적·직원별 순위 (실적 보기 권한자)\n- 위 ‹ › 로 월을 바꿉니다.\n- 신규 계약 대수와 판매금액, 직원별 순위 막대 그래프, 올라온 계약 목록이 나옵니다.\n- 월별 성과 (v0.7.0): '지난달 → 선택한 달' 계약 대수와 성장률(▲ 늘어남 / ▼ 줄어듦, 지난달이 0이면 '신규')을 직원별 막대 두 개(회색 지난달, 금색 이번 달)로 보여 줍니다. 그 아래 최근 6개월 추이 그래프도 있어요.\n- 계약을 누르면 상세 정보와 장비를 볼 수 있어요.\n\n■ 수익 현황 (실적 보기 권한자, 전체 → 수익 현황)\n- 지금까지 총 수익, 선택한 달 수익(매출·매입), 최근 6개월 수익 그래프, 직원별 수익이 나옵니다.\n- 계약에 올라가 출고된 장비(출고중·설치완료)의 '출고 단가 − 입고 단가'를 합산하고, 월은 계약일 기준이에요.\n- 단가를 아직 안 적은 장비는 수익에서 빠지고, 맨 아래 목록에 나옵니다. 눌러서 단가를 적으면 바로 반영돼요."},
+            {"가맹점 일괄 가져오기 (엑셀·CSV)", "(v0.11.0, 전체 → 가맹점 → 맨 위 '가맹점 일괄 가져오기')\n\n■ 준비\n- 이카운트(또는 다른 곳)에서 거래처 목록을 엑셀로 내려받아요. 형식은 .xlsx 또는 CSV 입니다. 옛 .xls 는 엑셀에서 .xlsx 로 다시 저장해 주세요.\n- 첫 줄(머리글)에 '거래처명'(또는 상호·가맹점명)이 있어야 합니다. 사업자등록번호, 거래처코드, 대표자, 전화, 핸드폰, 주소, 등급, 업태, 종목, 메모 열이 있으면 함께 가져와요.\n\n■ 가져오기\n1. 버튼을 눌러 파일을 고릅니다.\n2. 미리보기에서 새로 등록·갱신·건너뜀 개수와 읽은 열을 확인합니다.\n3. '가져오기'를 누르면 등록됩니다.\n\n■ 다시 올려도 안전해요\n- 같은 거래처코드, 사업자번호, 상호가 있으면 새로 만들지 않고 갱신합니다. 파일에 값이 있는 칸만 덮어쓰고 빈 칸은 그대로예요.\n- 새 가맹점의 등급은 파일에 등급이 없으면 '5코드 · 신규가맹점'으로 들어갑니다.\n- 핸드폰 열이 있으면 단체 문자에 그 번호를 씁니다."},
             {"입금 확인 · 비상연락망 · 알림 · 백업", "(v0.10.0)\n\n■ 입금 확인 (전체 → 입금 확인)\n- 오른쪽 아래 + → 종류(판매대금/미납금/정보변경수수료/기타), 금액, 가맹점 선택, 메모를 넣고 '올리기'.\n- 올리면 '입금확인' 채팅방에 자동으로 글이 올라가요(방이 없으면 만들어요). 다른 직원 폰에는 알림이 갑니다.\n- 내역을 눌러 '확인 처리'를 하면 확인한 사람 이름이 남고 채팅방에도 알려요.\n\n■ 비상연락망 (전체 → 비상연락망)\n- + 로 이름·구분(본사, 카드사, 밴사, 직원 등)·번호를 등록해요. 연락처를 누르면 전화 화면이 열립니다. 길게 누르면 수정·삭제.\n\n■ 서류 업무 자동 알림\n- 업무 지시에서 종류가 '서류 접수' 또는 '카드사 서류'이면 '서류접수' 채팅방에 담당자·거래처·기한이 자동으로 올라갑니다.\n\n■ 폰 알림\n- 내게 새 업무가 지시되거나, 새 채팅·공지·입금 요청이 오면 폰 알림이 떠요. 처음 한 번 알림 허용을 눌러 주세요. 앱이 완전히 종료된 뒤에는 알림이 오지 않을 수 있습니다(완전한 푸시는 서버 요금제 전환 후 지원).\n\n■ 데이터 백업 (관리자)\n- 전체 → 데이터 백업 내려받기: 업무·가맹점·계약·재고·채팅 글 등 전체 자료를 파일로 만들어 드라이브 등에 보관할 수 있어요. 정기적으로(예: 매주) 받아 두세요."},
             {"공지사항 · 직원과 권한", "■ 공지사항 (전체 → 공지사항)\n- 공지 쓰기 권한이 있으면 + 버튼으로 작성합니다. '맨 위에 고정'을 켜면 항상 위에 보여요.\n- 읽지 않은 공지는 ● 표시와 전체 탭 숫자로 알려줍니다. 누르면 읽음 처리돼요.\n\n■ 직원과 권한 (관리자 전용)\n- + 버튼 → 이름, 휴대폰 번호, 권한 묶음을 선택해 직원을 등록합니다. 등록된 번호로만 로그인할 수 있어요.\n- 직원을 누르면 항목별 권한을 켜고 끌 수 있고, '사용 중지'로 퇴사자의 접근을 막습니다.\n- 마지막 관리자는 중지하거나 권한을 끌 수 없습니다.\n\n※ '실적 보기'(수익 현황과 재고 단가 포함)와 '일일보고·실적보고 종합 보기'는 서버에서 강제로 막혀 안전합니다. 나머지 권한은 화면에서 숨기는 방식이에요."},
             {"일일보고 · 실적 보고서", "■ 일일보고 쓰기 (전체 → 일일보고 쓰기)\n- 날짜를 확인하고, 오늘 한 일·특이사항·내일 계획을 적어 '제출하기'를 누릅니다.\n- 그날 완료한 업무와 올린 계약은 자동으로 같이 집계돼요.\n- 같은 날 다시 쓰면 수정본으로 덮어씁니다. 아래에서 내가 낸 보고를 다시 열어 볼 수 있어요.\n\n■ 일일보고 종합 (대표님)\n- 전체 → 일일보고 종합 보기: 날짜별로 직원별 보고가 한 화면에 모이고, 미제출자는 빨간색으로 표시됩니다.\n- 이 메뉴는 '일일보고·실적보고 종합 보기' 권한이 켜진 사람만 봅니다. 관리자도 예외가 아니에요(v0.7.0부터). 처음에는 관리자에게 켜져 있고, 대표님을 등록하면 대표님께 켜 드린 뒤 관리자 쪽을 끄면 됩니다.\n\n■ 실적 보고서 (본부장 → 대표님)\n- 전체 → 실적 보고서 올리기: 이번 달 실적이 자동 집계되어 채워져 있고, 고쳐서 '대표님께 보고하기'를 누릅니다.\n- 대표님은 같은 메뉴에서 올라온 보고서를 봅니다.\n\n※ 보고서 양식은 정해지면 그 모양에 맞춰 바꿀 수 있어요."},
@@ -2725,6 +2733,7 @@ public class MainActivity extends Activity {
 
     /** {버전, 날짜, 내용}. 새 버전은 맨 위에 추가. CI 가 현재 versionName 항목이 있는지 검사한다. */
     private static final String[][] CHANGELOG = {
+            {"0.11.0", "2026-10-24", "• 가맹점 일괄 가져오기: 이카운트 등에서 내려받은 엑셀(.xlsx)·CSV 를 올리면 머리글을 알아보고 미리보기 후 등록·갱신 (같은 거래처코드·사업자번호·상호는 중복 없이 갱신)\n• 휴대폰 번호 열이 따로 있으면 단체 문자에 사용"},
             {"0.10.1", "2026-10-24", "• 나인이 프렌즈 스티커 80종을 다시 그림: 점프·기울기·발 구르기·눈물·연기·소품 등 문구에 맞는 동작으로 다양하게"},
             {"0.10.0", "2026-10-24", "• 입금 확인: 입금 내역(판매대금·미납금·정보변경수수료·기타)을 올리고 가맹점을 표시, '입금확인' 채팅방에 자동 알림, 확인 처리\n• 비상연락망: 이름·구분·번호 목록, 누르면 바로 전화, 검색·수정·삭제\n• 서류 업무를 지시하면 '서류접수' 채팅방에 자동으로 알림 글\n• 새 업무·채팅·공지·입금이 올라오면 폰 알림\n• 관리자: 데이터 백업 내려받기(JSON 파일)"},
             {"0.9.1", "2026-10-24", "• 채팅 말풍선 속 링크(주소)를 누르면 바로 열려요 (여러 개면 고르기). 링크는 파란 밑줄로 보입니다"},
@@ -2757,7 +2766,7 @@ public class MainActivity extends Activity {
     private EditText roomInput;
     private LinearLayout emojiPanel;
     private int lastMsgCount = -1;
-    private static final int REQ_IMG = 101, REQ_FILE = 102, REQ_PROFILE = 103, REQ_OCR = 104, REQ_CAM = 105;
+    private static final int REQ_IMG = 101, REQ_FILE = 102, REQ_PROFILE = 103, REQ_OCR = 104, REQ_CAM = 105, REQ_IMPORT = 106;
     private final java.util.Map<String, android.graphics.Bitmap> bmpCache = new java.util.HashMap<>();
     private File camFile;
 
@@ -3172,6 +3181,16 @@ public class MainActivity extends Activity {
                 runOnUiThread(() -> {
                     if (jp == null) Ui.toast(this, "사진을 읽지 못했어요.");
                     else sendBlob("img", jp, "image/jpeg", "사진_" + new SimpleDateFormat("MMdd_HHmmss", Locale.KOREA).format(new Date()) + ".jpg");
+                });
+            }).start();
+        } else if (req == REQ_IMPORT) {
+            final Uri u = data.getData();
+            if (u == null) return;
+            new Thread(() -> {
+                final byte[] raw = Media.readAll(cr, u, 8 * 1024 * 1024);
+                runOnUiThread(() -> {
+                    if (raw == null) Ui.toast(this, "파일을 읽지 못했어요. (8MB 이하만 가능)");
+                    else previewImport(raw, Media.name(cr, u));
                 });
             }).start();
         } else if (req == REQ_FILE) {
@@ -3699,6 +3718,100 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
             Ui.toast(this, "백업 파일을 만들 수 없어요.");
         }
+    }
+
+
+    // ======================= v0.11: 가맹점 엑셀·CSV 일괄 가져오기 =======================
+    private void startMerchantImport() {
+        Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+        i.setType("*/*");
+        i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "text/csv", "text/comma-separated-values", "text/plain", "application/vnd.ms-excel", "application/octet-stream"});
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        startActivityForResult(Intent.createChooser(i, "가맹점 엑셀·CSV 고르기"), REQ_IMPORT);
+    }
+
+    private JSONObject findMerchant(String ecode, String bizDigits, String name) {
+        List<JSONObject> all = store.list(store.arr("merchants"));
+        if (!ecode.isEmpty()) for (JSONObject m : all) if (ecode.equals(m.optString("ecode"))) return m;
+        if (bizDigits.length() == 10) for (JSONObject m : all) if (bizDigits.equals(m.optString("bizno").replaceAll("[^0-9]", ""))) return m;
+        if (!name.isEmpty()) for (JSONObject m : all) if (name.equals(m.optString("name").trim())) return m;
+        return null;
+    }
+
+    private void previewImport(byte[] raw, String fname) {
+        final List<List<String>> rows;
+        try {
+            rows = MerchantImport.read(raw, fname);
+        } catch (Exception e) {
+            new AlertDialog.Builder(this).setTitle("읽을 수 없어요").setMessage(e.getMessage() == null ? "파일 형식을 확인해 주세요." : e.getMessage()).setPositiveButton("확인", null).show();
+            return;
+        }
+        Object[] h = MerchantImport.findHeader(rows);
+        if (h == null) {
+            new AlertDialog.Builder(this).setTitle("머리글을 못 찾았어요").setMessage("첫 줄(머리글)에 '거래처명' 또는 '상호'가 있어야 해요. 사업자등록번호·대표자·전화·핸드폰·주소 열도 있으면 함께 가져옵니다.").setPositiveButton("확인", null).show();
+            return;
+        }
+        final int hr = (Integer) h[0];
+        @SuppressWarnings("unchecked") final java.util.Map<String, Integer> map = (java.util.Map<String, Integer>) h[1];
+        int add = 0, upd = 0, skip = 0;
+        final List<List<String>> data = new ArrayList<>();
+        for (int i = hr + 1; i < rows.size(); i++) {
+            List<String> r = rows.get(i);
+            String nm = MerchantImport.cell(r, map, "name");
+            if (nm.isEmpty()) {
+                skip++;
+                continue;
+            }
+            data.add(r);
+            JSONObject ex = findMerchant(MerchantImport.cell(r, map, "ecode"), MerchantImport.cell(r, map, "bizno").replaceAll("[^0-9]", ""), nm);
+            if (ex == null) add++;
+            else upd++;
+        }
+        StringBuilder found = new StringBuilder();
+        for (java.util.Map.Entry<String, Integer> en : map.entrySet()) found.append(en.getKey()).append(" ← ").append(rows.get(hr).get(en.getValue())).append("\n");
+        final int fa = add, fu = upd;
+        new AlertDialog.Builder(this).setTitle("가져오기 미리보기")
+                .setMessage("새로 등록 " + add + "곳\n기존 가맹점 갱신 " + upd + "곳\n건너뜀(상호 없음) " + skip + "곳\n\n[읽은 열]\n" + found
+                        + "\n※ 같은 거래처코드·사업자번호·상호가 있으면 새로 만들지 않고, 파일에 값이 있는 칸만 덮어씁니다(빈 칸은 그대로 둠).")
+                .setNegativeButton("취소", null)
+                .setPositiveButton("가져오기", (d, w) -> applyImport(data, map, fa, fu)).show();
+    }
+
+    private void applyImport(List<List<String>> data, java.util.Map<String, Integer> map, int add, int upd) {
+        for (List<String> r : data) {
+            String nm = MerchantImport.cell(r, map, "name");
+            String biz = MerchantImport.cell(r, map, "bizno");
+            String ec = MerchantImport.cell(r, map, "ecode");
+            JSONObject m = findMerchant(ec, biz.replaceAll("[^0-9]", ""), nm);
+            boolean isNew = m == null;
+            if (isNew) m = store.create("merchants");
+            try {
+                put(m, "name", nm, false);
+                if (!biz.isEmpty()) m.put("bizno", MerchantImport.bizFmt(biz));
+                put(m, "ecode", ec, false);
+                put(m, "owner", MerchantImport.cell(r, map, "owner"), false);
+                put(m, "phone", MerchantImport.cell(r, map, "phone"), false);
+                put(m, "mobile", MerchantImport.cell(r, map, "mobile"), false);
+                if (m.optString("phone").isEmpty() && !m.optString("mobile").isEmpty()) m.put("phone", m.optString("mobile"));
+                put(m, "addr", MerchantImport.cell(r, map, "addr"), false);
+                int g = MerchantImport.gradeOf(MerchantImport.cell(r, map, "grade"));
+                if (g >= 0) m.put("grade", g);
+                else if (isNew) m.put("grade", 5);
+                String memo = MerchantImport.cell(r, map, "memo");
+                String bt = (MerchantImport.cell(r, map, "biztype") + " " + MerchantImport.cell(r, map, "bizitem")).trim();
+                if (isNew) m.put("memo", ((memo.isEmpty() ? "" : memo + " · ") + (bt.isEmpty() ? "" : "업태/종목 " + bt)).trim());
+                else if (!memo.isEmpty()) m.put("memo", memo);
+                if (isNew) m.put("deleted", false);
+            } catch (Exception ignored) {
+            }
+        }
+        store.save();
+        Ui.toast(this, "가맹점 " + add + "곳 등록, " + upd + "곳 갱신했어요.");
+        render();
+    }
+
+    private static void put(JSONObject m, String k, String v, boolean force) throws Exception {
+        if (!v.isEmpty() || force) m.put(k, v);
     }
 
 
@@ -4339,6 +4452,8 @@ public class MainActivity extends Activity {
 
     private static String mobileOf(JSONObject m) {
         String d = m.optString("phone").replaceAll("[^0-9]", "");
+        if (d.startsWith("01") && d.length() >= 10 && d.length() <= 11) return d;
+        d = m.optString("mobile").replaceAll("[^0-9]", "");
         return d.startsWith("01") && d.length() >= 10 && d.length() <= 11 ? d : "";
     }
 
