@@ -26,7 +26,7 @@ import java.util.Map;
  * 자료는 삭제하지 않는다. 바뀐 문서는 서버에 올리면서 변경 기록(audit)도 남긴다.
  */
 final class Store {
-    static final String[] COLLS = {"users", "tasks", "notices", "projects", "contracts", "events", "merchants", "stock", "rooms", "msgs", "reports", "profiles", "costs"};
+    static final String[] COLLS = {"users", "tasks", "notices", "projects", "contracts", "events", "merchants", "stock", "rooms", "msgs", "reports", "profiles", "costs", "contacts", "deposits"};
     static final String[] GRADES = {"S · 5만원 이상", "A · 3만원 이상", "B · 1만원 이상", "C · 1만원 미만", "해지가맹점", "신규가맹점", "", "협력사"};
 
     private final SharedPreferences sp;
@@ -38,6 +38,15 @@ final class Store {
     private final List<com.google.firebase.firestore.ListenerRegistration> regs = new ArrayList<>();
     private int actor = 0;
     private boolean online = false;
+    java.util.function.BiConsumer<String, JSONObject> notifier = null;
+
+    String dumpJson() {
+        try {
+            return db.toString(2);
+        } catch (JSONException e) {
+            return db.toString();
+        }
+    }
 
     Store(Context c) {
         sp = c.getSharedPreferences("workapp", Context.MODE_PRIVATE);
@@ -97,9 +106,11 @@ final class Store {
             if ("contracts".equals(coll) && !canPerf) q = q.whereEqualTo("who", (long) uid);
             if ("reports".equals(coll) && !canReport) q = q.whereEqualTo("who", (long) uid);
             if ("msgs".equals(coll)) q = q.orderBy("u", Query.Direction.DESCENDING).limit(400);
+            final boolean[] firstSnap = {true};
             regs.add(q.addSnapshotListener((snap, err) -> {
                 if (snap == null) return;
                 boolean changed = false;
+                final List<JSONObject> fresh = new ArrayList<>();
                 for (DocumentChange dc : snap.getDocumentChanges()) {
                     if (dc.getType() == DocumentChange.Type.REMOVED) continue;
                     String j = dc.getDocument().getString("j");
@@ -110,15 +121,19 @@ final class Store {
                         String key = coll + "/" + id;
                         if (j.equals(pushed.get(key))) continue;
                         pushed.put(key, j);
+                        if (!firstSnap[0] && byId(coll, id) == null) fresh.add(o);
                         replace(db.optJSONArray(coll), o);
                         if ("users".equals(coll)) pushedPhone.put(key, phoneSig(o));
                         changed = true;
                     } catch (JSONException ignored) {
                     }
                 }
+                firstSnap[0] = false;
                 if (changed) {
                     saveLocal();
                     if (onChange != null) main.post(onChange);
+                    final java.util.function.BiConsumer<String, JSONObject> nf = notifier;
+                    if (nf != null) for (final JSONObject o : fresh) main.post(() -> nf.accept(coll, o));
                 }
             }));
         }

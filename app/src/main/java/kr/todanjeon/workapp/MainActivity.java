@@ -72,6 +72,7 @@ public class MainActivity extends Activity {
 
     /** 로그인된 상태로 앱에 들어간다: 서버와 실시간 연결하고, 내 정보가 도착하면 화면을 그린다. */
     private void enterApp() {
+        setupNotify();
         store.attach(store.sessionId(), store.cachedPerf(), store.cachedReport(), this::onRemote);
         me = store.sessionUser();
         if (me != null) buildMain();
@@ -501,6 +502,8 @@ public class MainActivity extends Activity {
         else if ("manual".equals(k)) renderManual();
         else if ("about".equals(k)) renderAbout();
         else if ("sms".equals(k)) renderSms();
+        else if ("deposit".equals(k)) renderDeposits();
+        else if ("contacts".equals(k)) renderContacts();
         else if ("profit".equals(k) && canPerf()) renderProfit();
         else renderAll();
         updateFab();
@@ -543,6 +546,14 @@ public class MainActivity extends Activity {
             fab.setVisibility(View.VISIBLE);
             fab.setContentDescription("공지 작성");
             fab.setOnClickListener(v -> showCreateNotice());
+        } else if ("deposit".equals(k)) {
+            fab.setVisibility(View.VISIBLE);
+            fab.setContentDescription("입금 올리기");
+            fab.setOnClickListener(v -> showAddDeposit());
+        } else if ("contacts".equals(k)) {
+            fab.setVisibility(View.VISIBLE);
+            fab.setContentDescription("연락처 추가");
+            fab.setOnClickListener(v -> showEditContact(null));
         } else if ("stock".equals(k)) {
             fab.setVisibility(View.VISIBLE);
             fab.setContentDescription("재고 추가");
@@ -780,6 +791,11 @@ public class MainActivity extends Activity {
                     store.addTask(ti, TYPES[type.getSelectedItemPosition()], client.getText().toString().trim(),
                             phone.getText().toString().trim(), addr.getText().toString().trim(),
                             due.getText().toString().trim(), memo.getText().toString().trim(), assignee, myId());
+                    String tp = TYPES[type.getSelectedItemPosition()];
+                    if (tp.contains("서류")) {
+                        postToRoom("서류접수", "📄 서류 업무 · " + ti + (client.getText().toString().trim().isEmpty() ? "" : " · " + client.getText().toString().trim())
+                                + "\n담당 " + store.userName(assignee) + " · 지시 " + store.userName(myId()) + (due.getText().toString().trim().isEmpty() ? "" : " · 기한 " + due.getText().toString().trim()));
+                    }
                     Ui.toast(this, store.userName(assignee) + "님에게 업무를 지시했습니다.");
                     render();
                 }).show();
@@ -1317,6 +1333,8 @@ public class MainActivity extends Activity {
         c.badge = ex > 0 ? "만료 " + ex : "";
         e.add(c);
         e.add(new Entry("일", "신규 계약 올리기", "신규 계약 올리기 CMS 판매 렌탈", () -> showAddContract()));
+        e.add(new Entry("일", "입금 확인 (입금 내역 올리기)", "입금 확인 입금 내역 미납금 판매대금 정보변경수수료 입금확인", () -> goSub("deposit")));
+        e.add(new Entry("회사", "비상연락망 (눌러서 전화)", "비상연락망 연락처 전화 번호 비상 본사 카드사 밴사", () -> goSub("contacts")));
         e.add(new Entry("일", "단체 문자 보내기 (가맹점)", "단체 문자 sms 발송 가맹점 문자 안내", () -> goSub("sms")));
         e.add(new Entry("일", "내 실적", "내 실적 월별 성장률 계약", () -> goSub("myperf")));
         if (canPerf()) {
@@ -1336,6 +1354,7 @@ public class MainActivity extends Activity {
         int un = unreadNotices();
         n.badge = un > 0 ? String.valueOf(un) : "";
         e.add(n);
+        if (can(Perm.STAFF_MANAGE)) e.add(new Entry("관리자", "데이터 백업 내려받기", "데이터 백업 내려받기 저장 내보내기 json", () -> exportBackup()));
         if (can(Perm.STAFF_MANAGE)) e.add(new Entry("관리자", "직원과 권한", "직원 권한 등록 사용 중지 관리자", () -> goSub("staff")));
         e.add(new Entry("계정", "내 프로필 (사진·상태 메시지)", "프로필 사진 상태 메시지 내 정보", () -> showProfile(myId())));
         e.add(new Entry("계정", "로그아웃", "로그아웃 나가기", () -> new AlertDialog.Builder(this).setTitle("로그아웃")
@@ -2665,6 +2684,7 @@ public class MainActivity extends Activity {
             {"신규 계약 올리기", "계약이 되면 바로 올려 주세요. (전체 → 신규 계약 올리기, 또는 계약 관리 화면의 + 버튼)\n\n1. 가맹점 조회·선택: 등록된 가맹점을 고릅니다. 없으면 '새 가맹점 등록'.\n2. 결제 연동: VAN사 또는 PG사, 업체명 (예: 다우데이타).\n3. 구분을 고르면 금액 입력 이름이 바뀝니다.\n   - 판매 → 판매금액\n   - CMS → CMS 금액\n   - 렌탈 → 월 렌탈료\n4. 나가는 장비: '+ 장비 추가'를 눌러 재고에서 체크해 고릅니다. 재고에 없으면 '직접 입력'으로 모델명·시리얼을 적어요. 잘못 고른 장비는 오른쪽 − 로 뺍니다. 장비를 여러 번 + 해서 여러 대를 넣을 수 있어요.\n5. 장비 메모: 설치 조건 등 자유롭게 적습니다.\n6. 계약일과 만료일: 만료일 아래 '+12개월 / +24개월 / +36개월' 버튼을 누르면 계약일 기준으로 자동 계산됩니다.\n7. '올리기'.\n\n※ 올리면 고른 장비는 재고에서 '출고중'이 됩니다."},
             {"계약 관리 · 설치 완료 · 만료 알림", "(전체 → 계약 관리)\n\n■ 계약 보기\n- 위쪽에 '만료가 가까운 계약(3개월 이내)'이 빨간 D-숫자와 함께 먼저 나옵니다. 아래는 전체 계약입니다.\n- 일반 직원은 내가 올린 계약만, 실적 권한이 있는 사람은 전체 계약이 보입니다.\n\n■ 설치 완료\n- 계약을 누르고 '설치 완료'를 누르면 나간 장비가 재고에서 완전히 빠집니다.\n\n■ 장비 추가\n- 같은 가맹점에 장비가 더 나가면 계약을 열어 '장비 추가'를 눌러 모델명·시리얼을 이어서 추가합니다.\n\n■ 만료 알림\n- 만료가 90일 이하로 남은 계약이 있으면 '업무' 탭 위에 알림 카드가 뜨고, 전체 탭에도 숫자가 표시됩니다."},
             {"실적 (권한자 전용)", "■ 내 실적 (전체 → 내 실적)\n- 나만 볼 수 있습니다. 이번 달 신규 계약 대수, 판매금액, 올린 계약 목록, 지난달과의 비교가 나와요.\n\n■ 전체 실적·직원별 순위 (실적 보기 권한자)\n- 위 ‹ › 로 월을 바꿉니다.\n- 신규 계약 대수와 판매금액, 직원별 순위 막대 그래프, 올라온 계약 목록이 나옵니다.\n- 월별 성과 (v0.7.0): '지난달 → 선택한 달' 계약 대수와 성장률(▲ 늘어남 / ▼ 줄어듦, 지난달이 0이면 '신규')을 직원별 막대 두 개(회색 지난달, 금색 이번 달)로 보여 줍니다. 그 아래 최근 6개월 추이 그래프도 있어요.\n- 계약을 누르면 상세 정보와 장비를 볼 수 있어요.\n\n■ 수익 현황 (실적 보기 권한자, 전체 → 수익 현황)\n- 지금까지 총 수익, 선택한 달 수익(매출·매입), 최근 6개월 수익 그래프, 직원별 수익이 나옵니다.\n- 계약에 올라가 출고된 장비(출고중·설치완료)의 '출고 단가 − 입고 단가'를 합산하고, 월은 계약일 기준이에요.\n- 단가를 아직 안 적은 장비는 수익에서 빠지고, 맨 아래 목록에 나옵니다. 눌러서 단가를 적으면 바로 반영돼요."},
+            {"입금 확인 · 비상연락망 · 알림 · 백업", "(v0.10.0)\n\n■ 입금 확인 (전체 → 입금 확인)\n- 오른쪽 아래 + → 종류(판매대금/미납금/정보변경수수료/기타), 금액, 가맹점 선택, 메모를 넣고 '올리기'.\n- 올리면 '입금확인' 채팅방에 자동으로 글이 올라가요(방이 없으면 만들어요). 다른 직원 폰에는 알림이 갑니다.\n- 내역을 눌러 '확인 처리'를 하면 확인한 사람 이름이 남고 채팅방에도 알려요.\n\n■ 비상연락망 (전체 → 비상연락망)\n- + 로 이름·구분(본사, 카드사, 밴사, 직원 등)·번호를 등록해요. 연락처를 누르면 전화 화면이 열립니다. 길게 누르면 수정·삭제.\n\n■ 서류 업무 자동 알림\n- 업무 지시에서 종류가 '서류 접수' 또는 '카드사 서류'이면 '서류접수' 채팅방에 담당자·거래처·기한이 자동으로 올라갑니다.\n\n■ 폰 알림\n- 내게 새 업무가 지시되거나, 새 채팅·공지·입금 요청이 오면 폰 알림이 떠요. 처음 한 번 알림 허용을 눌러 주세요. 앱이 완전히 종료된 뒤에는 알림이 오지 않을 수 있습니다(완전한 푸시는 서버 요금제 전환 후 지원).\n\n■ 데이터 백업 (관리자)\n- 전체 → 데이터 백업 내려받기: 업무·가맹점·계약·재고·채팅 글 등 전체 자료를 파일로 만들어 드라이브 등에 보관할 수 있어요. 정기적으로(예: 매주) 받아 두세요."},
             {"공지사항 · 직원과 권한", "■ 공지사항 (전체 → 공지사항)\n- 공지 쓰기 권한이 있으면 + 버튼으로 작성합니다. '맨 위에 고정'을 켜면 항상 위에 보여요.\n- 읽지 않은 공지는 ● 표시와 전체 탭 숫자로 알려줍니다. 누르면 읽음 처리돼요.\n\n■ 직원과 권한 (관리자 전용)\n- + 버튼 → 이름, 휴대폰 번호, 권한 묶음을 선택해 직원을 등록합니다. 등록된 번호로만 로그인할 수 있어요.\n- 직원을 누르면 항목별 권한을 켜고 끌 수 있고, '사용 중지'로 퇴사자의 접근을 막습니다.\n- 마지막 관리자는 중지하거나 권한을 끌 수 없습니다.\n\n※ '실적 보기'(수익 현황과 재고 단가 포함)와 '일일보고·실적보고 종합 보기'는 서버에서 강제로 막혀 안전합니다. 나머지 권한은 화면에서 숨기는 방식이에요."},
             {"일일보고 · 실적 보고서", "■ 일일보고 쓰기 (전체 → 일일보고 쓰기)\n- 날짜를 확인하고, 오늘 한 일·특이사항·내일 계획을 적어 '제출하기'를 누릅니다.\n- 그날 완료한 업무와 올린 계약은 자동으로 같이 집계돼요.\n- 같은 날 다시 쓰면 수정본으로 덮어씁니다. 아래에서 내가 낸 보고를 다시 열어 볼 수 있어요.\n\n■ 일일보고 종합 (대표님)\n- 전체 → 일일보고 종합 보기: 날짜별로 직원별 보고가 한 화면에 모이고, 미제출자는 빨간색으로 표시됩니다.\n- 이 메뉴는 '일일보고·실적보고 종합 보기' 권한이 켜진 사람만 봅니다. 관리자도 예외가 아니에요(v0.7.0부터). 처음에는 관리자에게 켜져 있고, 대표님을 등록하면 대표님께 켜 드린 뒤 관리자 쪽을 끄면 됩니다.\n\n■ 실적 보고서 (본부장 → 대표님)\n- 전체 → 실적 보고서 올리기: 이번 달 실적이 자동 집계되어 채워져 있고, 고쳐서 '대표님께 보고하기'를 누릅니다.\n- 대표님은 같은 메뉴에서 올라온 보고서를 봅니다.\n\n※ 보고서 양식은 정해지면 그 모양에 맞춰 바꿀 수 있어요."},
             {"단체 문자 (가맹점)", "(전체 → 단체 문자 보내기, 또는 전체 탭 검색창에 '문자')\n\n■ 이렇게 동작해요\n- 내용을 쓰고, 보낼 가맹점을 고른 뒤 '문자 보내기 시작'을 누르면 가맹점 한 곳씩 이 폰의 문자 앱이 열립니다. 내용이 미리 채워져 있으니 확인하고 '전송'만 누르면 돼요.\n- 한 곳씩 따로 보내서 받는 분들끼리 번호가 보이지 않습니다. 문자 요금은 이 폰의 요금제로 나갑니다.\n- 내용에 {상호} 라고 쓰면 가맹점 이름으로 바뀝니다. 예: {상호} 사장님, 안녕하세요. 나인페이먼츠입니다.\n\n■ 받는 가맹점 고르기\n- 칸을 눌러 하나씩 고르거나, 위의 'S 등급 선택' 같은 버튼으로 등급 전체를 한 번에 고릅니다. '보이는 전체 선택'은 검색 결과 전체를 고르고, '선택 해제'는 모두 풉니다.\n- 유선 번호(02·062 등)는 문자를 받을 수 없어서 선택할 수 없어요.\n\n■ 보내는 순서\n1. '문자 앱 열기' → 문자 앱에서 전송.\n2. 이 앱으로 돌아오면 다음 가맹점이 준비돼 있습니다. 필요 없으면 '건너뛰기', 그만두려면 '중단'.\n3. 끝나면 문자 앱의 보낸 기록에서 보내졌는지 확인하세요. 앱은 전송을 눌렀는지 알 수 없어요.\n\n※ 수십 곳 이상을 한꺼번에 보내는 기능(문자 업체 연동)은 서버 요금제 전환 후에 만들 예정입니다."},
@@ -2705,6 +2725,7 @@ public class MainActivity extends Activity {
 
     /** {버전, 날짜, 내용}. 새 버전은 맨 위에 추가. CI 가 현재 versionName 항목이 있는지 검사한다. */
     private static final String[][] CHANGELOG = {
+            {"0.10.0", "2026-10-24", "• 입금 확인: 입금 내역(판매대금·미납금·정보변경수수료·기타)을 올리고 가맹점을 표시, '입금확인' 채팅방에 자동 알림, 확인 처리\n• 비상연락망: 이름·구분·번호 목록, 누르면 바로 전화, 검색·수정·삭제\n• 서류 업무를 지시하면 '서류접수' 채팅방에 자동으로 알림 글\n• 새 업무·채팅·공지·입금이 올라오면 폰 알림\n• 관리자: 데이터 백업 내려받기(JSON 파일)"},
             {"0.9.1", "2026-10-24", "• 채팅 말풍선 속 링크(주소)를 누르면 바로 열려요 (여러 개면 고르기). 링크는 파란 밑줄로 보입니다"},
             {"0.9.0", "2026-10-24", "• 새 스티커 '나인이 프렌즈' 5마리 80종: 나인이(아홉꼬리 여우)·복이(두꺼비)·호야(아기 호랑이)·깍이(까치)·도리(다람쥐). 신규계약 성공·축하·빡쳐·힘내 + 우리 업무(POS 설치, AS, 랜선, 단말기 수리·도색, 토스 영업, 차에서 꿀잠…)\n• 채팅 반응을 텔레그램처럼: 두 번 탭하면 ❤️, 붙은 이모티콘을 누르면 하트·엄지 등 목록이 떠서 바로 고르기, 길게 누르면 맨 위에 이모티콘 줄"},
             {"0.8.0", "2026-10-24", "• 채팅: 말풍선 두 번 누르면 ❤️ 좋아요, 길게 누르면 답장·이모티콘 반응·복사·삭제 (텔레그램 방식)\n• 우리 회사 캐릭터 '나인이' 스티커 12종, 이모지/스티커 판\n• 채팅 파일을 3MB까지 보낼 수 있게 확대\n• 가맹점 삭제 (최고관리자만, 수정 창에도 삭제 버튼)\n• 바코드는 한 번 누르면 한 번만 입력, 계약 장비 추가에서 바코드를 읽으면 그 장비가 바로 추가\n• 전체 탭 맨 위 기능 검색(단어·초성)\n• 가맹점 단체 문자: 폰 문자 앱으로 한 곳씩, {상호} 자동 치환"},
@@ -3415,6 +3436,270 @@ public class MainActivity extends Activity {
             Ui.toast(this, "링크를 열 수 없어요.");
         }
     }
+
+    // ======================= v0.10: 입금확인 · 비상연락망 · 알림 · 백업 =======================
+    private static final String[] DEP_KINDS = {"판매대금", "미납금", "정보변경수수료", "기타"};
+
+    /** 이름이 맞는 채팅방에 시스템 글(내 이름)을 올린다. 방이 없으면 만든다. */
+    private void postToRoom(String roomName, String text) {
+        int rid = 0;
+        for (JSONObject r : store.list(store.arr("rooms"))) if (roomName.equals(r.optString("name"))) rid = r.optInt("id");
+        try {
+            if (rid == 0) {
+                JSONObject r = store.create("rooms");
+                r.put("name", roomName);
+                r.put("by", myId());
+                rid = r.optInt("id");
+            }
+            JSONObject m = store.create("msgs");
+            m.put("room", rid);
+            m.put("who", myId());
+            m.put("text", text);
+            m.put("ts", System.currentTimeMillis());
+        } catch (Exception ignored) {
+        }
+        store.save();
+    }
+
+    private void renderDeposits() {
+        content.addView(Ui.text(this, "입금 확인", 22, Ui.INK, true));
+        content.addView(Ui.text(this, "입금 내역을 올리면 '입금확인' 채팅방에도 자동으로 알림이 올라가요. 오른쪽 아래 + 로 올립니다.", 13, Ui.GRAY, false), Ui.lp(this, 4));
+        List<JSONObject> list = store.list(store.arr("deposits"));
+        Collections.sort(list, (a, b) -> b.optString("t").compareTo(a.optString("t")));
+        if (list.isEmpty()) content.addView(Ui.text(this, "올라온 입금 내역이 없습니다.", 15, Ui.GRAY, false), Ui.lp(this, 24));
+        long sum = 0;
+        for (final JSONObject d : list) {
+            LinearLayout c = Ui.card(this);
+            boolean ok = d.optBoolean("ok");
+            c.addView(Ui.text(this, d.optString("kind") + "  " + won(d.optLong("amount")) + (ok ? "  ✔ 확인됨" : "  · 확인 전"), 16, ok ? Ui.GREEN : Ui.INK, true));
+            String who = d.optString("mname");
+            c.addView(Ui.text(this, (who.isEmpty() ? "(가맹점 미지정)" : who) + (d.optString("memo").isEmpty() ? "" : " · " + d.optString("memo")), 14, Ui.INK, false), Ui.lp(this, 2));
+            c.addView(Ui.text(this, d.optString("t") + " · 올린 사람 " + store.userName(d.optInt("by")) + (ok ? " · 확인 " + store.userName(d.optInt("okby")) : ""), 12, Ui.GRAY, false), Ui.lp(this, 2));
+            c.setOnClickListener(v -> showDeposit(d));
+            content.addView(c, Ui.lp(this, 10));
+            if (!ok) sum += d.optLong("amount");
+        }
+    }
+
+    private void showDeposit(final JSONObject d) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(d.optString("kind")).append(" ").append(won(d.optLong("amount"))).append("\n가맹점: ").append(d.optString("mname").isEmpty() ? "-" : d.optString("mname"))
+                .append("\n메모: ").append(d.optString("memo").isEmpty() ? "-" : d.optString("memo")).append("\n올린 사람: ").append(store.userName(d.optInt("by"))).append(" · ").append(d.optString("t"));
+        AlertDialog.Builder b = new AlertDialog.Builder(this).setTitle("입금 내역").setMessage(sb.toString()).setNegativeButton("닫기", null);
+        if (!d.optBoolean("ok")) {
+            b.setPositiveButton("확인 처리", (x, w) -> {
+                try {
+                    d.put("ok", true);
+                    d.put("okby", myId());
+                } catch (Exception ignored) {
+                }
+                store.save();
+                postToRoom("입금확인", "✔ 입금 확인 완료 · " + d.optString("kind") + " " + won(d.optLong("amount")) + (d.optString("mname").isEmpty() ? "" : " · " + d.optString("mname")) + " (" + store.userName(myId()) + ")");
+                render();
+            });
+        }
+        b.show();
+    }
+
+    private void showAddDeposit() {
+        final JSONObject[] mer = new JSONObject[1];
+        LinearLayout f = form();
+        final Spinner kind = new Spinner(this);
+        kind.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, DEP_KINDS));
+        final EditText amt = Ui.field(this, "금액 (원, 숫자)", false);
+        amt.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        final EditText memo = Ui.field(this, "메모 (기타일 때 내용, 입금자명 등)", false);
+        final TextView merInfo = Ui.text(this, "", 13, Ui.INK, false);
+        Button pick = Ui.button(this, "가맹점 조회·선택 (어느 가맹점 입금인지)", Ui.TINT, Ui.DEEP);
+        pick.setOnClickListener(v -> pickMerchant(m -> {
+            mer[0] = m;
+            merInfo.setText(m.optString("name"));
+        }));
+        f.addView(kind);
+        f.addView(amt);
+        f.addView(pick, Ui.lp(this, 10));
+        f.addView(merInfo, Ui.lp(this, 6));
+        f.addView(memo);
+        ScrollView sv = new ScrollView(this);
+        sv.addView(f);
+        new AlertDialog.Builder(this).setTitle("입금 올리기").setView(sv).setNegativeButton("취소", null)
+                .setPositiveButton("올리기", (x, w) -> {
+                    long a = parseWon(amt);
+                    if (a <= 0) {
+                        Ui.toast(this, "금액을 입력해 주세요.");
+                        return;
+                    }
+                    String k = DEP_KINDS[kind.getSelectedItemPosition()];
+                    JSONObject d = store.create("deposits");
+                    try {
+                        d.put("kind", k);
+                        d.put("amount", a);
+                        d.put("memo", memo.getText().toString().trim());
+                        d.put("merchant", mer[0] == null ? 0 : mer[0].optInt("id"));
+                        d.put("mname", mer[0] == null ? "" : mer[0].optString("name"));
+                        d.put("by", myId());
+                        d.put("t", Store.now());
+                        d.put("ok", false);
+                    } catch (Exception ignored) {
+                    }
+                    store.save();
+                    postToRoom("입금확인", "💰 입금 확인 요청 · " + k + " " + won(a) + (mer[0] == null ? "" : " · " + mer[0].optString("name"))
+                            + (memo.getText().toString().trim().isEmpty() ? "" : " · " + memo.getText().toString().trim()) + " (" + store.userName(myId()) + ")");
+                    Ui.toast(this, "올렸어요. '입금확인' 채팅방에도 알렸습니다.");
+                    render();
+                }).show();
+    }
+
+    private String contactQuery = "";
+
+    private void renderContacts() {
+        content.addView(Ui.text(this, "비상연락망", 22, Ui.INK, true));
+        content.addView(Ui.text(this, "번호를 누르면 전화 걸기 화면이 열려요. 길게 누르면 수정·삭제. 오른쪽 아래 + 로 추가합니다.", 13, Ui.GRAY, false), Ui.lp(this, 4));
+        final EditText q = Ui.field(this, "🔍 이름·구분·번호 검색 (초성 가능)", false);
+        q.setText(contactQuery);
+        content.addView(q, Ui.lp(this, 8));
+        q.setOnEditorActionListener((v, a, ev) -> {
+            contactQuery = q.getText().toString();
+            render();
+            return true;
+        });
+        List<JSONObject> list = store.list(store.arr("contacts"));
+        Collections.sort(list, (a, b) -> {
+            int c = a.optString("cat").compareTo(b.optString("cat"));
+            return c != 0 ? c : a.optString("name").compareTo(b.optString("name"));
+        });
+        if (list.isEmpty()) content.addView(Ui.text(this, "등록된 연락처가 없습니다. + 를 눌러 본사·카드사·밴사·긴급 연락처를 넣어 두세요.", 15, Ui.GRAY, false), Ui.lp(this, 24));
+        String cat = null;
+        for (final JSONObject c : list) {
+            if (!contactQuery.isEmpty() && !Kor.match(c.optString("name") + " " + c.optString("cat") + " " + c.optString("phone") + " " + c.optString("memo"), contactQuery)) continue;
+            if (!c.optString("cat").equals(cat)) {
+                cat = c.optString("cat");
+                content.addView(Ui.text(this, cat.isEmpty() ? "기타" : cat, 14, Ui.DEEP, true), Ui.lp(this, 14));
+            }
+            LinearLayout row = Ui.card(this);
+            row.addView(Ui.text(this, c.optString("name"), 16, Ui.INK, true));
+            row.addView(Ui.text(this, "📞 " + c.optString("phone") + (c.optString("memo").isEmpty() ? "" : " · " + c.optString("memo")), 14, Ui.DEEP, false), Ui.lp(this, 2));
+            row.setOnClickListener(v -> {
+                try {
+                    startActivity(new Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + c.optString("phone").replaceAll("[^0-9+*#]", ""))));
+                } catch (Exception e) {
+                    Ui.toast(this, "전화를 걸 수 없어요.");
+                }
+            });
+            row.setOnLongClickListener(v -> {
+                showEditContact(c);
+                return true;
+            });
+            content.addView(row, Ui.lp(this, 8));
+        }
+    }
+
+    private void showEditContact(final JSONObject c) {
+        LinearLayout f = form();
+        final EditText name = Ui.field(this, "이름 (필수, 예: 본사 총무)", false);
+        final EditText cat = Ui.field(this, "구분 (예: 본사, 카드사, 밴사, 직원, 긴급)", false);
+        final EditText ph = Ui.field(this, "전화번호 (필수)", false);
+        ph.setInputType(android.text.InputType.TYPE_CLASS_PHONE);
+        final EditText memo = Ui.field(this, "메모 (선택)", false);
+        if (c != null) {
+            name.setText(c.optString("name"));
+            cat.setText(c.optString("cat"));
+            ph.setText(c.optString("phone"));
+            memo.setText(c.optString("memo"));
+        }
+        f.addView(name);
+        f.addView(cat);
+        f.addView(ph);
+        f.addView(memo);
+        ScrollView sv = new ScrollView(this);
+        sv.addView(f);
+        AlertDialog.Builder b = new AlertDialog.Builder(this).setTitle(c == null ? "연락처 추가" : "연락처 수정").setView(sv).setNegativeButton("취소", null)
+                .setPositiveButton("저장", (x, w) -> {
+                    if (name.getText().toString().trim().isEmpty() || ph.getText().toString().trim().isEmpty()) {
+                        Ui.toast(this, "이름과 전화번호를 입력해 주세요.");
+                        return;
+                    }
+                    JSONObject o = c != null ? c : store.create("contacts");
+                    try {
+                        o.put("name", name.getText().toString().trim());
+                        o.put("cat", cat.getText().toString().trim());
+                        o.put("phone", ph.getText().toString().trim());
+                        o.put("memo", memo.getText().toString().trim());
+                    } catch (Exception ignored) {
+                    }
+                    store.save();
+                    render();
+                });
+        if (c != null) {
+            b.setNeutralButton("삭제", (x, w) -> new AlertDialog.Builder(this).setTitle("삭제할까요?").setMessage(c.optString("name"))
+                    .setNegativeButton("취소", null).setPositiveButton("삭제", (y, z) -> {
+                        try {
+                            c.put("deleted", true);
+                        } catch (Exception ignored) {
+                        }
+                        store.save();
+                        render();
+                    }).show());
+        }
+        b.show();
+    }
+
+    private int notifySeq = 1;
+
+    /** 새 업무·채팅·공지·입금이 올라오면 폰 알림(앱이 켜져 있거나 백그라운드로 살아 있을 때). */
+    private void setupNotify() {
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                android.app.NotificationChannel ch = new android.app.NotificationChannel("work", "업무·채팅 알림", android.app.NotificationManager.IMPORTANCE_DEFAULT);
+                ((android.app.NotificationManager) getSystemService(NOTIFICATION_SERVICE)).createNotificationChannel(ch);
+            }
+            if (android.os.Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 201);
+            }
+        } catch (Exception ignored) {
+        }
+        store.notifier = (coll, o) -> {
+            int me2 = myId();
+            String title = null, body = null;
+            if ("tasks".equals(coll) && o.optInt("assignee") == me2 && o.optInt("by", o.optInt("author")) != me2) {
+                title = "새 업무가 지시됐어요";
+                body = o.optString("title");
+            } else if ("msgs".equals(coll) && o.optInt("who") != me2 && o.optInt("ts", 1) != 0 && System.currentTimeMillis() - o.optLong("ts") < 120000) {
+                title = store.userName(o.optInt("who"));
+                body = snippet(o);
+            } else if ("notices".equals(coll) && o.optInt("author") != me2) {
+                title = "새 공지";
+                body = o.optString("title");
+            } else if ("deposits".equals(coll) && o.optInt("by") != me2) {
+                title = "입금 확인 요청";
+                body = o.optString("kind") + " " + won(o.optLong("amount")) + " " + o.optString("mname");
+            }
+            if (title == null) return;
+            try {
+                Intent it = new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                android.app.PendingIntent pi = android.app.PendingIntent.getActivity(this, 0, it, android.app.PendingIntent.FLAG_IMMUTABLE | android.app.PendingIntent.FLAG_UPDATE_CURRENT);
+                android.app.Notification.Builder nb = android.os.Build.VERSION.SDK_INT >= 26 ? new android.app.Notification.Builder(this, "work") : new android.app.Notification.Builder(this);
+                nb.setSmallIcon(R.mipmap.ic_launcher).setContentTitle(title).setContentText(body).setContentIntent(pi).setAutoCancel(true);
+                ((android.app.NotificationManager) getSystemService(NOTIFICATION_SERVICE)).notify(notifySeq++, nb.build());
+            } catch (Exception ignored) {
+            }
+        };
+    }
+
+    /** 관리자: 서버에서 받은 전체 자료를 파일(JSON)로 내려받아 보관한다. */
+    private void exportBackup() {
+        try {
+            String name = "나인패밀리_백업_" + new java.text.SimpleDateFormat("yyyyMMdd_HHmm", Locale.KOREA).format(new java.util.Date()) + ".json";
+            File out = new File(Media.dir(this), name);
+            Media.write(out, store.dumpJson().getBytes("UTF-8"));
+            Uri u = androidx.core.content.FileProvider.getUriForFile(this, getPackageName() + ".files", out);
+            Intent it = new Intent(Intent.ACTION_SEND).setType("application/json").putExtra(Intent.EXTRA_STREAM, u).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(Intent.createChooser(it, "백업 파일 보관(드라이브·카톡 나에게 등)"));
+        } catch (Exception e) {
+            Ui.toast(this, "백업 파일을 만들 수 없어요.");
+        }
+    }
+
 
     /** 반응 고르기: 하트·엄지 등 목록 + (내 반응이 있으면) 지우기. 텔레그램처럼. */
     private void showReactPicker(final JSONObject m) {
