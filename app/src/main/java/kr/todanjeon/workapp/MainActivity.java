@@ -70,7 +70,7 @@ public class MainActivity extends Activity {
 
     /** 로그인된 상태로 앱에 들어간다: 서버와 실시간 연결하고, 내 정보가 도착하면 화면을 그린다. */
     private void enterApp() {
-        store.attach(store.sessionId(), store.cachedPerf(), this::onRemote);
+        store.attach(store.sessionId(), store.cachedPerf(), store.cachedReport(), this::onRemote);
         me = store.sessionUser();
         if (me != null) buildMain();
         else showLoading();
@@ -300,9 +300,11 @@ public class MainActivity extends Activity {
                     final String name = doc.getString("name") == null ? "" : doc.getString("name");
                     final boolean admin = Boolean.TRUE.equals(doc.getBoolean("admin"));
                     final boolean perf = Boolean.TRUE.equals(doc.getBoolean("perf"));
+                    final boolean report = Boolean.TRUE.equals(doc.getBoolean("report"));
                     store.clear();
                     store.setSession((int) uid);
                     store.setCaps(perf || admin);
+                    store.setReportCap(report || admin);
                     Cloud.fs().collection("users").document(String.valueOf(uid)).get().addOnSuccessListener(ud -> {
                         if (!ud.exists()) store.ensureUser((int) uid, name, e164, admin, perf);
                         enterApp();
@@ -449,7 +451,11 @@ public class MainActivity extends Activity {
         if ("task".equals(k)) renderTasks();
         else if ("project".equals(k)) renderProjects();
         else if ("chat".equals(k)) renderChat();
-        else if ("perf".equals(k)) renderPerf();
+        else if ("perf".equals(k)) renderPerf(false);
+        else if ("myperf".equals(k)) renderPerf(true);
+        else if ("daily".equals(k)) renderDaily();
+        else if ("reportview".equals(k)) renderReportView();
+        else if ("perfreport".equals(k)) renderPerfReport();
         else if ("calendar".equals(k)) renderCalendar();
         else if ("notice".equals(k)) renderNotices();
         else if ("history".equals(k)) renderHistory();
@@ -483,15 +489,15 @@ public class MainActivity extends Activity {
             fab.setVisibility(View.VISIBLE);
             fab.setContentDescription("프로젝트 만들기");
             fab.setOnClickListener(v -> showAddProject());
-        } else if ("perf".equals(k)) {
+        } else if ("perf".equals(k) || "myperf".equals(k)) {
             fab.setVisibility(View.VISIBLE);
             fab.setContentDescription("신규 계약 올리기");
             fab.setOnClickListener(v -> showAddContract());
-        } else if ("calendar".equals(k)) {
+        } else if ("calendar".equals(k) && can(Perm.STAFF_MANAGE)) {
             fab.setVisibility(View.VISIBLE);
             fab.setContentDescription("일정 추가");
             fab.setOnClickListener(v -> showAddEvent());
-        } else if ("task".equals(k) && can(Perm.TASK_CREATE)) {
+        } else if ("task".equals(k)) {
             fab.setVisibility(View.VISIBLE);
             fab.setContentDescription("업무 지시");
             fab.setOnClickListener(v -> showCreateTask());
@@ -807,6 +813,18 @@ public class MainActivity extends Activity {
         ScrollView sv = new ScrollView(this);
         sv.addView(l);
         b.setView(sv).setPositiveButton("닫기", null);
+        if (t.optInt("creator") == myId() || can(Perm.STAFF_MANAGE)) {
+            b.setNeutralButton("삭제", (d, w) -> new AlertDialog.Builder(this).setTitle("업무를 삭제할까요?")
+                    .setMessage(t.optString("title") + "\n목록과 달력에서 사라집니다.")
+                    .setNegativeButton("취소", null).setPositiveButton("삭제", (d2, w2) -> {
+                        try {
+                            t.put("deleted", true);
+                        } catch (Exception ignored) {
+                        }
+                        store.save();
+                        render();
+                    }).show());
+        }
         dlg[0] = b.show();
         // 지시됨 상태에서 담당자가 열면 자동으로 확인함 처리
         if ("지시됨".equals(t.optString("status")) && t.optInt("assignee") == myId()) {
@@ -1207,92 +1225,7 @@ public class MainActivity extends Activity {
     
 
     // ---------------- 실적 ----------------
-    private void renderPerf() {
-        Calendar now = Calendar.getInstance();
-        if (perfY == 0) {
-            perfY = now.get(Calendar.YEAR);
-            perfM = now.get(Calendar.MONTH) + 1;
-        }
-        content.addView(title("실적"));
-        LinearLayout nav2 = new LinearLayout(this);
-        nav2.setGravity(Gravity.CENTER_VERTICAL);
-        TextView prev = Ui.text(this, "‹", 24, Ui.DEEP, true);
-        prev.setPadding(0, 0, Ui.dp(this, 16), 0);
-        prev.setOnClickListener(v -> {
-            perfM--;
-            if (perfM < 1) {
-                perfM = 12;
-                perfY--;
-            }
-            render();
-        });
-        TextView nxt = Ui.text(this, "›", 24, Ui.DEEP, true);
-        nxt.setPadding(Ui.dp(this, 16), 0, 0, 0);
-        nxt.setOnClickListener(v -> {
-            perfM++;
-            if (perfM > 12) {
-                perfM = 1;
-                perfY++;
-            }
-            render();
-        });
-        nav2.addView(prev);
-        nav2.addView(Ui.text(this, perfY + "년 " + perfM + "월", 18, Ui.INK, true));
-        nav2.addView(nxt);
-        content.addView(nav2);
-        String key = String.format(Locale.KOREA, "%04d-%02d", perfY, perfM);
-        final java.util.Map<Integer, Integer> sum = new java.util.HashMap<>();
-        List<JSONObject> month = new ArrayList<>();
-        int total = 0;
-        for (JSONObject c : store.list(store.contracts())) {
-            if (!c.optString("date").startsWith(key)) continue;
-            month.add(c);
-            int q = c.optInt("qty", 1);
-            total += q;
-            Integer old = sum.get(c.optInt("who"));
-            sum.put(c.optInt("who"), (old == null ? 0 : old) + q);
-        }
-        LinearLayout hero = new LinearLayout(this);
-        hero.setOrientation(LinearLayout.VERTICAL);
-        hero.setBackground(Ui.round(Ui.GOLD, 24, this));
-        hero.setPadding(Ui.dp(this, 20), Ui.dp(this, 20), Ui.dp(this, 20), Ui.dp(this, 20));
-        hero.addView(Ui.text(this, "이번 달 신규 계약", 14, Color.argb(200, 31, 27, 18), false));
-        hero.addView(Ui.text(this, total + "대", 34, Ui.DARK, true));
-        content.addView(hero, Ui.lp(this, 14));
-        content.addView(Ui.text(this, "직원별 신규 계약", 18, Ui.INK, true), Ui.lp(this, 24));
-        List<JSONObject> staff = activeStaff();
-        Collections.sort(staff, (a, b) -> {
-            Integer x = sum.get(b.optInt("id")), y = sum.get(a.optInt("id"));
-            return (x == null ? 0 : x) - (y == null ? 0 : y);
-        });
-        int max = 1;
-        for (Integer v : sum.values()) if (v > max) max = v;
-        for (JSONObject u : staff) {
-            Integer v = sum.get(u.optInt("id"));
-            int n = v == null ? 0 : v;
-            LinearLayout row = new LinearLayout(this);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            TextView nm = Ui.text(this, u.optString("name"), 14, Ui.INK, false);
-            row.addView(nm, new LinearLayout.LayoutParams(Ui.dp(this, 64), ViewGroup.LayoutParams.WRAP_CONTENT));
-            row.addView(bar(n * 100 / max, Ui.GOLD, Ui.FIELD, 14), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-            TextView cnt = Ui.text(this, String.valueOf(n), 14, Ui.DEEP, true);
-            cnt.setGravity(Gravity.END);
-            row.addView(cnt, new LinearLayout.LayoutParams(Ui.dp(this, 36), ViewGroup.LayoutParams.WRAP_CONTENT));
-            content.addView(row, Ui.lp(this, 10));
-        }
-        content.addView(Ui.text(this, "올라온 계약", 18, Ui.INK, true), Ui.lp(this, 24));
-        Collections.sort(month, (a, b) -> b.optString("created").compareTo(a.optString("created")));
-        if (month.isEmpty()) content.addView(Ui.text(this, "이 달에 올라온 계약이 없습니다.", 14, Ui.GRAY, false), Ui.lp(this, 10));
-        for (JSONObject c : month) {
-            LinearLayout card = Ui.card(this);
-            card.addView(Ui.text(this, c.optString("client") + "  ·  " + c.optString("product") + " " + c.optInt("qty", 1) + "대", 16, Ui.INK, true));
-            String link = c.optString("linkType") + (c.optString("company").isEmpty() ? "" : " " + c.optString("company"));
-            card.addView(Ui.text(this, link + "  ·  " + c.optString("kind") + "  ·  " + store.userName(c.optInt("who")) + "  ·  " + c.optString("date"), 12, Ui.GRAY, false), Ui.lp(this, 4));
-            final int cid = c.optInt("id");
-            card.setOnClickListener(v -> showContract(cid));
-            content.addView(card, Ui.lp(this, 8));
-        }
-    }
+    
 
     
 
@@ -1323,11 +1256,35 @@ public class MainActivity extends Activity {
             render();
         }));
         content.addView(menuRow("신규 계약 올리기", "", () -> showAddContract()));
+        content.addView(menuRow("내 실적", "", () -> {
+            sub = "myperf";
+            render();
+        }));
         if (canPerf()) {
-            content.addView(menuRow("실적", "", () -> {
+            content.addView(menuRow("전체 실적·직원별 순위", "", () -> {
                 sub = "perf";
                 render();
             }));
+            content.addView(menuRow("실적 보고서 올리기 (대표님께)", "", () -> {
+                sub = "perfreport";
+                render();
+            }));
+        }
+        content.addView(menuRow("일일보고 쓰기", "", () -> {
+            sub = "daily";
+            render();
+        }));
+        if (canReport()) {
+            content.addView(menuRow("일일보고 종합 보기", "", () -> {
+                sub = "reportview";
+                render();
+            }));
+            if (!canPerf()) {
+                content.addView(menuRow("실적 보고서 보기", "", () -> {
+                    sub = "perfreport";
+                    render();
+                }));
+            }
         }
         content.addView(menuRow("지난 업무 기록", "", () -> {
             sub = "history";
@@ -1419,6 +1376,9 @@ public class MainActivity extends Activity {
         hd.addView(nxt);
         hd.addView(td);
         content.addView(hd);
+        if (!can(Perm.STAFF_MANAGE)) {
+            content.addView(Ui.text(this, "내 일정은 업무 탭의 + 버튼으로 업무를 올리면 달력에 자동으로 들어가요.", 12, Ui.GRAY, false), Ui.lp(this, 6));
+        }
 
         LinearLayout wk = new LinearLayout(this);
         String[] wn = {"일", "월", "화", "수", "목", "금", "토"};
@@ -2562,10 +2522,7 @@ public class MainActivity extends Activity {
         }
         if (!where.isEmpty()) r.addView(Ui.text(this, "장소  " + where, 12, Ui.GRAY, false), Ui.lp(this, 2));
         r.addView(Ui.text(this, store.userName(e.optInt("who")), 11, Ui.GRAY, false), Ui.lp(this, 2));
-        if (m != null) {
-            final JSONObject mm = m;
-            r.setOnClickListener(v -> showMerchant(mm));
-        }
+        r.setOnClickListener(v -> showEvent(e));
         return r;
     }
 
@@ -2618,6 +2575,7 @@ public class MainActivity extends Activity {
             {"계약 관리 · 설치 완료 · 만료 알림", "(전체 → 계약 관리)\n\n■ 계약 보기\n- 위쪽에 '만료가 가까운 계약(3개월 이내)'이 빨간 D-숫자와 함께 먼저 나옵니다. 아래는 전체 계약입니다.\n- 일반 직원은 내가 올린 계약만, 실적 권한이 있는 사람은 전체 계약이 보입니다.\n\n■ 설치 완료\n- 계약을 누르고 '설치 완료'를 누르면 나간 장비가 재고에서 완전히 빠집니다.\n\n■ 장비 추가\n- 같은 가맹점에 장비가 더 나가면 계약을 열어 '장비 추가'를 눌러 모델명·시리얼을 이어서 추가합니다.\n\n■ 만료 알림\n- 만료가 90일 이하로 남은 계약이 있으면 '업무' 탭 위에 알림 카드가 뜨고, 전체 탭에도 숫자가 표시됩니다."},
             {"실적 (권한자 전용)", "(전체 → 실적, 실적 보기 권한이 있는 사람만 보입니다)\n\n- 위 ‹ › 로 월을 바꿉니다.\n- 이번 달 신규 계약 대수, 직원별 막대 그래프, 올라온 계약 목록이 나옵니다.\n- 계약을 누르면 상세 정보와 장비를 볼 수 있어요.\n- 오른쪽 아래 + 로도 신규 계약을 올릴 수 있습니다."},
             {"공지사항 · 직원과 권한", "■ 공지사항 (전체 → 공지사항)\n- 공지 쓰기 권한이 있으면 + 버튼으로 작성합니다. '맨 위에 고정'을 켜면 항상 위에 보여요.\n- 읽지 않은 공지는 ● 표시와 전체 탭 숫자로 알려줍니다. 누르면 읽음 처리돼요.\n\n■ 직원과 권한 (관리자 전용)\n- + 버튼 → 이름, 휴대폰 번호, 권한 묶음을 선택해 직원을 등록합니다. 등록된 번호로만 로그인할 수 있어요.\n- 직원을 누르면 항목별 권한을 켜고 끌 수 있고, '사용 중지'로 퇴사자의 접근을 막습니다.\n- 마지막 관리자는 중지하거나 권한을 끌 수 없습니다.\n\n※ '실적 보기'는 서버에서 강제로 막혀 안전합니다. 나머지 권한은 화면에서 숨기는 방식이에요."},
+            {"일일보고 · 실적 보고서", "■ 일일보고 쓰기 (전체 → 일일보고 쓰기)\n- 날짜를 확인하고, 오늘 한 일·특이사항·내일 계획을 적어 '제출하기'를 누릅니다.\n- 그날 완료한 업무와 올린 계약은 자동으로 같이 집계돼요.\n- 같은 날 다시 쓰면 수정본으로 덮어씁니다. 아래에서 내가 낸 보고를 다시 열어 볼 수 있어요.\n\n■ 일일보고 종합 (대표님)\n- 전체 → 일일보고 종합 보기: 날짜별로 직원별 보고가 한 화면에 모이고, 미제출자는 빨간색으로 표시됩니다.\n\n■ 실적 보고서 (본부장 → 대표님)\n- 전체 → 실적 보고서 올리기: 이번 달 실적이 자동 집계되어 채워져 있고, 고쳐서 '대표님께 보고하기'를 누릅니다.\n- 대표님은 같은 메뉴에서 올라온 보고서를 봅니다.\n\n※ 보고서 양식은 정해지면 그 모양에 맞춰 바꿀 수 있어요."},
             {"자주 묻는 질문", "Q. 인증번호 문자가 안 와요.\nA. 번호가 등록되었는지, 폰 신호가 되는지 확인하세요. 하루에 받을 수 있는 횟수가 제한되어 있어 여러 번 시도하면 잠시 막힐 수 있어요.\n\nQ. 폰을 바꿨어요.\nA. 새 폰에 앱을 설치하고 같은 번호로 다시 인증하면 모든 자료가 그대로 나옵니다. 자료는 서버에 저장돼 있어요.\n\nQ. 인터넷이 없을 때도 써도 되나요?\nA. 열어서 보기와 입력은 가능하고, 인터넷이 다시 연결되면 자동으로 서버에 올라갑니다.\n\nQ. 실수로 지웠어요.\nA. 지운 자료도 서버에는 기록이 남아 있으니 관리자에게 말씀해 주세요."},
     };
 
@@ -2637,6 +2595,398 @@ public class MainActivity extends Activity {
                 new AlertDialog.Builder(this).setTitle(m[0]).setView(sv).setPositiveButton("닫기", null).show();
             });
             content.addView(row, Ui.lp(this, 8));
+        }
+    }
+
+
+    // ======================= v0.6: 일정 삭제·상세, 실적 순위, 일일보고, 실적 보고서 =======================
+    private boolean canReport() {
+        return can(Perm.REPORT_VIEW) || can(Perm.STAFF_MANAGE);
+    }
+
+    private String dailyDate = "";
+    private String prMonth = "";
+
+    private void showEvent(final JSONObject e) {
+        LinearLayout l = form();
+        addLine(l, "일정", e.optString("title"));
+        addLine(l, "날짜", e.optString("date") + (e.optString("time").isEmpty() ? "" : "  " + e.optString("time")));
+        addLine(l, "장소", e.optString("place"));
+        addLine(l, "등록한 사람", store.userName(e.optInt("who")));
+        JSONObject m = e.optInt("merchant") == 0 ? null : store.byId("merchants", e.optInt("merchant"));
+        if (m != null) {
+            l.addView(Ui.text(this, "가맹점 정보", 14, Ui.NAVY, true), Ui.lp(this, 12));
+            TextView t = Ui.text(this, merchantInfo(m), 14, Ui.INK, false);
+            t.setLineSpacing(0, 1.3f);
+            l.addView(t, Ui.lp(this, 4));
+        }
+        ScrollView sv = new ScrollView(this);
+        sv.addView(l);
+        AlertDialog.Builder b = new AlertDialog.Builder(this).setTitle("일정 상세").setView(sv).setPositiveButton("닫기", null);
+        if (e.optInt("who") == myId() || can(Perm.STAFF_MANAGE)) {
+            b.setNeutralButton("삭제", (d, w) -> new AlertDialog.Builder(this).setTitle("일정을 삭제할까요?")
+                    .setMessage(e.optString("title") + "\n" + e.optString("date"))
+                    .setNegativeButton("취소", null).setPositiveButton("삭제", (d2, w2) -> {
+                        try {
+                            e.put("deleted", true);
+                        } catch (Exception ignored) {
+                        }
+                        store.save();
+                        Ui.toast(this, "일정을 삭제했어요.");
+                        render();
+                    }).show());
+        }
+        b.show();
+    }
+
+    // ---------- 실적 ----------
+    /** 월별 직원 통계: {신규 대수, 판매 건, CMS 건, 렌탈 건, 판매금액 합} */
+    private java.util.Map<Integer, long[]> perfStats(String ym, boolean mineOnly) {
+        java.util.Map<Integer, long[]> st = new java.util.HashMap<>();
+        for (JSONObject c : store.list(store.contracts())) {
+            if (!c.optString("date").startsWith(ym)) continue;
+            if (mineOnly && c.optInt("who") != myId()) continue;
+            long[] a = st.get(c.optInt("who"));
+            if (a == null) {
+                a = new long[5];
+                st.put(c.optInt("who"), a);
+            }
+            a[0] += c.optInt("qty", 1);
+            String k = c.optString("kind");
+            if ("판매".equals(k)) {
+                a[1]++;
+                a[4] += c.optLong("amount");
+            } else if ("CMS".equals(k)) a[2]++;
+            else if ("렌탈".equals(k)) a[3]++;
+        }
+        return st;
+    }
+
+    private List<JSONObject> rankedStaff(final java.util.Map<Integer, long[]> st) {
+        List<JSONObject> staff = activeStaff();
+        Collections.sort(staff, (a, b) -> {
+            long[] x = st.get(a.optInt("id")), y = st.get(b.optInt("id"));
+            long cx = x == null ? 0 : x[0], cy = y == null ? 0 : y[0];
+            if (cx != cy) return cy > cx ? 1 : -1;
+            long ax = x == null ? 0 : x[4], ay = y == null ? 0 : y[4];
+            return ay > ax ? 1 : ay < ax ? -1 : 0;
+        });
+        return staff;
+    }
+
+    private void monthNav(final Runnable onChange) {
+        LinearLayout nav2 = new LinearLayout(this);
+        nav2.setGravity(Gravity.CENTER_VERTICAL);
+        TextView prev = Ui.text(this, "‹", 24, Ui.DEEP, true);
+        prev.setPadding(0, 0, Ui.dp(this, 16), 0);
+        prev.setOnClickListener(v -> {
+            perfM--;
+            if (perfM < 1) {
+                perfM = 12;
+                perfY--;
+            }
+            onChange.run();
+        });
+        TextView nxt = Ui.text(this, "›", 24, Ui.DEEP, true);
+        nxt.setPadding(Ui.dp(this, 16), 0, 0, 0);
+        nxt.setOnClickListener(v -> {
+            perfM++;
+            if (perfM > 12) {
+                perfM = 1;
+                perfY++;
+            }
+            onChange.run();
+        });
+        nav2.addView(prev);
+        nav2.addView(Ui.text(this, perfY + "년 " + perfM + "월", 18, Ui.INK, true));
+        nav2.addView(nxt);
+        content.addView(nav2, Ui.lp(this, 6));
+    }
+
+    private void renderPerf(final boolean mine) {
+        Calendar now = Calendar.getInstance();
+        if (perfY == 0) {
+            perfY = now.get(Calendar.YEAR);
+            perfM = now.get(Calendar.MONTH) + 1;
+        }
+        content.addView(title(mine ? "내 실적" : "전체 실적"));
+        content.addView(Ui.text(this, mine ? "나만 볼 수 있는 내 실적이에요." : "직원별 순위는 신규 계약 대수 순, 같으면 판매금액 순이에요.", 13, Ui.GRAY, false));
+        monthNav(() -> render());
+        String key = String.format(Locale.KOREA, "%04d-%02d", perfY, perfM);
+        java.util.Map<Integer, long[]> st = perfStats(key, mine);
+        long total = 0, sales = 0;
+        for (long[] a : st.values()) {
+            total += a[0];
+            sales += a[4];
+        }
+        LinearLayout hero = new LinearLayout(this);
+        hero.setOrientation(LinearLayout.VERTICAL);
+        hero.setBackground(Ui.round(Ui.GOLD, 24, this));
+        hero.setPadding(Ui.dp(this, 20), Ui.dp(this, 20), Ui.dp(this, 20), Ui.dp(this, 20));
+        hero.addView(Ui.text(this, mine ? "이번 달 내 신규 계약" : "이번 달 신규 계약", 14, Color.argb(200, 31, 27, 18), false));
+        hero.addView(Ui.text(this, total + "대", 34, Ui.DARK, true));
+        hero.addView(Ui.text(this, "판매금액 합계 " + won(sales), 13, Color.argb(200, 31, 27, 18), false), Ui.lp(this, 4));
+        content.addView(hero, Ui.lp(this, 14));
+        if (!mine) {
+            content.addView(Ui.text(this, "직원별 순위", 18, Ui.INK, true), Ui.lp(this, 24));
+            List<JSONObject> staff = rankedStaff(st);
+            long max = 1;
+            for (long[] a : st.values()) if (a[0] > max) max = a[0];
+            int rank = 0;
+            for (JSONObject u : staff) {
+                rank++;
+                long[] a = st.get(u.optInt("id"));
+                long n = a == null ? 0 : a[0];
+                LinearLayout row = new LinearLayout(this);
+                row.setGravity(Gravity.CENTER_VERTICAL);
+                TextView rk = Ui.text(this, String.valueOf(rank), 15, rank <= 3 && n > 0 ? Ui.DEEP : Ui.GRAY, true);
+                rk.setGravity(Gravity.CENTER);
+                row.addView(rk, new LinearLayout.LayoutParams(Ui.dp(this, 28), ViewGroup.LayoutParams.WRAP_CONTENT));
+                row.addView(Ui.text(this, u.optString("name"), 14, Ui.INK, rank <= 3 && n > 0), new LinearLayout.LayoutParams(Ui.dp(this, 64), ViewGroup.LayoutParams.WRAP_CONTENT));
+                row.addView(bar((int) (n * 100 / max), Ui.GOLD, Ui.FIELD, 14), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+                TextView cnt = Ui.text(this, String.valueOf(n), 14, Ui.DEEP, true);
+                cnt.setGravity(Gravity.END);
+                row.addView(cnt, new LinearLayout.LayoutParams(Ui.dp(this, 36), ViewGroup.LayoutParams.WRAP_CONTENT));
+                content.addView(row, Ui.lp(this, 10));
+                if (a != null) {
+                    TextView d = Ui.text(this, "판매 " + a[1] + " · CMS " + a[2] + " · 렌탈 " + a[3] + (a[4] > 0 ? " · 판매금액 " + won(a[4]) : ""), 11, Ui.GRAY, false);
+                    d.setPadding(Ui.dp(this, 92), 0, 0, 0);
+                    content.addView(d);
+                }
+            }
+        }
+        content.addView(Ui.text(this, "올라온 계약", 18, Ui.INK, true), Ui.lp(this, 24));
+        List<JSONObject> month = new ArrayList<>();
+        for (JSONObject c : store.list(store.contracts())) {
+            if (!c.optString("date").startsWith(key)) continue;
+            if (mine && c.optInt("who") != myId()) continue;
+            month.add(c);
+        }
+        Collections.sort(month, (a, b) -> b.optString("created").compareTo(a.optString("created")));
+        if (month.isEmpty()) content.addView(Ui.text(this, "이 달에 올라온 계약이 없습니다.", 14, Ui.GRAY, false), Ui.lp(this, 10));
+        for (JSONObject c : month) content.addView(contractRow(c), Ui.lp(this, 8));
+    }
+
+    // ---------- 일일보고 ----------
+    private String dailyAuto(String date, int who) {
+        StringBuilder b = new StringBuilder();
+        int n = 0;
+        for (JSONObject t : store.list(store.tasks())) {
+            if (t.optInt("assignee") == who && t.optString("doneAt").startsWith(date)) {
+                b.append("· 완료 업무: [").append(t.optString("type")).append("] ").append(t.optString("title"));
+                if (!t.optString("client").isEmpty()) b.append(" (").append(t.optString("client")).append(")");
+                b.append("\n");
+                n++;
+            }
+        }
+        int cn = 0;
+        for (JSONObject c : store.list(store.contracts())) {
+            if (c.optInt("who") == who && date.equals(c.optString("date"))) {
+                b.append("· 신규 계약: ").append(c.optString("client")).append(" / ").append(c.optString("kind")).append("\n");
+                cn++;
+            }
+        }
+        if (n == 0 && cn == 0) return "(자동 집계: 오늘 완료한 업무·올린 계약 없음)";
+        return "(자동 집계) 완료 업무 " + n + "건 · 신규 계약 " + cn + "건\n" + b.toString().trim();
+    }
+
+    private JSONObject findReport(String kind, int who, String date) {
+        for (JSONObject r : store.list(store.arr("reports"))) {
+            if (kind.equals(r.optString("kind")) && r.optInt("who") == who && date.equals(r.optString("date"))) return r;
+        }
+        return null;
+    }
+
+    private void dateNav(final Runnable onChange) {
+        LinearLayout nav2 = new LinearLayout(this);
+        nav2.setGravity(Gravity.CENTER_VERTICAL);
+        TextView prev = Ui.text(this, "‹", 24, Ui.DEEP, true);
+        prev.setPadding(0, 0, Ui.dp(this, 16), 0);
+        prev.setOnClickListener(v -> {
+            dailyDate = addDays(dailyDate, -1);
+            onChange.run();
+        });
+        TextView nxt = Ui.text(this, "›", 24, Ui.DEEP, true);
+        nxt.setPadding(Ui.dp(this, 16), 0, Ui.dp(this, 16), 0);
+        nxt.setOnClickListener(v -> {
+            dailyDate = addDays(dailyDate, 1);
+            onChange.run();
+        });
+        TextView td = Ui.text(this, "오늘", 14, Ui.DEEP, true);
+        td.setOnClickListener(v -> {
+            dailyDate = todayStr();
+            onChange.run();
+        });
+        nav2.addView(prev);
+        nav2.addView(Ui.text(this, dailyDate, 18, Ui.INK, true));
+        nav2.addView(nxt);
+        nav2.addView(td);
+        content.addView(nav2, Ui.lp(this, 6));
+    }
+
+    private static String addDays(String ymd, int d) {
+        try {
+            SimpleDateFormat f = new SimpleDateFormat("yyyy-MM-dd", Locale.KOREA);
+            Calendar c = Calendar.getInstance();
+            c.setTime(f.parse(ymd));
+            c.add(Calendar.DAY_OF_MONTH, d);
+            return f.format(c.getTime());
+        } catch (Exception e) {
+            return todayStr();
+        }
+    }
+
+    private void renderDaily() {
+        if (dailyDate.isEmpty()) dailyDate = todayStr();
+        content.addView(title("일일보고 쓰기"));
+        content.addView(Ui.text(this, "오늘 한 일과 특이사항을 적어 제출해요. 완료한 업무와 올린 계약은 자동으로 같이 들어갑니다. (양식이 정해지면 맞춰 바꿀게요)", 13, Ui.GRAY, false));
+        dateNav(() -> render());
+        LinearLayout auto = Ui.card(this);
+        auto.addView(Ui.text(this, dailyAuto(dailyDate, myId()), 13, Ui.INK, false));
+        content.addView(auto, Ui.lp(this, 12));
+        final JSONObject old = findReport("daily", myId(), dailyDate);
+        final EditText body = Ui.field(this, "오늘 한 일 · 특이사항 · 내일 계획", false);
+        body.setSingleLine(false);
+        body.setMinLines(6);
+        body.setGravity(Gravity.TOP);
+        if (old != null) body.setText(old.optString("text"));
+        content.addView(body, Ui.lp(this, 12));
+        Button save = Ui.button(this, old == null ? "제출하기" : "수정해서 다시 제출", Ui.GOLD, Ui.DARK);
+        save.setOnClickListener(v -> {
+            String t = body.getText().toString().trim();
+            if (t.isEmpty()) {
+                Ui.toast(this, "내용을 적어 주세요.");
+                return;
+            }
+            JSONObject r = old != null ? old : store.create("reports");
+            try {
+                r.put("kind", "daily");
+                r.put("date", dailyDate);
+                r.put("who", myId());
+                r.put("text", t);
+                r.put("auto", dailyAuto(dailyDate, myId()));
+                r.put("ts", System.currentTimeMillis());
+            } catch (Exception ignored) {
+            }
+            store.save();
+            Ui.toast(this, "일일보고를 제출했어요.");
+            render();
+        });
+        content.addView(save, Ui.lp(this, 10));
+        content.addView(Ui.text(this, "내가 낸 보고", 17, Ui.INK, true), Ui.lp(this, 24));
+        List<JSONObject> mine = new ArrayList<>();
+        for (JSONObject r : store.list(store.arr("reports"))) if ("daily".equals(r.optString("kind")) && r.optInt("who") == myId()) mine.add(r);
+        Collections.sort(mine, (a, b) -> b.optString("date").compareTo(a.optString("date")));
+        if (mine.isEmpty()) content.addView(Ui.text(this, "아직 낸 보고가 없습니다.", 14, Ui.GRAY, false), Ui.lp(this, 8));
+        int n = 0;
+        for (final JSONObject r : mine) {
+            if (++n > 14) break;
+            LinearLayout c = Ui.card(this);
+            c.addView(Ui.text(this, r.optString("date"), 13, Ui.DEEP, true));
+            c.addView(Ui.text(this, r.optString("text"), 14, Ui.INK, false), Ui.lp(this, 2));
+            c.setOnClickListener(v -> {
+                dailyDate = r.optString("date");
+                render();
+            });
+            content.addView(c, Ui.lp(this, 8));
+        }
+    }
+
+    /** 대표님: 하루치 일일보고를 직원별로 종합해서 본다. */
+    private void renderReportView() {
+        if (dailyDate.isEmpty()) dailyDate = todayStr();
+        content.addView(title("일일보고 종합"));
+        content.addView(Ui.text(this, "직원별 일일보고를 한 화면에 모아 봐요.", 13, Ui.GRAY, false));
+        dateNav(() -> render());
+        List<JSONObject> staff = activeStaff();
+        int done = 0;
+        for (JSONObject u : staff) if (findReport("daily", u.optInt("id"), dailyDate) != null) done++;
+        content.addView(Ui.text(this, "제출 " + done + " / " + staff.size() + "명", 16, Ui.DEEP, true), Ui.lp(this, 12));
+        for (JSONObject u : staff) {
+            JSONObject r = findReport("daily", u.optInt("id"), dailyDate);
+            LinearLayout card = Ui.card(this);
+            LinearLayout head = new LinearLayout(this);
+            head.setGravity(Gravity.CENTER_VERTICAL);
+            head.addView(Ui.text(this, u.optString("name"), 16, Ui.INK, true), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            head.addView(Ui.chip(this, r == null ? "미제출" : "제출", r == null ? Color.rgb(253, 236, 234) : Ui.TINT, r == null ? Ui.RED : Ui.DEEP));
+            card.addView(head);
+            if (r != null) {
+                if (!r.optString("auto").isEmpty()) card.addView(Ui.text(this, r.optString("auto"), 12, Ui.GRAY, false), Ui.lp(this, 6));
+                card.addView(Ui.text(this, r.optString("text"), 14, Ui.INK, false), Ui.lp(this, 6));
+            }
+            content.addView(card, Ui.lp(this, 8));
+        }
+    }
+
+    // ---------- 실적 보고서 (본부장 → 대표님) ----------
+    private String perfSnapshot(String ym) {
+        java.util.Map<Integer, long[]> st = perfStats(ym, false);
+        StringBuilder b = new StringBuilder();
+        long total = 0;
+        for (long[] a : st.values()) total += a[0];
+        b.append(ym).append(" 신규 계약 합계 ").append(total).append("대\n");
+        int rank = 0;
+        for (JSONObject u : rankedStaff(st)) {
+            rank++;
+            long[] a = st.get(u.optInt("id"));
+            if (a == null) a = new long[5];
+            b.append(rank).append("위 ").append(u.optString("name")).append(" - ").append(a[0]).append("대 (판매 ").append(a[1])
+                    .append(" · CMS ").append(a[2]).append(" · 렌탈 ").append(a[3]).append(")");
+            if (a[4] > 0) b.append(" 판매금액 ").append(won(a[4]));
+            b.append("\n");
+        }
+        return b.toString().trim();
+    }
+
+    private void renderPerfReport() {
+        Calendar now = Calendar.getInstance();
+        if (perfY == 0) {
+            perfY = now.get(Calendar.YEAR);
+            perfM = now.get(Calendar.MONTH) + 1;
+        }
+        final String ym = String.format(Locale.KOREA, "%04d-%02d", perfY, perfM);
+        content.addView(title("실적 보고서"));
+        monthNav(() -> render());
+        if (canPerf()) {
+            content.addView(Ui.text(this, "본부장이 이달 실적을 최종 정리해서 대표님께 올리는 곳이에요. 아래 내용은 자동 집계이며 고쳐서 올릴 수 있어요. (보고서 양식이 정해지면 맞춰 바꿀게요)", 13, Ui.GRAY, false), Ui.lp(this, 6));
+            final JSONObject old = findReport("perf", myId(), ym);
+            final EditText body = Ui.field(this, "실적 보고 내용", false);
+            body.setSingleLine(false);
+            body.setMinLines(8);
+            body.setGravity(Gravity.TOP);
+            body.setText(old != null ? old.optString("text") : perfSnapshot(ym));
+            content.addView(body, Ui.lp(this, 10));
+            Button save = Ui.button(this, old == null ? "대표님께 보고하기" : "수정해서 다시 보고", Ui.GOLD, Ui.DARK);
+            save.setOnClickListener(v -> {
+                String t = body.getText().toString().trim();
+                if (t.isEmpty()) return;
+                JSONObject r = old != null ? old : store.create("reports");
+                try {
+                    r.put("kind", "perf");
+                    r.put("date", ym);
+                    r.put("who", myId());
+                    r.put("text", t);
+                    r.put("ts", System.currentTimeMillis());
+                } catch (Exception ignored) {
+                }
+                store.save();
+                Ui.toast(this, "대표님께 보고했어요.");
+                render();
+            });
+            content.addView(save, Ui.lp(this, 10));
+        }
+        if (canReport()) {
+            content.addView(Ui.text(this, "올라온 실적 보고서", 17, Ui.INK, true), Ui.lp(this, 24));
+            boolean any = false;
+            for (JSONObject r : store.list(store.arr("reports"))) {
+                if (!"perf".equals(r.optString("kind")) || !ym.equals(r.optString("date"))) continue;
+                any = true;
+                LinearLayout c = Ui.card(this);
+                c.addView(Ui.text(this, store.userName(r.optInt("who")) + " · " + new SimpleDateFormat("M/d HH:mm", Locale.KOREA).format(new Date(r.optLong("ts"))), 12, Ui.DEEP, true));
+                c.addView(Ui.text(this, r.optString("text"), 14, Ui.INK, false), Ui.lp(this, 4));
+                content.addView(c, Ui.lp(this, 8));
+            }
+            if (!any) content.addView(Ui.text(this, "이 달에 올라온 보고서가 없습니다.", 14, Ui.GRAY, false), Ui.lp(this, 8));
         }
     }
 

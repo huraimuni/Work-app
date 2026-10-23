@@ -26,7 +26,7 @@ import java.util.Map;
  * 자료는 삭제하지 않는다. 바뀐 문서는 서버에 올리면서 변경 기록(audit)도 남긴다.
  */
 final class Store {
-    static final String[] COLLS = {"users", "tasks", "notices", "projects", "contracts", "events", "merchants", "stock", "rooms", "msgs"};
+    static final String[] COLLS = {"users", "tasks", "notices", "projects", "contracts", "events", "merchants", "stock", "rooms", "msgs", "reports"};
     static final String[] GRADES = {"우량", "중상", "중간", "중하", "주의", "신규"};
 
     private final SharedPreferences sp;
@@ -87,13 +87,14 @@ final class Store {
     }
 
     /** 로그인 후 호출: 이 사람의 번호표(uid)로 서버와 실시간 연결한다. */
-    void attach(int uid, boolean canPerf, final Runnable onChange) {
+    void attach(int uid, boolean canPerf, boolean canReport, final Runnable onChange) {
         detach();
         actor = uid;
         online = true;
         for (final String coll : COLLS) {
             Query q = Cloud.fs().collection(coll);
             if ("contracts".equals(coll) && !canPerf) q = q.whereEqualTo("who", (long) uid);
+            if ("reports".equals(coll) && !canReport) q = q.whereEqualTo("who", (long) uid);
             if ("msgs".equals(coll)) q = q.orderBy("u", Query.Direction.DESCENDING).limit(400);
             regs.add(q.addSnapshotListener((snap, err) -> {
                 if (snap == null) return;
@@ -133,7 +134,7 @@ final class Store {
             for (String k : COLLS) db.put(k, new JSONArray());
         } catch (JSONException ignored) {
         }
-        sp.edit().remove("db2").remove("session").remove("perf").apply();
+        sp.edit().remove("db2").remove("session").remove("perf").remove("report").apply();
     }
 
     void detach() {
@@ -154,7 +155,7 @@ final class Store {
     }
 
     private static String phoneSig(JSONObject u) {
-        return u.optString("phone") + "|" + has(u, Perm.STAFF_MANAGE) + "|" + has(u, Perm.PERF_VIEW) + "|"
+        return u.optString("phone") + "|" + has(u, Perm.STAFF_MANAGE) + "|" + has(u, Perm.PERF_VIEW) + "|" + has(u, Perm.REPORT_VIEW) + "|"
                 + u.optBoolean("active", true) + "|" + u.optString("name") + "|" + u.optInt("id");
     }
 
@@ -171,7 +172,7 @@ final class Store {
                     Map<String, Object> m = new HashMap<>();
                     m.put("j", s);
                     m.put("u", System.currentTimeMillis());
-                    if ("contracts".equals(coll)) {
+                    if ("contracts".equals(coll) || "reports".equals(coll)) {
                         m.put("who", (long) o.optInt("who"));
                         m.put("date", o.optString("date"));
                     }
@@ -196,6 +197,7 @@ final class Store {
                         p.put("uid", (long) id);
                         p.put("admin", has(o, Perm.STAFF_MANAGE));
                         p.put("perf", has(o, Perm.PERF_VIEW));
+                        p.put("report", has(o, Perm.REPORT_VIEW));
                         p.put("active", o.optBoolean("active", true));
                         p.put("name", o.optString("name"));
                         Cloud.fs().collection("phones").document(o.optString("phone")).set(p);
@@ -223,6 +225,14 @@ final class Store {
 
     void setCaps(boolean perf) {
         sp.edit().putBoolean("perf", perf).apply();
+    }
+
+    void setReportCap(boolean report) {
+        sp.edit().putBoolean("report", report).apply();
+    }
+
+    boolean cachedReport() {
+        return sp.getBoolean("report", false);
     }
 
     boolean cachedPerf() {
@@ -491,7 +501,7 @@ final class Store {
 
     List<JSONObject> list(JSONArray a) {
         List<JSONObject> out = new ArrayList<>();
-        for (int i = 0; i < a.length(); i++) out.add(a.optJSONObject(i));
+        for (int i = 0; i < a.length(); i++) if (!a.optJSONObject(i).optBoolean("deleted")) out.add(a.optJSONObject(i));
         return out;
     }
 

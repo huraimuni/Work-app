@@ -20,13 +20,13 @@ jobs:
       - name: Build debug APK
         run: |
           gradle assembleDebug --no-daemon
-          cp app/build/outputs/apk/debug/app-debug.apk WorkApp_v0.5.0.apk
+          cp app/build/outputs/apk/debug/app-debug.apk WorkApp_v0.6.0.apk
       - name: Publish test release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.5.0-test
+          tag_name: v0.6.0-test
           target_commitish: ${{ github.sha }}
           prerelease: true
-          files: WorkApp_v0.5.0.apk
-          name: 나인패밀리 v0.5.0 시험판
-          body: "일정 앞으로, 실적은 전체로, 채팅, 재고, 가맹점, 계약, 사용설명서"
+          files: WorkApp_v0.6.0.apk
+          name: 나인패밀리 v0.6.0 시험판
+          body: "일정 삭제·상세, 내 실적/전체 순위, 일일보고, 실적 보고서"
