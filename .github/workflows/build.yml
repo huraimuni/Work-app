@@ -29,4 +29,4 @@ jobs:
           prerelease: true
           files: WorkApp_v0.4.0.apk
           name: 나인패밀리 v0.4.0 시험판
-          body: 서버(Firebase) 연결 시험판: 휴대폰 문자 인증 로그인, 실시간 저장.
+          body: "서버(Firebase) 연결 시험판 - 휴대폰 문자 인증 로그인, 실시간 저장."
