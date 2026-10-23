@@ -48,6 +48,109 @@ final class Store {
         }
     }
 
+    /** 자동백업용: 들여쓰기 없이 작게. */
+    String dumpCompact() {
+        return db.toString();
+    }
+
+    /** 가맹점 전체(삭제 표시된 것 포함)를 복사해 둔다. 되돌리기 기준점으로 쓴다. */
+    JSONArray merchantsCopy() {
+        JSONArray out = new JSONArray();
+        JSONArray a = db.optJSONArray("merchants");
+        try {
+            for (int i = 0; i < a.length(); i++) out.put(new JSONObject(a.optJSONObject(i).toString()));
+        } catch (JSONException ignored) {
+        }
+        return out;
+    }
+
+    /**
+     * 가맹점을 백업 내용으로 되돌린다. 같은 id 는 백업 내용으로 바꾸고, 지금 없는 것은 되살린다.
+     * exact 이면 백업에 없는 가맹점(그 뒤에 새로 생긴 것)은 삭제 표시한다(서버 자료는 지우지 않음).
+     * 돌려주는 값: {바뀐 곳, 되살린 곳, 삭제표시한 곳}
+     */
+    int[] restoreMerchants(JSONArray backup, boolean exact) {
+        int changed = 0, added = 0, hidden = 0;
+        JSONArray cur = db.optJSONArray("merchants");
+        java.util.HashSet<Integer> inBackup = new java.util.HashSet<>();
+        try {
+            for (int i = 0; i < backup.length(); i++) {
+                JSONObject b = backup.optJSONObject(i);
+                if (b == null) continue;
+                int id = b.optInt("id");
+                if (id == 0) continue;
+                inBackup.add(id);
+                boolean found = false;
+                for (int k = 0; k < cur.length(); k++) {
+                    JSONObject c = cur.optJSONObject(k);
+                    if (c.optInt("id") != id) continue;
+                    found = true;
+                    if (!sameJson(c, b)) {
+                        cur.put(k, new JSONObject(b.toString()));
+                        changed++;
+                    }
+                    break;
+                }
+                if (!found) {
+                    cur.put(new JSONObject(b.toString()));
+                    added++;
+                }
+            }
+            if (exact) {
+                for (int k = 0; k < cur.length(); k++) {
+                    JSONObject c = cur.optJSONObject(k);
+                    if (!inBackup.contains(c.optInt("id")) && !c.optBoolean("deleted")) {
+                        c.put("deleted", true);
+                        hidden++;
+                    }
+                }
+            }
+        } catch (JSONException ignored) {
+        }
+        save();
+        return new int[]{changed, added, hidden};
+    }
+
+    static boolean sameJson(JSONObject a, JSONObject b) {
+        if (a.length() != b.length()) return false;
+        java.util.Iterator<String> it = a.keys();
+        while (it.hasNext()) {
+            String k = it.next();
+            if (!b.has(k)) return false;
+            if (!String.valueOf(a.opt(k)).equals(String.valueOf(b.opt(k)))) return false;
+        }
+        return true;
+    }
+
+    /** 두 직원의 1:1 대화방을 찾고, 없으면 만든다. 참가자 전화번호(mem)가 들어 있어 서버가 둘에게만 보여 준다. */
+    JSONObject dmRoom(int a, String phoneA, int b, String phoneB) {
+        int lo = Math.min(a, b), hi = Math.max(a, b);
+        JSONArray rooms = db.optJSONArray("rooms");
+        for (int i = 0; i < rooms.length(); i++) {
+            JSONObject r = rooms.optJSONObject(i);
+            JSONArray mm = r.optJSONArray("members");
+            if (!r.optBoolean("dm") || mm == null || mm.length() != 2) continue;
+            int x = mm.optInt(0), y = mm.optInt(1);
+            if (Math.min(x, y) == lo && Math.max(x, y) == hi) return r;
+        }
+        try {
+            int id = 1500000000 + (int) (((long) lo * 1000003L + hi) % 400000000L); // 같은 둘이 동시에 걸어도 같은 방이 되게
+            if (byId("rooms", id) != null || idUsed(id)) id = nextId();
+            JSONObject r = new JSONObject();
+            r.put("id", id);
+            r.put("created", now());
+            r.put("name", "");
+            r.put("dm", true);
+            r.put("members", new JSONArray().put(lo).put(hi));
+            r.put("mem", new JSONArray().put(a == lo ? phoneA : phoneB).put(a == lo ? phoneB : phoneA));
+            db.optJSONArray("rooms").put(r);
+            save();
+            return r;
+        } catch (JSONException e) {
+            return null;
+        }
+    }
+
     Store(Context c) {
         sp = c.getSharedPreferences("workapp", Context.MODE_PRIVATE);
         try {
@@ -100,12 +203,22 @@ final class Store {
         detach();
         actor = uid;
         online = true;
-        for (final String coll : COLLS) {
+        com.google.firebase.auth.FirebaseUser au0 = Cloud.auth().getCurrentUser();
+        final String myPhone = au0 == null ? null : au0.getPhoneNumber();
+        List<String> servers = new ArrayList<>(java.util.Arrays.asList(COLLS));
+        if (myPhone != null) { // 1:1 비공개 대화: 내 번호가 참가자(mem)에 든 문서만 서버가 내려준다
+            servers.add("prooms");
+            servers.add("pmsgs");
+        }
+        for (final String srv : servers) {
+            final boolean priv = "prooms".equals(srv) || "pmsgs".equals(srv);
+            final String coll = "prooms".equals(srv) ? "rooms" : "pmsgs".equals(srv) ? "msgs" : srv;
             if ("costs".equals(coll) && !canPerf) continue; // 단가는 실적 권한자만
-            Query q = Cloud.fs().collection(coll);
+            Query q = Cloud.fs().collection(srv);
+            if (priv) q = q.whereArrayContains("mem", myPhone);
             if ("contracts".equals(coll) && !canPerf) q = q.whereEqualTo("who", (long) uid);
             if ("reports".equals(coll) && !canReport) q = q.whereEqualTo("who", (long) uid);
-            if ("msgs".equals(coll)) q = q.orderBy("u", Query.Direction.DESCENDING).limit(400);
+            if ("msgs".equals(coll) && !priv) q = q.orderBy("u", Query.Direction.DESCENDING).limit(400);
             final boolean[] firstSnap = {true};
             regs.add(q.addSnapshotListener((snap, err) -> {
                 if (snap == null) return;
@@ -188,13 +301,25 @@ final class Store {
                     Map<String, Object> m = new HashMap<>();
                     m.put("j", s);
                     m.put("u", System.currentTimeMillis());
+                    String target = coll;
+                    boolean priv = false;
+                    if ("rooms".equals(coll) || "msgs".equals(coll)) { // 1:1 비공개: 참가자(mem)가 있으면 따로 보관
+                        JSONArray mem = o.optJSONArray("mem");
+                        if (mem != null && mem.length() > 0) {
+                            List<String> ml = new ArrayList<>();
+                            for (int k = 0; k < mem.length(); k++) ml.add(mem.optString(k));
+                            m.put("mem", ml);
+                            target = "rooms".equals(coll) ? "prooms" : "pmsgs";
+                            priv = true;
+                        }
+                    }
                     if ("contracts".equals(coll) || "reports".equals(coll)) {
                         m.put("who", (long) o.optInt("who"));
                         m.put("date", o.optString("date"));
                     }
                     if ("profiles".equals(coll)) m.put("who", (long) id); // 본인 문서만 고칠 수 있게 하는 표식
-                    Cloud.fs().collection(coll).document(String.valueOf(id)).set(m);
-                    if ("msgs".equals(coll) || "profiles".equals(coll)) { // 기록(audit)을 남기지 않는 컬렉션
+                    Cloud.fs().collection(target).document(String.valueOf(id)).set(m);
+                    if (priv || "msgs".equals(coll) || "profiles".equals(coll)) { // 기록(audit)을 남기지 않는 컬렉션
                         pushed.put(key, s);
                         continue;
                     }
