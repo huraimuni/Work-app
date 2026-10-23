@@ -3917,7 +3917,7 @@ public class MainActivity extends Activity {
     private int libUploading = 0;
     private TextView libFilesTv;
 
-    private static String sizeText(long n) {
+    private static String libSize(long n) {
         if (n >= 1024 * 1024) return String.format(Locale.US, "%.1fMB", n / 1048576.0);
         return Math.max(1, n / 1024) + "KB";
     }
@@ -3997,7 +3997,7 @@ public class MainActivity extends Activity {
             l.addView(Ui.text(this, "첨부 파일 (눌러서 열기·저장)", 13, Ui.GRAY, true), Ui.lp(this, 14));
             for (int i = 0; i < fs.length(); i++) {
                 final JSONObject f = fs.optJSONObject(i);
-                TextView t = Ui.text(this, "📎 " + f.optString("fname") + "  (" + sizeText(f.optLong("size")) + ")", 15, Ui.DEEP, true);
+                TextView t = Ui.text(this, "📎 " + f.optString("fname") + "  (" + libSize(f.optLong("size")) + ")", 15, Ui.DEEP, true);
                 t.setPadding(0, Ui.dp(this, 10), 0, Ui.dp(this, 10));
                 t.setOnClickListener(v -> {
                     Ui.toast(this, "파일을 받는 중…");
@@ -4101,7 +4101,7 @@ public class MainActivity extends Activity {
     private void refreshLibFiles() {
         if (libFilesTv == null) return;
         StringBuilder sb = new StringBuilder();
-        for (JSONObject f : libPending) sb.append("📎 ").append(f.optString("fname")).append("  (").append(sizeText(f.optLong("size"))).append(")\n");
+        for (JSONObject f : libPending) sb.append("📎 ").append(f.optString("fname")).append("  (").append(libSize(f.optLong("size"))).append(")\n");
         if (libUploading > 0) sb.append("올리는 중… ").append(libUploading).append("개");
         libFilesTv.setText(sb.length() == 0 ? "첨부 파일 없음" : sb.toString().trim());
     }
