@@ -29,6 +29,7 @@ import android.widget.TextView;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.File;
 import java.net.URLEncoder;
 import java.text.SimpleDateFormat;
 import java.util.Date;
@@ -88,7 +89,7 @@ public class MainActivity extends Activity {
             me = store.sessionUser();
             if (me != null) buildMain();
         } else if (nav != null) {
-            if (chatRoom != 0 && "chat".equals(tab) && sub == null && msgBox != null) fillMsgs();
+            if (inRoom) fillMsgs();
             else render();
         }
     }
@@ -118,8 +119,23 @@ public class MainActivity extends Activity {
     @Override
     public void onConfigurationChanged(Configuration c) {
         super.onConfigurationChanged(c);
-        if (me != null) buildMain();
+        if (me != null && inRoom) showRoom();
+        else if (me != null) buildMain();
         else if (lastAuth != null) lastAuth.run();
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (inRoom) {
+            leaveRoom();
+            return;
+        }
+        if (me != null && sub != null) {
+            sub = null;
+            render();
+            return;
+        }
+        super.onBackPressed();
     }
 
     private int widthDp() {
@@ -233,7 +249,7 @@ public class MainActivity extends Activity {
             sendCode(Cloud.e164(raw), go);
         });
         card.addView(go, Ui.lp(this, 16));
-        setContentView(authScreen("오늘도 반갑습니다.", "등록된 휴대폰 번호로 문자 인증을 해 주세요.\n(한 번 로그인하면 계속 유지됩니다)", card));
+        setContentView(authScreen("오늘도 반갑습니다.", "등록된 휴대폰 번호로 문자 인증을 해 주세요.\n(한 번 로그인하면 계속 유지됩니다)\n\n나인패밀리 " + appVersion(), card));
     }
 
     private void sendCode(final String e164, final Button go) {
@@ -304,7 +320,7 @@ public class MainActivity extends Activity {
                     store.clear();
                     store.setSession((int) uid);
                     store.setCaps(perf || admin);
-                    store.setReportCap(report || admin);
+                    store.setReportCap(report);
                     Cloud.fs().collection("users").document(String.valueOf(uid)).get().addOnSuccessListener(ud -> {
                         if (!ud.exists()) store.ensureUser((int) uid, name, e164, admin, perf);
                         enterApp();
@@ -331,7 +347,25 @@ public class MainActivity extends Activity {
 
     private TextView fab;
 
+    /** 0.7.0: 관리자도 '일일보고·실적보고 종합 보기'를 따로 켜고 끌 수 있게 됐다. 기존 관리자에게는 한 번만 켜 준다. */
+    private void migrateAdminReport() {
+        try {
+            if (Store.has(me, Perm.STAFF_MANAGE) && !me.optBoolean("migR")) {
+                JSONArray p = me.optJSONArray("perms");
+                if (p == null) {
+                    p = new JSONArray();
+                    me.put("perms", p);
+                }
+                if (!Store.has(me, Perm.REPORT_VIEW)) p.put(Perm.REPORT_VIEW);
+                me.put("migR", true);
+                store.save();
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
     private void buildMain() {
+        migrateAdminReport();
         final boolean wide = wide();
         final int off = wide ? centerOffsetDp() : 0;
         FrameLayout root = new FrameLayout(this);
@@ -350,7 +384,7 @@ public class MainActivity extends Activity {
         hl.addView(Ui.text(this, new SimpleDateFormat("M월 d일 EEEE", Locale.KOREA).format(new Date()), 13, Ui.GRAY, false));
         hl.addView(Ui.text(this, me.optString("name") + "님, 안녕하세요", 22, Ui.INK, true), Ui.lp(this, 2));
         head.addView(hl, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        TextView av = Ui.circle(this, me.optString("name"), 44, Ui.GOLD, Ui.DARK);
+        View av = avatarView(myId(), 44);
         av.setOnClickListener(v -> {
             tab = "all";
             sub = null;
@@ -464,6 +498,8 @@ public class MainActivity extends Activity {
         else if ("stock".equals(k)) renderStock();
         else if ("contracts".equals(k)) renderContracts();
         else if ("manual".equals(k)) renderManual();
+        else if ("about".equals(k)) renderAbout();
+        else if ("profit".equals(k) && canPerf()) renderProfit();
         else renderAll();
         updateFab();
     }
@@ -1233,12 +1269,14 @@ public class MainActivity extends Activity {
     private void renderAll() {
         content.addView(title("전체"));
         LinearLayout prof = Ui.cardH(this);
-        prof.addView(Ui.circle(this, me.optString("name"), 48, Ui.GOLD, Ui.DARK));
+        prof.addView(avatarView(myId(), 48));
+        prof.setOnClickListener(v -> showProfile(myId()));
         LinearLayout pt = new LinearLayout(this);
         pt.setOrientation(LinearLayout.VERTICAL);
         pt.setPadding(Ui.dp(this, 14), 0, 0, 0);
         pt.addView(Ui.text(this, me.optString("name"), 17, Ui.INK, true));
         pt.addView(Ui.text(this, can(Perm.STAFF_MANAGE) ? "관리자" : "직원", 13, Ui.GRAY, false), Ui.lp(this, 2));
+        pt.addView(Ui.text(this, "눌러서 프로필 사진·상태 메시지 바꾸기", 11, Ui.GRAY, false), Ui.lp(this, 2));
         prof.addView(pt);
         content.addView(prof, Ui.lp(this, 8));
         content.addView(sectionLabel("일"));
@@ -1263,6 +1301,10 @@ public class MainActivity extends Activity {
         if (canPerf()) {
             content.addView(menuRow("전체 실적·직원별 순위", "", () -> {
                 sub = "perf";
+                render();
+            }));
+            content.addView(menuRow("수익 현황 (입고·출고 단가)", "", () -> {
+                sub = "profit";
                 render();
             }));
             content.addView(menuRow("실적 보고서 올리기 (대표님께)", "", () -> {
@@ -1295,6 +1337,10 @@ public class MainActivity extends Activity {
             sub = "manual";
             render();
         }));
+        content.addView(menuRow("버전·업데이트 내역", appVersion(), () -> {
+            sub = "about";
+            render();
+        }));
         int un = unreadNotices();
         content.addView(menuRow("공지사항", un > 0 ? String.valueOf(un) : "", () -> {
             sub = "notice";
@@ -1311,6 +1357,9 @@ public class MainActivity extends Activity {
         content.addView(menuRow("로그아웃", "", () -> new AlertDialog.Builder(this).setTitle("로그아웃")
                 .setMessage("로그아웃 할까요?").setNegativeButton("취소", null)
                 .setPositiveButton("로그아웃", (d, w) -> doLogout()).show()));
+        TextView ver = Ui.text(this, "나인패밀리 " + appVersion() + "  ·  주식회사 나인페이먼츠", 12, Ui.GRAY, false);
+        ver.setGravity(Gravity.CENTER);
+        content.addView(ver, Ui.lp(this, 28));
     }
 
     private TextView sectionLabel(String s) {
@@ -1722,8 +1771,32 @@ public class MainActivity extends Activity {
     private void renderStock() {
         content.addView(title("재고"));
         content.addView(Ui.text(this, "장비를 직접 입력해 관리해요. 계약에서 장비를 고르면 '출고중'이 되고, 설치 완료하면 재고에서 빠집니다.", 13, Ui.GRAY, false));
+        if (canPerf()) {
+            long asset = 0;
+            int noPrice = 0;
+            for (JSONObject r : store.list(store.arr("stock"))) {
+                if (r.optBoolean("deleted") || !"재고".equals(r.optString("status"))) continue;
+                JSONObject cd = store.costDoc(r.optInt("id"), false);
+                if (cd == null || cd.optLong("buy") == 0) noPrice += r.optInt("qty", 1);
+                else asset += cd.optLong("buy") * r.optInt("qty", 1);
+            }
+            LinearLayout ac = Ui.card(this);
+            ac.addView(Ui.text(this, "보유 재고 자산 (입고 단가 합계)", 13, Ui.GRAY, false));
+            ac.addView(Ui.text(this, won(asset), 22, Ui.INK, true), Ui.lp(this, 2));
+            if (noPrice > 0) ac.addView(Ui.text(this, "단가 미입력 " + noPrice + "대는 빠져 있어요.", 12, Ui.AMBER, false), Ui.lp(this, 2));
+            Button pb = Ui.button(this, "수익 현황 보기", Ui.TINT, Ui.DEEP);
+            pb.setOnClickListener(v -> {
+                sub = "profit";
+                render();
+            });
+            ac.addView(pb, Ui.lp(this, 8));
+            content.addView(ac, Ui.lp(this, 10));
+        }
         final EditText q = Ui.field(this, "모델명·시리얼 검색 (초성도 돼요)", false);
         content.addView(q, Ui.lp(this, 10));
+        Button scq = Ui.button(this, "바코드로 찾기", Ui.TINT, Ui.DEEP);
+        scq.setOnClickListener(v -> scanBarcode(q, false, false));
+        content.addView(scq, Ui.lp(this, 6));
         final LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
         content.addView(list);
@@ -1786,10 +1859,14 @@ public class MainActivity extends Activity {
         qty.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
         final EditText safe = Ui.field(this, "안전재고 (이 수 아래면 알려줘요, 선택)", false);
         safe.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        final EditText buy = Ui.field(this, "입고 단가 (1대당 산 값, 원, 선택)", false);
+        buy.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
         f.addView(model);
         f.addView(serials);
+        f.addView(scanButtons(serials, true, true));
         f.addView(qty);
         f.addView(safe);
+        if (canPerf()) f.addView(buy);
         ScrollView sv = new ScrollView(this);
         sv.addView(f);
         final AlertDialog dlg = new AlertDialog.Builder(this).setTitle("재고 추가").setView(sv)
@@ -1816,6 +1893,7 @@ public class MainActivity extends Activity {
                 Ui.toast(this, "시리얼을 적거나 수량을 입력해 주세요.");
                 return;
             }
+            long by = canPerf() ? parseWon(buy) : 0;
             try {
                 if (ss.isEmpty()) {
                     JSONObject r = store.create("stock");
@@ -1825,6 +1903,7 @@ public class MainActivity extends Activity {
                     r.put("safe", sf);
                     r.put("status", "재고");
                     r.put("deleted", false);
+                    if (by > 0) store.costDoc(r.optInt("id"), true).put("buy", by);
                 } else {
                     for (String s : ss) {
                         JSONObject r = store.create("stock");
@@ -1834,6 +1913,7 @@ public class MainActivity extends Activity {
                         r.put("safe", sf);
                         r.put("status", "재고");
                         r.put("deleted", false);
+                        if (by > 0) store.costDoc(r.optInt("id"), true).put("buy", by);
                     }
                 }
             } catch (Exception ignored) {
@@ -1856,7 +1936,19 @@ public class MainActivity extends Activity {
         safe.setText(String.valueOf(r.optInt("safe")));
         f.addView(model);
         f.addView(serial);
+        f.addView(scanButtons(serial, false, false));
         f.addView(safe);
+        final EditText buy = Ui.field(this, "입고 단가 (산 값, 원)", false);
+        buy.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        final EditText sell = Ui.field(this, "출고 단가 (판 값, 원)", false);
+        sell.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        if (canPerf()) {
+            JSONObject cd = store.costDoc(r.optInt("id"), false);
+            if (cd != null && cd.optLong("buy") > 0) buy.setText(String.valueOf(cd.optLong("buy")));
+            if (cd != null && cd.optLong("sell") > 0) sell.setText(String.valueOf(cd.optLong("sell")));
+            f.addView(buy);
+            f.addView(sell);
+        }
         if ("출고중".equals(r.optString("status"))) {
             JSONObject mer = store.byId("merchants", r.optInt("merchant"));
             f.addView(Ui.text(this, "출고중 · " + (mer == null ? "" : mer.optString("name")), 13, Ui.GRAY, false), Ui.lp(this, 8));
@@ -1883,6 +1975,14 @@ public class MainActivity extends Activity {
                         } catch (Exception ignored) {
                         }
                         r.put("safe", sf);
+                        if (canPerf()) {
+                            long b2 = parseWon(buy), s2 = parseWon(sell);
+                            JSONObject cd = store.costDoc(r.optInt("id"), b2 > 0 || s2 > 0);
+                            if (cd != null) {
+                                cd.put("buy", b2);
+                                cd.put("sell", s2);
+                            }
+                        }
                     } catch (Exception ignored) {
                     }
                     store.save();
@@ -1899,6 +1999,9 @@ public class MainActivity extends Activity {
         final LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
         box.addView(q);
+        Button sc = Ui.button(this, "바코드로 찾기", Ui.TINT, Ui.DEEP);
+        sc.setOnClickListener(v -> scanBarcode(q, false, false));
+        box.addView(sc, Ui.lp(this, 6));
         box.addView(list);
         final java.util.Set<Integer> chosen = new java.util.HashSet<>();
         ScrollView sv = new ScrollView(this);
@@ -1941,6 +2044,7 @@ public class MainActivity extends Activity {
                     final EditText serial = Ui.field(this, "시리얼", false);
                     f.addView(model);
                     f.addView(serial);
+                    f.addView(scanButtons(serial, false, false));
                     new AlertDialog.Builder(this).setTitle("장비 직접 입력").setView(f)
                             .setNegativeButton("취소", null)
                             .setPositiveButton("추가", (d2, w2) -> {
@@ -2243,10 +2347,6 @@ public class MainActivity extends Activity {
     }
 
     private void renderChat() {
-        if (chatRoom != 0 && store.byId("rooms", chatRoom) != null) {
-            renderRoom();
-            return;
-        }
         chatRoom = 0;
         content.addView(title("채팅"));
         Button nb = Ui.button(this, "+  새 채팅방 만들기", Ui.GOLD, Ui.DARK);
@@ -2301,7 +2401,7 @@ public class MainActivity extends Activity {
             row.setOnClickListener(v -> {
                 chatRoom = r.optInt("id");
                 draft = "";
-                render();
+                showRoom();
             });
             content.addView(row, Ui.lp(this, 8));
         }
@@ -2328,121 +2428,8 @@ public class MainActivity extends Activity {
                     store.save();
                     chatRoom = r.optInt("id");
                     draft = "";
-                    render();
+                    showRoom();
                 }).show();
-    }
-
-    private void renderRoom() {
-        final JSONObject room = store.byId("rooms", chatRoom);
-        LinearLayout hd = new LinearLayout(this);
-        hd.setGravity(Gravity.CENTER_VERTICAL);
-        TextView back = Ui.text(this, "‹  채팅", 15, Ui.DEEP, true);
-        back.setPadding(0, Ui.dp(this, 4), Ui.dp(this, 12), Ui.dp(this, 12));
-        back.setOnClickListener(v -> {
-            chatRoom = 0;
-            render();
-        });
-        hd.addView(back, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        TextView ren = Ui.text(this, "이름 변경", 13, Ui.GRAY, false);
-        ren.setOnClickListener(v -> {
-            LinearLayout f = form();
-            final EditText name = Ui.field(this, "채팅방 이름", false);
-            name.setText(room.optString("name"));
-            f.addView(name);
-            new AlertDialog.Builder(this).setTitle("이름 변경").setView(f).setNegativeButton("취소", null)
-                    .setPositiveButton("저장", (d, w) -> {
-                        if (name.getText().toString().trim().isEmpty()) return;
-                        try {
-                            room.put("name", name.getText().toString().trim());
-                        } catch (Exception ignored) {
-                        }
-                        store.save();
-                        render();
-                    }).show();
-        });
-        hd.addView(ren);
-        content.addView(hd);
-        content.addView(Ui.text(this, room.optString("name"), 22, Ui.INK, true));
-        msgBox = new LinearLayout(this);
-        msgBox.setOrientation(LinearLayout.VERTICAL);
-        content.addView(msgBox, Ui.lp(this, 10));
-        fillMsgs();
-        LinearLayout in = new LinearLayout(this);
-        in.setGravity(Gravity.CENTER_VERTICAL);
-        final EditText input = Ui.field(this, "메시지를 입력하세요", false);
-        input.setSingleLine(false);
-        input.setMaxLines(4);
-        input.setText(draft);
-        input.addTextChangedListener(new TextWatcher() {
-            public void beforeTextChanged(CharSequence s, int a, int b, int c) {
-            }
-
-            public void onTextChanged(CharSequence s, int a, int b, int c) {
-            }
-
-            public void afterTextChanged(Editable s) {
-                draft = s.toString();
-            }
-        });
-        Button send = Ui.button(this, "보내기", Ui.GOLD, Ui.DARK);
-        send.setOnClickListener(v -> {
-            String t = input.getText().toString().trim();
-            if (t.isEmpty()) return;
-            JSONObject m = store.create("msgs");
-            try {
-                m.put("room", chatRoom);
-                m.put("who", myId());
-                m.put("text", t);
-                m.put("ts", System.currentTimeMillis());
-            } catch (Exception ignored) {
-            }
-            store.save();
-            draft = "";
-            input.setText("");
-            fillMsgs();
-        });
-        in.addView(input, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(this, 48));
-        sp.leftMargin = Ui.dp(this, 8);
-        sp.topMargin = Ui.dp(this, 8);
-        in.addView(send, sp);
-        content.addView(in, Ui.lp(this, 10));
-    }
-
-    private void fillMsgs() {
-        if (msgBox == null) return;
-        msgBox.removeAllViews();
-        List<JSONObject> ms = new ArrayList<>();
-        for (JSONObject m : store.list(store.arr("msgs"))) if (m.optInt("room") == chatRoom) ms.add(m);
-        Collections.sort(ms, (a, b) -> Long.compare(a.optLong("ts"), b.optLong("ts")));
-        if (ms.isEmpty()) msgBox.addView(Ui.text(this, "첫 메시지를 남겨 보세요.", 14, Ui.GRAY, false), Ui.lp(this, 12));
-        String lastDay = "";
-        SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd", Locale.KOREA);
-        SimpleDateFormat tf = new SimpleDateFormat("HH:mm", Locale.KOREA);
-        for (JSONObject m : ms) {
-            String day = df.format(new Date(m.optLong("ts")));
-            if (!day.equals(lastDay)) {
-                lastDay = day;
-                TextView dl = Ui.text(this, day, 12, Ui.GRAY, false);
-                dl.setGravity(Gravity.CENTER);
-                msgBox.addView(dl, Ui.lp(this, 12));
-            }
-            boolean mine = m.optInt("who") == myId();
-            LinearLayout wrap = new LinearLayout(this);
-            wrap.setOrientation(LinearLayout.VERTICAL);
-            wrap.setGravity(mine ? Gravity.END : Gravity.START);
-            if (!mine) wrap.addView(Ui.text(this, store.userName(m.optInt("who")), 12, Ui.GRAY, false));
-            TextView b = Ui.text(this, m.optString("text"), 15, Ui.INK, false);
-            b.setBackground(Ui.round(mine ? Ui.GOLD : Ui.CARD, 16, this));
-            b.setPadding(Ui.dp(this, 12), Ui.dp(this, 8), Ui.dp(this, 12), Ui.dp(this, 8));
-            b.setMaxWidth(Ui.dp(this, 280));
-            wrap.addView(b, Ui.lp(this, 2));
-            TextView tm = Ui.text(this, tf.format(new Date(m.optLong("ts"))), 10, Ui.GRAY, false);
-            wrap.addView(tm);
-            LinearLayout.LayoutParams lp = Ui.lp(this, 6);
-            msgBox.addView(wrap, lp);
-        }
-        if (scroll != null) scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
     }
 
     // ---------- 일정 (달력 + 다가오는 일정) ----------
@@ -2566,16 +2553,17 @@ public class MainActivity extends Activity {
             {"처음 시작하기 · 로그인", "1. 앱을 켜면 잠깐 시작 화면이 나오고, 처음에는 로그인 화면이 나옵니다.\n2. 관리자가 등록해 둔 내 휴대폰 번호(예: 01012345678)를 입력하고 '인증번호 받기'를 누릅니다.\n3. 문자로 온 인증번호 6자리를 입력하고 '확인'을 누릅니다.\n4. 한 번 로그인하면 계속 유지됩니다. 다시 묻지 않아요.\n\n※ '등록되지 않은 번호입니다'가 나오면 관리자에게 내 번호 등록을 요청하세요.\n※ 로그아웃은 맨 아래 탭 '전체' → 맨 아래 '로그아웃'입니다. 폰을 바꾸면 같은 번호로 다시 인증하면 됩니다."},
             {"업무 탭", "내게 지시된 업무를 확인하고 처리하는 곳입니다.\n\n■ 화면 구성\n- 맨 위 금색 카드: 남은 업무 수, 새 업무·진행·오늘 완료 수와 진행 막대\n- 계약 만료 알림: 만료가 3개월 안으로 남은 계약이 있으면 카드가 나타납니다. 누르면 계약 관리로 이동합니다.\n- 업무 카드: 종류(설치·AS·영업·서류·카드), 제목, 거래처, 기한, 상태\n\n■ 업무 처리\n1. 카드를 누르면 상세가 열립니다.\n2. 아래 버튼으로 상태를 바꿉니다: 확인함 → 진행중 → 완료(또는 보류).\n3. '완료'를 누르면 완료 메시지를 적을 수 있어요. 모든 처리 기록은 이력으로 남습니다.\n\n■ 업무 지시하기 (업무 지시 권한이 있는 사람)\n- 오른쪽 아래 + 버튼 → 제목, 종류, 거래처, 전화, 주소, 기한, 메모, 담당 직원 입력 후 '지시하기'.\n- '가맹점 조회'를 누르면 등록된 가맹점을 검색해 선택할 수 있고, 거래처·전화·주소가 자동으로 채워집니다.\n- '전체 업무' 보기 권한이 있으면 위쪽 '내 업무 / 전체 업무' 버튼이 보입니다."},
             {"프로젝트 탭", "여러 사람이 오래 진행하는 일을 관리합니다.\n\n1. 오른쪽 아래 + 로 프로젝트를 만듭니다 (제목, 기한, 메모, 책임자).\n2. 프로젝트를 누르면 진행률(%) 슬라이더, '점검 필요' 체크, 메모를 수정할 수 있습니다.\n3. 저장할 때마다 진행 기록이 쌓여서 누가 언제 무엇을 바꿨는지 볼 수 있어요."},
-            {"채팅 탭", "직원끼리 대화하는 곳이에요. 원하는 만큼 채팅방을 만들 수 있습니다.\n\n■ 채팅방 만들기\n- 맨 위 '+ 새 채팅방 만들기' → 이름을 적고 '만들기'. (예: 거래처 A/S, 서류 접수, 입금 확인)\n- 처음이라 방이 하나도 없으면 '기본 채팅방 만들기'로 전체방·서류접수·입금확인·신규계약·AS설치·공지 방을 한 번에 만들 수 있어요.\n\n■ 대화하기\n- 방을 누르면 대화가 열립니다. 아래 입력칸에 쓰고 '보내기'.\n- 내 말풍선은 금색 오른쪽, 다른 사람은 회색 왼쪽입니다.\n- 방 안 오른쪽 위 '이름 변경'으로 방 이름을 바꿀 수 있어요.\n- 대화는 서버에 실시간으로 저장되어 모든 직원 폰에 바로 나타납니다.\n\n※ 모든 직원이 모든 채팅방을 볼 수 있습니다. 민감한 개인 이야기는 올리지 마세요."},
+            {"채팅 탭", "직원끼리 대화하는 곳이에요. 원하는 만큼 채팅방을 만들 수 있습니다.\n\n■ 채팅방 만들기\n- 맨 위 '+ 새 채팅방 만들기' → 이름을 적고 '만들기'. (예: 거래처 A/S, 서류 접수, 입금 확인)\n- 방이 하나도 없으면 '기본 채팅방 만들기'로 전체방·서류접수·입금확인·신규계약·AS설치·공지 방을 한 번에 만들 수 있어요.\n\n■ 대화방 (v0.7.0에서 카카오톡처럼 바뀌었어요)\n- 방을 누르면 전체 화면 대화방이 열리고, 입력줄은 맨 아래에 고정됩니다. 왼쪽 위 ‹ 또는 폰의 뒤로가기로 목록에 돌아갑니다.\n- 내 말풍선은 금색·오른쪽, 다른 사람은 흰색·왼쪽이고 옆에 이름과 프로필 사진이 나옵니다. 같은 사람이 같은 분에 이어 보내면 사진·이름은 한 번만 나와요.\n- 날짜가 바뀌면 가운데에 날짜 띠가 나옵니다.\n- 말풍선을 길게 누르면 글이 복사됩니다.\n- 사람 사진을 누르면 그 직원의 프로필(이름·상태 메시지·전화번호)이 나오고, '전화하기'로 바로 걸 수 있어요.\n\n■ 사진·파일·이모티콘\n- 입력줄 왼쪽 '+' → 사진 보내기(앨범) / 사진 찍어 보내기 / 파일 보내기.\n- 사진은 자동으로 줄여서 올라가요. 대화 속 사진을 누르면 크게 보이고, '다른 앱으로 열기·저장'으로 저장할 수 있습니다.\n- 파일은 700KB까지 보낼 수 있어요(작은 문서·엑셀·PDF용). 더 큰 파일은 사진으로 찍어 보내 주세요. 파일 말풍선을 누르면 내려받아 열립니다.\n- 입력줄 오른쪽 ☺ 를 누르면 이모티콘 판이 열리고, 누르면 글 사이에 들어갑니다.\n\n■ 보내는 중 안내\n- 사진·파일은 인터넷이 연결돼야 올라가요. '보내는 중…'이 뜬 뒤 대화에 나타납니다. 안 나타나면 인터넷을 확인하고 다시 보내 주세요.\n\n※ 모든 직원이 모든 채팅방을 볼 수 있습니다. 민감한 개인 이야기·개인정보 파일은 올리지 마세요."},
             {"일정 탭 (달력)", "한국 달력과 앞으로의 일정을 함께 봅니다.\n\n■ 달력\n- 일요일·공휴일은 빨간색, 토요일은 파란색, 오늘은 금색 원입니다. 공휴일 이름도 표시돼요. (2026~2028년 기준)\n- ‹ › 로 달을 넘기고 '오늘'을 누르면 오늘로 돌아옵니다.\n- 일정이나 업무 기한이 있는 날은 작은 금색 점이 찍혀요.\n- 날짜를 누르면 그날의 일정과 업무가 아래에 나옵니다.\n\n■ 일정 남기기\n1. 오른쪽 아래 + 버튼.\n2. 제목과 날짜를 적고, 시간은 선택입니다.\n3. '가맹점 조회·선택'을 누르면 등록된 가맹점 중에서 찾아 고릅니다 (초성 검색 가능). 고르면 사업자번호·연락처·주소·계약조건·등급이 불러와지고, 장소에는 가맹점 주소가 자동으로 들어갑니다.\n4. '추가'를 누르면 달력에 바로 표시되고, 달력 아래 '다가오는 일정'에도 올라갑니다.\n\n■ 다가오는 일정\n- 오늘부터 앞으로의 일정과 내 업무 기한이 날짜 순으로 나와서, 언제 어디로 가야 하는지 한눈에 확인할 수 있습니다.\n- 가맹점이 연결된 일정을 누르면 가맹점 상세 정보가 열립니다."},
-            {"전체 탭", "나머지 모든 기능으로 들어가는 메뉴판입니다.\n\n- 재고: 장비 재고 관리\n- 가맹점: 가맹점 정보 관리\n- 신규 계약 올리기 / 계약 관리: 계약 등록과 설치 완료 처리, 만료 알림\n- 실적: (권한이 있는 사람만 보임) 월별 신규 계약 실적\n- 지난 업무 기록: 완료된 업무 검색\n- 공지사항 / 사용설명서\n- 직원과 권한: (관리자만) 직원 추가·권한 설정\n- 로그아웃"},
-            {"재고", "장비를 우리가 직접 입력해서 관리합니다. (전체 → 재고)\n\n■ 재고 추가\n1. 오른쪽 아래 + 버튼.\n2. 모델명을 적고, 시리얼은 한 줄에 하나씩 적습니다. 여러 줄을 붙여 넣으면 장비가 한꺼번에 등록돼요.\n3. 시리얼이 없는 소모품(롤지 등)은 시리얼 대신 '수량'만 적습니다.\n4. 안전재고: 이 수 아래로 내려가면 빨간색으로 '부족해요!'가 표시됩니다.\n\n■ 보기·검색\n- 모델별로 묶여서 '재고 n대'가 보이고, 그 아래에 시리얼이 나열됩니다.\n- 검색창에 모델명·시리얼을 치면 찾아줘요. 'ㅌㅅㅍㅅ' 같은 초성도 됩니다.\n\n■ 수정·삭제\n- 시리얼 줄을 누르면 수정창이 열립니다. '삭제'를 누르면 목록에서 지워져요 (기록은 서버에 남아 복구 가능).\n\n■ 상태가 바뀌는 순서\n재고 → (계약에서 선택하면) 출고중 → (설치 완료 처리하면) 재고 목록에서 사라짐"},
+            {"전체 탭", "나머지 모든 기능으로 들어가는 메뉴판입니다.\n\n- 맨 위 내 카드를 누르면 프로필 사진과 상태 메시지를 바꿀 수 있어요.\n- 재고: 장비 재고 관리 (바코드 스캔, 단가)\n- 가맹점: 가맹점 정보 관리\n- 신규 계약 올리기 / 계약 관리: 계약 등록과 설치 완료 처리, 만료 알림\n- 내 실적: 나만 보는 월별 실적과 지난달 비교\n- 전체 실적·직원별 순위 / 수익 현황 / 실적 보고서 올리기: (권한이 있는 사람만 보임)\n- 일일보고 쓰기, 일일보고 종합 보기(권한자)\n- 지난 업무 기록: 완료된 업무 검색\n- 사용설명서, 버전·업데이트 내역, 공지사항\n- 직원과 권한: (관리자만) 직원 추가·권한 설정\n- 로그아웃\n\n※ 맨 아래에 현재 앱 버전이 표시됩니다. 문의할 때 이 버전을 알려 주세요."},
+            {"재고", "장비를 우리가 직접 입력해서 관리합니다. (전체 → 재고)\n\n■ 재고 추가\n1. 오른쪽 아래 + 버튼.\n2. 모델명을 적고, 시리얼은 한 줄에 하나씩 적습니다. 여러 줄을 붙여 넣으면 장비가 한꺼번에 등록돼요.\n3. 시리얼이 없는 소모품(롤지 등)은 시리얼 대신 '수량'만 적습니다.\n4. 안전재고: 이 수 아래로 내려가면 빨간색으로 '부족해요!'가 표시됩니다.\n5. 입고 단가: 실적 권한자에게만 보이는 칸입니다. 1대당 산 값을 적으면 시리얼 전체에 같이 적용돼요.\n\n■ 바코드 스캔 (v0.7.0)\n- '바코드 연속 스캔'을 누르면 카메라가 열립니다. 장비 상자의 바코드에 비추면 번호가 시리얼 칸에 한 줄씩 자동으로 들어가고, 바로 다음 바코드를 읽을 준비가 됩니다. 끝내려면 카메라 화면에서 뒤로가기(또는 X)를 누르세요. 같은 번호는 두 번 들어가지 않아요.\n- 재고 목록 위 '바코드로 찾기'를 누르면 바코드를 읽어 그 시리얼을 바로 검색합니다. 계약에서 장비를 고르는 창에서도 같은 버튼이 있어요.\n\n■ 시리얼 촬영 인식 (v0.7.0)\n- '시리얼 촬영'을 누르고 장비 뒷면의 S/N 라벨을 가까이서 찍으면 글자를 읽어 줍니다.\n- 시리얼처럼 보이는 글자 후보가 목록으로 나오고, 맞는 것을 체크해서 '넣기'를 누르세요. 0(영)과 O(오), 1과 I처럼 헷갈리기 쉬운 글자는 꼭 눈으로 확인해 주세요.\n- 바코드가 같이 있으면 바코드 스캔이 더 정확합니다.\n- 스캔과 촬영은 구글 서비스가 있는 폰에서 동작합니다.\n\n■ 보기·검색\n- 모델별로 묶여서 '재고 n대'가 보이고, 그 아래에 시리얼이 나열됩니다.\n- 검색창에 모델명·시리얼을 치면 찾아줘요. 'ㅌㅅㅍㅅ' 같은 초성도 됩니다.\n\n■ 수정·삭제\n- 시리얼 줄을 누르면 수정창이 열립니다. 시리얼 칸에도 스캔·촬영 버튼이 있어요. '삭제'를 누르면 목록에서 지워져요 (기록은 서버에 남아 복구 가능).\n\n■ 단가와 수익 (실적 권한자 전용)\n- 재고 줄을 누르면 입고 단가(산 값)와 출고 단가(판 값)를 적을 수 있어요.\n- 재고 화면 맨 위에 보유 재고 자산(입고 단가 합계)이 나오고, '수익 현황 보기'로 이동합니다.\n- 단가는 서버에서도 실적 권한자만 읽을 수 있게 따로 보관됩니다. 권한이 없는 직원에게는 칸 자체가 보이지 않아요.\n\n■ 상태가 바뀌는 순서\n재고 → (계약에서 선택하면) 출고중 → (설치 완료 처리하면) 재고 목록에서 사라짐"},
             {"가맹점", "우리 거래처(가맹점) 정보를 관리합니다. (전체 → 가맹점)\n\n■ 등록\n- 오른쪽 아래 + 버튼 → 상호(필수), 사업자번호, 연락처, 주소, 계약조건, 등급 코드, 메모.\n- 계약·일정·업무 지시 화면의 '가맹점 조회'에서 바로 '새 가맹점 등록'도 가능합니다.\n\n■ 등급 코드\n밴피(VAN) 기준입니다.\n0 S · 월 5만원 이상\n1 A · 3만원 이상\n2 B · 1만원 이상\n3 C · 1만원 미만\n4 해지가맹점\n5 신규가맹점\n7 협력사\n\n■ 수정\n- 목록에서 가맹점을 누르면 정보가 보이고, '수정'으로 바꿀 수 있습니다.\n\n■ 검색\n- 상호·사업자번호·전화·주소 어느 것으로든, 초성으로도 검색됩니다."},
             {"신규 계약 올리기", "계약이 되면 바로 올려 주세요. (전체 → 신규 계약 올리기, 또는 계약 관리 화면의 + 버튼)\n\n1. 가맹점 조회·선택: 등록된 가맹점을 고릅니다. 없으면 '새 가맹점 등록'.\n2. 결제 연동: VAN사 또는 PG사, 업체명 (예: 다우데이타).\n3. 구분을 고르면 금액 입력 이름이 바뀝니다.\n   - 판매 → 판매금액\n   - CMS → CMS 금액\n   - 렌탈 → 월 렌탈료\n4. 나가는 장비: '+ 장비 추가'를 눌러 재고에서 체크해 고릅니다. 재고에 없으면 '직접 입력'으로 모델명·시리얼을 적어요. 잘못 고른 장비는 오른쪽 − 로 뺍니다. 장비를 여러 번 + 해서 여러 대를 넣을 수 있어요.\n5. 장비 메모: 설치 조건 등 자유롭게 적습니다.\n6. 계약일과 만료일: 만료일 아래 '+12개월 / +24개월 / +36개월' 버튼을 누르면 계약일 기준으로 자동 계산됩니다.\n7. '올리기'.\n\n※ 올리면 고른 장비는 재고에서 '출고중'이 됩니다."},
             {"계약 관리 · 설치 완료 · 만료 알림", "(전체 → 계약 관리)\n\n■ 계약 보기\n- 위쪽에 '만료가 가까운 계약(3개월 이내)'이 빨간 D-숫자와 함께 먼저 나옵니다. 아래는 전체 계약입니다.\n- 일반 직원은 내가 올린 계약만, 실적 권한이 있는 사람은 전체 계약이 보입니다.\n\n■ 설치 완료\n- 계약을 누르고 '설치 완료'를 누르면 나간 장비가 재고에서 완전히 빠집니다.\n\n■ 장비 추가\n- 같은 가맹점에 장비가 더 나가면 계약을 열어 '장비 추가'를 눌러 모델명·시리얼을 이어서 추가합니다.\n\n■ 만료 알림\n- 만료가 90일 이하로 남은 계약이 있으면 '업무' 탭 위에 알림 카드가 뜨고, 전체 탭에도 숫자가 표시됩니다."},
-            {"실적 (권한자 전용)", "(전체 → 실적, 실적 보기 권한이 있는 사람만 보입니다)\n\n- 위 ‹ › 로 월을 바꿉니다.\n- 이번 달 신규 계약 대수, 직원별 막대 그래프, 올라온 계약 목록이 나옵니다.\n- 계약을 누르면 상세 정보와 장비를 볼 수 있어요.\n- 오른쪽 아래 + 로도 신규 계약을 올릴 수 있습니다."},
-            {"공지사항 · 직원과 권한", "■ 공지사항 (전체 → 공지사항)\n- 공지 쓰기 권한이 있으면 + 버튼으로 작성합니다. '맨 위에 고정'을 켜면 항상 위에 보여요.\n- 읽지 않은 공지는 ● 표시와 전체 탭 숫자로 알려줍니다. 누르면 읽음 처리돼요.\n\n■ 직원과 권한 (관리자 전용)\n- + 버튼 → 이름, 휴대폰 번호, 권한 묶음을 선택해 직원을 등록합니다. 등록된 번호로만 로그인할 수 있어요.\n- 직원을 누르면 항목별 권한을 켜고 끌 수 있고, '사용 중지'로 퇴사자의 접근을 막습니다.\n- 마지막 관리자는 중지하거나 권한을 끌 수 없습니다.\n\n※ '실적 보기'는 서버에서 강제로 막혀 안전합니다. 나머지 권한은 화면에서 숨기는 방식이에요."},
-            {"일일보고 · 실적 보고서", "■ 일일보고 쓰기 (전체 → 일일보고 쓰기)\n- 날짜를 확인하고, 오늘 한 일·특이사항·내일 계획을 적어 '제출하기'를 누릅니다.\n- 그날 완료한 업무와 올린 계약은 자동으로 같이 집계돼요.\n- 같은 날 다시 쓰면 수정본으로 덮어씁니다. 아래에서 내가 낸 보고를 다시 열어 볼 수 있어요.\n\n■ 일일보고 종합 (대표님)\n- 전체 → 일일보고 종합 보기: 날짜별로 직원별 보고가 한 화면에 모이고, 미제출자는 빨간색으로 표시됩니다.\n\n■ 실적 보고서 (본부장 → 대표님)\n- 전체 → 실적 보고서 올리기: 이번 달 실적이 자동 집계되어 채워져 있고, 고쳐서 '대표님께 보고하기'를 누릅니다.\n- 대표님은 같은 메뉴에서 올라온 보고서를 봅니다.\n\n※ 보고서 양식은 정해지면 그 모양에 맞춰 바꿀 수 있어요."},
+            {"실적 (권한자 전용)", "■ 내 실적 (전체 → 내 실적)\n- 나만 볼 수 있습니다. 이번 달 신규 계약 대수, 판매금액, 올린 계약 목록, 지난달과의 비교가 나와요.\n\n■ 전체 실적·직원별 순위 (실적 보기 권한자)\n- 위 ‹ › 로 월을 바꿉니다.\n- 신규 계약 대수와 판매금액, 직원별 순위 막대 그래프, 올라온 계약 목록이 나옵니다.\n- 월별 성과 (v0.7.0): '지난달 → 선택한 달' 계약 대수와 성장률(▲ 늘어남 / ▼ 줄어듦, 지난달이 0이면 '신규')을 직원별 막대 두 개(회색 지난달, 금색 이번 달)로 보여 줍니다. 그 아래 최근 6개월 추이 그래프도 있어요.\n- 계약을 누르면 상세 정보와 장비를 볼 수 있어요.\n\n■ 수익 현황 (실적 보기 권한자, 전체 → 수익 현황)\n- 지금까지 총 수익, 선택한 달 수익(매출·매입), 최근 6개월 수익 그래프, 직원별 수익이 나옵니다.\n- 계약에 올라가 출고된 장비(출고중·설치완료)의 '출고 단가 − 입고 단가'를 합산하고, 월은 계약일 기준이에요.\n- 단가를 아직 안 적은 장비는 수익에서 빠지고, 맨 아래 목록에 나옵니다. 눌러서 단가를 적으면 바로 반영돼요."},
+            {"공지사항 · 직원과 권한", "■ 공지사항 (전체 → 공지사항)\n- 공지 쓰기 권한이 있으면 + 버튼으로 작성합니다. '맨 위에 고정'을 켜면 항상 위에 보여요.\n- 읽지 않은 공지는 ● 표시와 전체 탭 숫자로 알려줍니다. 누르면 읽음 처리돼요.\n\n■ 직원과 권한 (관리자 전용)\n- + 버튼 → 이름, 휴대폰 번호, 권한 묶음을 선택해 직원을 등록합니다. 등록된 번호로만 로그인할 수 있어요.\n- 직원을 누르면 항목별 권한을 켜고 끌 수 있고, '사용 중지'로 퇴사자의 접근을 막습니다.\n- 마지막 관리자는 중지하거나 권한을 끌 수 없습니다.\n\n※ '실적 보기'(수익 현황과 재고 단가 포함)와 '일일보고·실적보고 종합 보기'는 서버에서 강제로 막혀 안전합니다. 나머지 권한은 화면에서 숨기는 방식이에요."},
+            {"일일보고 · 실적 보고서", "■ 일일보고 쓰기 (전체 → 일일보고 쓰기)\n- 날짜를 확인하고, 오늘 한 일·특이사항·내일 계획을 적어 '제출하기'를 누릅니다.\n- 그날 완료한 업무와 올린 계약은 자동으로 같이 집계돼요.\n- 같은 날 다시 쓰면 수정본으로 덮어씁니다. 아래에서 내가 낸 보고를 다시 열어 볼 수 있어요.\n\n■ 일일보고 종합 (대표님)\n- 전체 → 일일보고 종합 보기: 날짜별로 직원별 보고가 한 화면에 모이고, 미제출자는 빨간색으로 표시됩니다.\n- 이 메뉴는 '일일보고·실적보고 종합 보기' 권한이 켜진 사람만 봅니다. 관리자도 예외가 아니에요(v0.7.0부터). 처음에는 관리자에게 켜져 있고, 대표님을 등록하면 대표님께 켜 드린 뒤 관리자 쪽을 끄면 됩니다.\n\n■ 실적 보고서 (본부장 → 대표님)\n- 전체 → 실적 보고서 올리기: 이번 달 실적이 자동 집계되어 채워져 있고, 고쳐서 '대표님께 보고하기'를 누릅니다.\n- 대표님은 같은 메뉴에서 올라온 보고서를 봅니다.\n\n※ 보고서 양식은 정해지면 그 모양에 맞춰 바꿀 수 있어요."},
+            {"프로필 · 버전", "■ 프로필 (v0.7.0)\n- 전체 탭 맨 위 내 카드(또는 오른쪽 위 동그라미)를 누르면 프로필이 열립니다.\n- '사진 변경'으로 앨범에서 사진을 고르면 자동으로 동그랗게 잘려 저장되고, 채팅과 화면 위쪽에 나와요.\n- '상태 메시지'에 외근 중, 오후 복귀 같은 한 줄을 적어 두면 다른 직원이 프로필에서 볼 수 있어요.\n- 채팅에서 다른 직원 사진을 누르면 그 직원의 프로필과 전화하기 버튼이 나옵니다.\n\n■ 버전 보기\n- 전체 탭 맨 아래, 로그인 화면, 전체 → 버전·업데이트 내역에 현재 버전이 표시됩니다. (예: v0.7.0 (빌드 9))\n- 업데이트 내역에는 버전마다 무엇이 바뀌었는지 적혀 있어요.\n\n■ 버전 번호 규칙\n- 가운데 숫자(0.7.0): 새 기능이나 새 메뉴가 들어갈 때 올라갑니다.\n- 끝 숫자(0.7.1): 새 기능 없이 오류를 고치거나 문구·디자인을 다듬을 때 올라갑니다.\n- 괄호 안 빌드 번호: 배포할 때마다 1씩 올라갑니다.\n- 실제 문자 인증으로 전 직원이 쓰기 시작하면 1.0.0이 됩니다.\n- 새 버전이 나올 때마다 이 사용설명서도 함께 새로 고쳐집니다."},
             {"자주 묻는 질문", "Q. 인증번호 문자가 안 와요.\nA. 번호가 등록되었는지, 폰 신호가 되는지 확인하세요. 하루에 받을 수 있는 횟수가 제한되어 있어 여러 번 시도하면 잠시 막힐 수 있어요.\n\nQ. 폰을 바꿨어요.\nA. 새 폰에 앱을 설치하고 같은 번호로 다시 인증하면 모든 자료가 그대로 나옵니다. 자료는 서버에 저장돼 있어요.\n\nQ. 인터넷이 없을 때도 써도 되나요?\nA. 열어서 보기와 입력은 가능하고, 인터넷이 다시 연결되면 자동으로 서버에 올라갑니다.\n\nQ. 실수로 지웠어요.\nA. 지운 자료도 서버에는 기록이 남아 있으니 관리자에게 말씀해 주세요."},
     };
 
@@ -2599,9 +2587,1008 @@ public class MainActivity extends Activity {
     }
 
 
+
+    // ---------- 버전 표시 · 업데이트 내역 (규칙은 VERSIONING.md) ----------
+    private String appVersion() {
+        try {
+            android.content.pm.PackageInfo pi = getPackageManager().getPackageInfo(getPackageName(), 0);
+            return "v" + pi.versionName + " (빌드 " + pi.getLongVersionCode() + ")";
+        } catch (Exception e) {
+            return "v?";
+        }
+    }
+
+    /** {버전, 날짜, 내용}. 새 버전은 맨 위에 추가. CI 가 현재 versionName 항목이 있는지 검사한다. */
+    private static final String[][] CHANGELOG = {
+            {"0.7.0", "2026-10-24", "• 채팅 개편: 입력줄 맨 아래 고정, 내 말풍선·상대 말풍선 구분, 시간 표시, 날짜 띠\n• 채팅에 사진·파일(700KB까지)·이모티콘 보내기\n• 프로필 사진과 상태 메시지, 채팅에서 사진을 누르면 프로필·전화하기\n• 재고 바코드 스캔(연속 스캔, 바코드로 찾기)과 시리얼 라벨 촬영 인식\n• 재고 입고·출고 단가(권한자 전용), 보유 재고 자산, 수익 현황(누적·월별·직원별)\n• 실적: 지난달 대비 성장률과 최근 6개월 그래프\n• 일일보고 종합 보기를 관리자와 분리해 권한 항목 하나로만 켜고 끔\n• 앱 버전 표시와 업데이트 내역, 가맹점 등급 코드를 밴피 기준으로 변경"},
+            {"0.6.0", "2026-10-24", "• 일정: 달력에서 일정을 눌러 상세 보기·삭제, 회사 일정은 최고관리자만 추가\n• 내 실적(본인만) / 전체 실적·직원별 순위(권한자)\n• 일일보고 쓰기, 대표님용 일일보고 종합, 실적 보고서"},
+            {"0.5.0", "2026-10-24", "• 5개 탭(업무/프로젝트/채팅/일정/전체), 채팅방, 재고, 가맹점, 계약(장비·만료 알림), 사용설명서"},
+            {"0.4.0", "2026-10-23", "• 휴대폰 문자 인증 로그인, 서버 실시간 저장"},
+    };
+
+    private void renderAbout() {
+        content.addView(title("버전·업데이트 내역"));
+        content.addView(Ui.text(this, "현재 버전  " + appVersion(), 15, Ui.INK, true), Ui.lp(this, 4));
+        content.addView(Ui.text(this, "버전 규칙: 새 기능이 들어가면 가운데 숫자(0.7.0), 오류 수정·문구 변경이면 끝 숫자(0.7.1)가 올라갑니다. 괄호 안 빌드 번호는 배포할 때마다 1씩 올라가요.", 12, Ui.GRAY, false), Ui.lp(this, 6));
+        for (String[] c : CHANGELOG) {
+            LinearLayout card = Ui.card(this);
+            card.addView(Ui.text(this, "v" + c[0] + "   " + c[1], 15, Ui.DEEP, true));
+            TextView t = Ui.text(this, c[2], 14, Ui.INK, false);
+            t.setLineSpacing(0, 1.3f);
+            card.addView(t, Ui.lp(this, 6));
+            content.addView(card, Ui.lp(this, 10));
+        }
+    }
+
+
+    // ======================= v0.7: 채팅 개편 · 프로필 · 사진/파일 =======================
+    private boolean inRoom = false;
+    private ScrollView roomScroll;
+    private EditText roomInput;
+    private LinearLayout emojiPanel;
+    private int lastMsgCount = -1;
+    private static final int REQ_IMG = 101, REQ_FILE = 102, REQ_PROFILE = 103, REQ_OCR = 104, REQ_CAM = 105;
+    private final java.util.Map<String, android.graphics.Bitmap> bmpCache = new java.util.HashMap<>();
+    private File camFile;
+
+    private static final String[] EMOJIS = ("😀 😃 😄 😁 😆 😅 😂 🤣 😊 😇 🙂 😉 😍 🥰 😘 😋 😎 🤩 🥳 😏 😌 😴 🤔 🤗 🙄 😬 😢 😭 😤 😡 🥺 😱 😳 🤝 👍 👎 👏 🙌 🙏 💪 👌 ✌️ 🤞 👋 ✅ ❌ ⭕ ❗ ❓ 💯 🔥 ⭐ ✨ 🎉 🎊 💰 💳 🧾 📞 📱 💻 🖨️ 📦 🚚 🛠️ 🔧 📝 📎 📅 ⏰ 🏪 🍚 ☕ 🍺 ❤️ 💛 💙 💜 🖤 🤍 😷 🤒 🥱 😅 🫡 🫶").split(" ");
+
+    private void leaveRoom() {
+        inRoom = false;
+        chatRoom = 0;
+        msgBox = null;
+        roomScroll = null;
+        roomInput = null;
+        emojiPanel = null;
+        lastMsgCount = -1;
+        buildMain();
+    }
+
+    private void hideKeyboard(View v) {
+        try {
+            ((android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(v.getWindowToken(), 0);
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** 채팅방 전체 화면: 위에 방 이름, 가운데 대화, 맨 아래 입력줄이 고정된다. */
+    private void showRoom() {
+        final JSONObject room = store.byId("rooms", chatRoom);
+        if (room == null) {
+            leaveRoom();
+            return;
+        }
+        inRoom = true;
+        lastMsgCount = -1;
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(Color.WHITE);
+        root.setPadding(0, Ui.dp(this, 40), 0, 0);
+
+        LinearLayout hd = new LinearLayout(this);
+        hd.setGravity(Gravity.CENTER_VERTICAL);
+        hd.setPadding(Ui.dp(this, 4), Ui.dp(this, 4), Ui.dp(this, 16), Ui.dp(this, 8));
+        TextView back = Ui.text(this, "‹", 32, Ui.DEEP, true);
+        back.setPadding(Ui.dp(this, 14), 0, Ui.dp(this, 14), Ui.dp(this, 4));
+        back.setOnClickListener(v -> {
+            hideKeyboard(v);
+            leaveRoom();
+        });
+        hd.addView(back);
+        TextView nm = Ui.text(this, room.optString("name"), 19, Ui.INK, true);
+        nm.setSingleLine(true);
+        hd.addView(nm, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView ren = Ui.text(this, "이름 변경", 13, Ui.GRAY, false);
+        ren.setPadding(Ui.dp(this, 10), Ui.dp(this, 8), 0, Ui.dp(this, 8));
+        ren.setOnClickListener(v -> {
+            LinearLayout f = form();
+            final EditText name = Ui.field(this, "채팅방 이름", false);
+            name.setText(room.optString("name"));
+            f.addView(name);
+            new AlertDialog.Builder(this).setTitle("이름 변경").setView(f).setNegativeButton("취소", null)
+                    .setPositiveButton("저장", (d, w) -> {
+                        if (name.getText().toString().trim().isEmpty()) return;
+                        try {
+                            room.put("name", name.getText().toString().trim());
+                        } catch (Exception ignored) {
+                        }
+                        store.save();
+                        showRoom();
+                    }).show();
+        });
+        hd.addView(ren);
+        root.addView(hd);
+        View line = new View(this);
+        line.setBackgroundColor(Ui.FIELD);
+        root.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 1)));
+
+        roomScroll = new ScrollView(this);
+        roomScroll.setVerticalScrollBarEnabled(false);
+        roomScroll.setBackgroundColor(Color.rgb(250, 248, 242));
+        msgBox = new LinearLayout(this);
+        msgBox.setOrientation(LinearLayout.VERTICAL);
+        msgBox.setPadding(Ui.dp(this, 12), Ui.dp(this, 8), Ui.dp(this, 12), Ui.dp(this, 12));
+        roomScroll.addView(msgBox);
+        root.addView(roomScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        emojiPanel = buildEmojiPanel();
+        emojiPanel.setVisibility(View.GONE);
+        root.addView(emojiPanel);
+
+        View line2 = new View(this);
+        line2.setBackgroundColor(Ui.FIELD);
+        root.addView(line2, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 1)));
+        LinearLayout in = new LinearLayout(this);
+        in.setGravity(Gravity.BOTTOM);
+        in.setPadding(Ui.dp(this, 8), Ui.dp(this, 8), Ui.dp(this, 8), Ui.dp(this, 14));
+        in.setBackgroundColor(Color.WHITE);
+        TextView plus = Ui.text(this, "+", 24, Ui.DEEP, true);
+        plus.setGravity(Gravity.CENTER);
+        plus.setBackground(Ui.round(Ui.TINT, 20, this));
+        plus.setOnClickListener(v -> showAttachMenu());
+        in.addView(plus, new LinearLayout.LayoutParams(Ui.dp(this, 40), Ui.dp(this, 40)));
+        roomInput = new EditText(this);
+        roomInput.setHint("메시지 입력");
+        roomInput.setTextSize(16);
+        roomInput.setTextColor(Ui.INK);
+        roomInput.setHintTextColor(Ui.GRAY);
+        roomInput.setBackground(Ui.round(Ui.FIELD, 20, this));
+        roomInput.setPadding(Ui.dp(this, 14), Ui.dp(this, 9), Ui.dp(this, 14), Ui.dp(this, 9));
+        roomInput.setMaxLines(4);
+        roomInput.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        roomInput.setText(draft);
+        roomInput.setSelection(roomInput.getText().length());
+        roomInput.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            public void onTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            public void afterTextChanged(Editable s) {
+                draft = s.toString();
+            }
+        });
+        roomInput.setOnClickListener(v -> emojiPanel.setVisibility(View.GONE));
+        LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        ip.leftMargin = Ui.dp(this, 8);
+        in.addView(roomInput, ip);
+        TextView emo = Ui.text(this, "☺", 26, Ui.DEEP, false);
+        emo.setGravity(Gravity.CENTER);
+        emo.setOnClickListener(v -> {
+            if (emojiPanel.getVisibility() == View.VISIBLE) {
+                emojiPanel.setVisibility(View.GONE);
+            } else {
+                hideKeyboard(v);
+                emojiPanel.setVisibility(View.VISIBLE);
+                roomScroll.post(() -> roomScroll.fullScroll(View.FOCUS_DOWN));
+            }
+        });
+        in.addView(emo, new LinearLayout.LayoutParams(Ui.dp(this, 40), Ui.dp(this, 40)));
+        Button send = Ui.button(this, "보내기", Ui.GOLD, Ui.DARK);
+        send.setOnClickListener(v -> {
+            String t = roomInput.getText().toString().trim();
+            if (t.isEmpty()) return;
+            sendMsg(t, "", "", "", 0);
+            draft = "";
+            roomInput.setText("");
+        });
+        in.addView(send, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(this, 40)));
+        root.addView(in);
+
+        if (wide()) {
+            FrameLayout outer = new FrameLayout(this);
+            outer.setBackgroundColor(Ui.CARD);
+            FrameLayout.LayoutParams cp = new FrameLayout.LayoutParams(Ui.dp(this, MAX_CONTENT_DP), ViewGroup.LayoutParams.MATCH_PARENT);
+            cp.gravity = Gravity.CENTER_HORIZONTAL;
+            outer.addView(root, cp);
+            setContentView(outer);
+        } else {
+            setContentView(root);
+        }
+        fillMsgs();
+    }
+
+    private LinearLayout buildEmojiPanel() {
+        ScrollView sv = new ScrollView(this);
+        LinearLayout grid = new LinearLayout(this);
+        grid.setOrientation(LinearLayout.VERTICAL);
+        grid.setPadding(Ui.dp(this, 6), Ui.dp(this, 6), Ui.dp(this, 6), Ui.dp(this, 6));
+        LinearLayout row = null;
+        for (int i = 0; i < EMOJIS.length; i++) {
+            if (i % 8 == 0) {
+                row = new LinearLayout(this);
+                grid.addView(row);
+            }
+            final String e = EMOJIS[i];
+            TextView t = Ui.text(this, e, 26, Ui.INK, false);
+            t.setGravity(Gravity.CENTER);
+            t.setOnClickListener(v -> {
+                if (roomInput == null) return;
+                int a = Math.max(0, roomInput.getSelectionStart());
+                roomInput.getText().insert(a, e);
+            });
+            row.addView(t, new LinearLayout.LayoutParams(0, Ui.dp(this, 46), 1f));
+        }
+        sv.addView(grid);
+        LinearLayout box = new LinearLayout(this);
+        box.setBackgroundColor(Ui.CARD);
+        box.addView(sv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 230)));
+        return box;
+    }
+
+    private void showAttachMenu() {
+        final String[] items = {"사진 보내기 (앨범)", "사진 찍어 보내기", "파일 보내기 (700KB까지)"};
+        new AlertDialog.Builder(this).setTitle("보내기").setItems(items, (d, w) -> {
+            try {
+                if (w == 0) {
+                    Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+                    i.setType("image/*");
+                    startActivityForResult(Intent.createChooser(i, "사진 고르기"), REQ_IMG);
+                } else if (w == 1) {
+                    camFile = new File(Media.dir(this), "cam.jpg");
+                    startActivityForResult(cameraIntent(camFile), REQ_CAM);
+                } else {
+                    Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+                    i.setType("*/*");
+                    i.addCategory(Intent.CATEGORY_OPENABLE);
+                    startActivityForResult(Intent.createChooser(i, "파일 고르기"), REQ_FILE);
+                }
+            } catch (Exception e) {
+                Ui.toast(this, "열 수 있는 앱이 없어요.");
+            }
+        }).show();
+    }
+
+    private Intent cameraIntent(File out) {
+        Uri u = androidx.core.content.FileProvider.getUriForFile(this, getPackageName() + ".files", out);
+        Intent i = new Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE);
+        i.putExtra(android.provider.MediaStore.EXTRA_OUTPUT, u);
+        i.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        return i;
+    }
+
+    private void sendMsg(String text, String kind, String blob, String fname, long size) {
+        JSONObject m = store.create("msgs");
+        try {
+            m.put("room", chatRoom);
+            m.put("who", myId());
+            m.put("text", text);
+            m.put("ts", System.currentTimeMillis());
+            if (!kind.isEmpty()) {
+                m.put("kind", kind);
+                m.put("blob", blob);
+                m.put("fname", fname);
+                m.put("size", size);
+            }
+        } catch (Exception ignored) {
+        }
+        store.save();
+        fillMsgs();
+    }
+
+    /** 사진·파일을 서버 보관함(blobs)에 올린 뒤 대화에 올린다. */
+    private void sendBlob(final String kind, final byte[] data, final String mime, final String fname) {
+        final String id = String.valueOf(store.nextId());
+        Media.write(Media.blobFile(this, id), data);
+        java.util.Map<String, Object> d = new java.util.HashMap<>();
+        d.put("d", Media.b64(data));
+        d.put("mime", mime);
+        d.put("name", fname);
+        d.put("u", System.currentTimeMillis());
+        d.put("by", (long) myId());
+        final int room = chatRoom;
+        Ui.toast(this, "보내는 중…");
+        Cloud.fs().collection("blobs").document(id).set(d).addOnSuccessListener(x -> {
+            if (chatRoom != room) {
+                // 보내는 사이 다른 방으로 옮겼어도 원래 방에 올린다.
+                int keep = chatRoom;
+                chatRoom = room;
+                sendMsg(kind.equals("img") ? "사진" : fname, kind, id, fname, data.length);
+                chatRoom = keep;
+            } else {
+                sendMsg(kind.equals("img") ? "사진" : fname, kind, id, fname, data.length);
+            }
+        }).addOnFailureListener(e -> Ui.toast(this, "보내지 못했어요. 인터넷을 확인해 주세요."));
+    }
+
+    @Override
+    protected void onActivityResult(int req, int res, Intent data) {
+        super.onActivityResult(req, res, data);
+        if (res != RESULT_OK) return;
+        final android.content.ContentResolver cr = getContentResolver();
+        if (req == REQ_IMG || req == REQ_CAM) {
+            final Uri u = req == REQ_CAM ? Uri.fromFile(camFile) : data.getData();
+            if (u == null) return;
+            new Thread(() -> {
+                android.graphics.Bitmap b = Media.decode(cr, u, 1280);
+                byte[] jp = b == null ? null : Media.jpeg(b, 600 * 1024);
+                runOnUiThread(() -> {
+                    if (jp == null) Ui.toast(this, "사진을 읽지 못했어요.");
+                    else sendBlob("img", jp, "image/jpeg", "사진_" + new SimpleDateFormat("MMdd_HHmmss", Locale.KOREA).format(new Date()) + ".jpg");
+                });
+            }).start();
+        } else if (req == REQ_FILE) {
+            final Uri u = data.getData();
+            if (u == null) return;
+            new Thread(() -> {
+                byte[] b = Media.readAll(cr, u, Media.MAX_BYTES);
+                final String nm = Media.name(cr, u);
+                final String mime = cr.getType(u) == null ? "application/octet-stream" : cr.getType(u);
+                runOnUiThread(() -> {
+                    if (b == null) new AlertDialog.Builder(this).setTitle("파일이 너무 커요")
+                            .setMessage("지금은 700KB 이하의 파일만 보낼 수 있어요. 사진은 자동으로 줄여서 보내니 사진으로 보내 주세요.").setPositiveButton("확인", null).show();
+                    else sendBlob("file", b, mime, nm);
+                });
+            }).start();
+        } else if (req == REQ_PROFILE) {
+            final Uri u = data.getData();
+            if (u == null) return;
+            android.graphics.Bitmap b = Media.decode(cr, u, 512);
+            byte[] jp = b == null ? null : Media.jpeg(Media.square(b, 256), 40 * 1024);
+            if (jp == null) {
+                Ui.toast(this, "사진을 읽지 못했어요.");
+                return;
+            }
+            try {
+                store.myProfile(myId()).put("pic", Media.b64(jp));
+            } catch (Exception ignored) {
+            }
+            store.save();
+            bmpCache.clear();
+            Ui.toast(this, "프로필 사진을 바꿨어요.");
+            if (inRoom) showRoom();
+            else buildMain();
+        } else if (req == REQ_OCR) {
+            runOcr();
+        }
+    }
+
+    private android.graphics.Bitmap thumb(File f, int maxSide) {
+        String key = f.getName() + "@" + maxSide + "@" + f.length();
+        android.graphics.Bitmap c = bmpCache.get(key);
+        if (c != null) return c;
+        android.graphics.BitmapFactory.Options o = new android.graphics.BitmapFactory.Options();
+        o.inJustDecodeBounds = true;
+        android.graphics.BitmapFactory.decodeFile(f.getPath(), o);
+        int sample = 1;
+        while (Math.max(o.outWidth, o.outHeight) / (sample * 2) >= maxSide) sample *= 2;
+        android.graphics.BitmapFactory.Options o2 = new android.graphics.BitmapFactory.Options();
+        o2.inSampleSize = sample;
+        c = android.graphics.BitmapFactory.decodeFile(f.getPath(), o2);
+        if (c != null) {
+            if (bmpCache.size() > 40) bmpCache.clear();
+            bmpCache.put(key, c);
+        }
+        return c;
+    }
+
+    /** 보관함에서 파일을 폰으로 받아 둔다(이미 있으면 바로 완료). */
+    private void fetchBlob(final String id, final Runnable done) {
+        final File f = Media.blobFile(this, id);
+        if (f.exists() && f.length() > 0) {
+            done.run();
+            return;
+        }
+        Cloud.fs().collection("blobs").document(id).get().addOnSuccessListener(doc -> {
+            String d = doc.getString("d");
+            if (d == null) {
+                Ui.toast(this, "파일을 찾지 못했어요.");
+                return;
+            }
+            Media.write(f, Media.unb64(d));
+            done.run();
+        }).addOnFailureListener(e -> Ui.toast(this, "내려받지 못했어요. 인터넷을 확인해 주세요."));
+    }
+
+    private void openBlob(final String id, final String fname, final boolean isImg) {
+        fetchBlob(id, () -> {
+            try {
+                String safe = fname.replaceAll("[^0-9A-Za-z가-힣._-]", "_");
+                File out = new File(Media.dir(this), "open_" + id + "_" + safe);
+                if (!out.exists()) {
+                    byte[] b = Media.readAll(getContentResolver(), Uri.fromFile(Media.blobFile(this, id)), Integer.MAX_VALUE);
+                    Media.write(out, b);
+                }
+                Uri u = androidx.core.content.FileProvider.getUriForFile(this, getPackageName() + ".files", out);
+                String ext = android.webkit.MimeTypeMap.getFileExtensionFromUrl(safe);
+                String mime = isImg ? "image/jpeg" : android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext == null ? "" : ext.toLowerCase(Locale.ROOT));
+                Intent i = new Intent(Intent.ACTION_VIEW);
+                i.setDataAndType(u, mime == null ? "*/*" : mime);
+                i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                startActivity(Intent.createChooser(i, "열기"));
+            } catch (Exception e) {
+                Ui.toast(this, "열 수 있는 앱이 없어요.");
+            }
+        });
+    }
+
+    private void showImage(final String id, final String fname) {
+        fetchBlob(id, () -> {
+            android.graphics.Bitmap b = thumb(Media.blobFile(this, id), 1600);
+            if (b == null) {
+                Ui.toast(this, "사진을 열지 못했어요.");
+                return;
+            }
+            ImageView iv = new ImageView(this);
+            iv.setImageBitmap(b);
+            iv.setAdjustViewBounds(true);
+            iv.setPadding(Ui.dp(this, 8), Ui.dp(this, 8), Ui.dp(this, 8), Ui.dp(this, 8));
+            ScrollView sv = new ScrollView(this);
+            sv.addView(iv);
+            new AlertDialog.Builder(this).setView(sv).setNegativeButton("닫기", null)
+                    .setPositiveButton("다른 앱으로 열기·저장", (d, w) -> openBlob(id, fname, true)).show();
+        });
+    }
+
+    private String sizeText(long n) {
+        return n >= 1024 * 1024 ? String.format(Locale.KOREA, "%.1fMB", n / 1048576.0) : Math.max(1, n / 1024) + "KB";
+    }
+
+    private void fillMsgs() {
+        if (msgBox == null || roomScroll == null) return;
+        boolean atBottom = lastMsgCount < 0 || roomScroll.getChildAt(0).getBottom() - (roomScroll.getHeight() + roomScroll.getScrollY()) < Ui.dp(this, 120);
+        msgBox.removeAllViews();
+        List<JSONObject> ms = new ArrayList<>();
+        for (JSONObject m : store.list(store.arr("msgs"))) if (m.optInt("room") == chatRoom) ms.add(m);
+        Collections.sort(ms, (a, b) -> Long.compare(a.optLong("ts"), b.optLong("ts")));
+        if (ms.isEmpty()) {
+            TextView e = Ui.text(this, "첫 메시지를 남겨 보세요.", 14, Ui.GRAY, false);
+            e.setGravity(Gravity.CENTER);
+            msgBox.addView(e, Ui.lp(this, 24));
+        }
+        SimpleDateFormat df = new SimpleDateFormat("yyyy년 M월 d일 EEEE", Locale.KOREA);
+        SimpleDateFormat dk = new SimpleDateFormat("yyyyMMdd", Locale.KOREA);
+        SimpleDateFormat tf = new SimpleDateFormat("a h:mm", Locale.KOREA);
+        String lastDay = "";
+        JSONObject prev = null;
+        for (final JSONObject m : ms) {
+            Date dt = new Date(m.optLong("ts"));
+            String day = dk.format(dt);
+            if (!day.equals(lastDay)) {
+                lastDay = day;
+                TextView dl = Ui.chip(this, df.format(dt), Color.rgb(236, 232, 220), Ui.GRAY);
+                LinearLayout.LayoutParams dp = Ui.lp(this, 14);
+                dp.gravity = Gravity.CENTER_HORIZONTAL;
+                dp.width = ViewGroup.LayoutParams.WRAP_CONTENT;
+                msgBox.addView(dl, dp);
+                prev = null;
+            }
+            final boolean mine = m.optInt("who") == myId();
+            boolean same = prev != null && prev.optInt("who") == m.optInt("who")
+                    && tf.format(new Date(prev.optLong("ts"))).equals(tf.format(dt));
+            boolean nextSame = false;
+            int idx = ms.indexOf(m);
+            if (idx + 1 < ms.size()) {
+                JSONObject nx = ms.get(idx + 1);
+                nextSame = nx.optInt("who") == m.optInt("who") && dk.format(new Date(nx.optLong("ts"))).equals(day)
+                        && tf.format(new Date(nx.optLong("ts"))).equals(tf.format(dt));
+            }
+            View bubble = buildBubble(m, mine);
+            TextView tm = Ui.text(this, nextSame ? "" : tf.format(dt), 10, Ui.GRAY, false);
+            LinearLayout row = new LinearLayout(this);
+            row.setGravity(Gravity.BOTTOM);
+            if (mine) {
+                row.setGravity(Gravity.BOTTOM | Gravity.END);
+                LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                tp.rightMargin = Ui.dp(this, 6);
+                row.addView(tm, tp);
+                row.addView(bubble);
+            } else {
+                if (same) {
+                    row.addView(new View(this), new LinearLayout.LayoutParams(Ui.dp(this, 40), 1));
+                    LinearLayout col = new LinearLayout(this);
+                    col.setGravity(Gravity.BOTTOM);
+                    LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                    cp.leftMargin = Ui.dp(this, 8);
+                    col.addView(bubble);
+                    LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                    tp.leftMargin = Ui.dp(this, 6);
+                    col.addView(tm, tp);
+                    row.addView(col, cp);
+                } else {
+                    row.setGravity(Gravity.TOP);
+                    final int who = m.optInt("who");
+                    View av = avatarView(who, 40);
+                    av.setOnClickListener(v -> showProfile(who));
+                    row.addView(av);
+                    LinearLayout col = new LinearLayout(this);
+                    col.setOrientation(LinearLayout.VERTICAL);
+                    col.addView(Ui.text(this, store.userName(who), 12, Ui.GRAY, false));
+                    LinearLayout bt = new LinearLayout(this);
+                    bt.setGravity(Gravity.BOTTOM);
+                    bt.addView(bubble);
+                    LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                    tp.leftMargin = Ui.dp(this, 6);
+                    bt.addView(tm, tp);
+                    LinearLayout.LayoutParams bp = Ui.lp(this, 3);
+                    bp.width = ViewGroup.LayoutParams.WRAP_CONTENT;
+                    col.addView(bt, bp);
+                    LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                    cp.leftMargin = Ui.dp(this, 8);
+                    row.addView(col, cp);
+                }
+            }
+            msgBox.addView(row, Ui.lp(this, same ? 3 : 10));
+            prev = m;
+        }
+        lastMsgCount = ms.size();
+        if (atBottom) roomScroll.post(() -> roomScroll.fullScroll(View.FOCUS_DOWN));
+    }
+
+    private View buildBubble(final JSONObject m, boolean mine) {
+        final String kind = m.optString("kind");
+        int maxW = Math.min(Ui.dp(this, 250), (int) (getResources().getDisplayMetrics().widthPixels * 0.62));
+        if ("img".equals(kind)) {
+            final ImageView iv = new ImageView(this);
+            iv.setAdjustViewBounds(true);
+            iv.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            iv.setMaxWidth(Ui.dp(this, 220));
+            iv.setMaxHeight(Ui.dp(this, 300));
+            iv.setBackground(Ui.round(Ui.FIELD, 14, this));
+            iv.setMinimumWidth(Ui.dp(this, 120));
+            iv.setMinimumHeight(Ui.dp(this, 90));
+            iv.setClipToOutline(true);
+            final String id = m.optString("blob");
+            final File f = Media.blobFile(this, id);
+            if (f.exists() && f.length() > 0) {
+                android.graphics.Bitmap b = thumb(f, 600);
+                if (b != null) iv.setImageBitmap(b);
+            } else {
+                fetchBlob(id, () -> {
+                    android.graphics.Bitmap b = thumb(f, 600);
+                    if (b != null) iv.setImageBitmap(b);
+                });
+            }
+            iv.setOnClickListener(v -> showImage(id, m.optString("fname")));
+            return iv;
+        }
+        TextView b;
+        if ("file".equals(kind)) {
+            b = Ui.text(this, "📎 " + m.optString("fname") + "\n" + sizeText(m.optLong("size")) + " · 눌러서 열기", 14, Ui.INK, false);
+            b.setOnClickListener(v -> openBlob(m.optString("blob"), m.optString("fname"), false));
+        } else {
+            b = Ui.text(this, m.optString("text"), 15, Ui.INK, false);
+            b.setOnLongClickListener(v -> {
+                ((android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE))
+                        .setPrimaryClip(android.content.ClipData.newPlainText("메시지", m.optString("text")));
+                Ui.toast(this, "복사했어요.");
+                return true;
+            });
+        }
+        b.setBackground(Ui.round(mine ? Ui.GOLD : Color.WHITE, 16, this));
+        b.setPadding(Ui.dp(this, 12), Ui.dp(this, 8), Ui.dp(this, 12), Ui.dp(this, 8));
+        b.setMaxWidth(maxW);
+        b.setLineSpacing(0, 1.1f);
+        return b;
+    }
+
+    // ---------- 프로필 ----------
+    private static final int[] AV_BG = {Color.rgb(247, 239, 217), Color.rgb(227, 246, 238), Color.rgb(241, 236, 251), Color.rgb(255, 241, 219), Color.rgb(232, 240, 253), Color.rgb(253, 236, 234)};
+
+    /** 동그란 프로필 그림. 사진이 있으면 사진, 없으면 이름 첫 글자. */
+    private View avatarView(int uid, int sizeDp) {
+        JSONObject u = store.user(uid);
+        String name = u == null ? "?" : u.optString("name");
+        JSONObject p = store.profile(uid);
+        String pic = p == null ? "" : p.optString("pic");
+        if (!pic.isEmpty()) {
+            String key = "pic" + uid + "@" + pic.length();
+            android.graphics.Bitmap b = bmpCache.get(key);
+            if (b == null) {
+                try {
+                    byte[] d = Media.unb64(pic);
+                    b = android.graphics.BitmapFactory.decodeByteArray(d, 0, d.length);
+                    if (b != null) bmpCache.put(key, b);
+                } catch (Exception ignored) {
+                }
+            }
+            if (b != null) {
+                ImageView iv = new ImageView(this);
+                iv.setImageBitmap(b);
+                iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                iv.setClipToOutline(true);
+                iv.setOutlineProvider(new android.view.ViewOutlineProvider() {
+                    @Override
+                    public void getOutline(View v, android.graphics.Outline o) {
+                        o.setOval(0, 0, v.getWidth(), v.getHeight());
+                    }
+                });
+                iv.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(this, sizeDp), Ui.dp(this, sizeDp)));
+                return iv;
+            }
+        }
+        boolean me2 = uid == myId();
+        return Ui.circle(this, name, sizeDp, me2 ? Ui.GOLD : AV_BG[Math.abs(uid) % AV_BG.length], me2 ? Ui.DARK : Ui.DEEP);
+    }
+
+    private void showProfile(final int uid) {
+        JSONObject u = store.user(uid);
+        if (u == null) return;
+        JSONObject p = store.profile(uid);
+        LinearLayout f = new LinearLayout(this);
+        f.setOrientation(LinearLayout.VERTICAL);
+        f.setGravity(Gravity.CENTER_HORIZONTAL);
+        f.setPadding(Ui.dp(this, 24), Ui.dp(this, 20), Ui.dp(this, 24), Ui.dp(this, 8));
+        f.addView(avatarView(uid, 96));
+        f.addView(Ui.text(this, u.optString("name"), 22, Ui.INK, true), Ui.lp(this, 12));
+        f.addView(Ui.text(this, Store.has(u, Perm.STAFF_MANAGE) ? "관리자" : "직원", 13, Ui.GRAY, false), Ui.lp(this, 2));
+        String st = p == null ? "" : p.optString("status");
+        TextView stv = Ui.text(this, st.isEmpty() ? "상태 메시지가 없어요" : st, 15, st.isEmpty() ? Ui.GRAY : Ui.INK, false);
+        stv.setGravity(Gravity.CENTER);
+        f.addView(stv, Ui.lp(this, 10));
+        if (!u.optString("phone").isEmpty()) {
+            TextView ph = Ui.text(this, "📞 " + u.optString("phone"), 15, Ui.DEEP, true);
+            ph.setOnClickListener(v -> {
+                try {
+                    startActivity(new Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + u.optString("phone"))));
+                } catch (Exception ignored) {
+                }
+            });
+            ph.setPadding(0, Ui.dp(this, 12), 0, Ui.dp(this, 4));
+            f.addView(ph);
+        }
+        AlertDialog.Builder b = new AlertDialog.Builder(this).setView(f).setNegativeButton("닫기", null);
+        if (uid == myId()) {
+            b.setNeutralButton("사진 변경", (d, w) -> {
+                try {
+                    Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+                    i.setType("image/*");
+                    startActivityForResult(Intent.createChooser(i, "프로필 사진 고르기"), REQ_PROFILE);
+                } catch (Exception e) {
+                    Ui.toast(this, "열 수 있는 앱이 없어요.");
+                }
+            });
+            b.setPositiveButton("상태 메시지", (d, w) -> {
+                LinearLayout g = form();
+                final EditText e = Ui.field(this, "상태 메시지 (예: 외근 중, 오후 3시 복귀)", false);
+                JSONObject pp = store.profile(uid);
+                e.setText(pp == null ? "" : pp.optString("status"));
+                g.addView(e);
+                new AlertDialog.Builder(this).setTitle("상태 메시지").setView(g).setNegativeButton("취소", null)
+                        .setPositiveButton("저장", (d2, w2) -> {
+                            try {
+                                store.myProfile(uid).put("status", e.getText().toString().trim());
+                            } catch (Exception ignored) {
+                            }
+                            store.save();
+                            Ui.toast(this, "저장했어요.");
+                        }).show();
+            });
+        } else {
+            b.setPositiveButton("전화하기", (d, w) -> {
+                if (u.optString("phone").isEmpty()) return;
+                try {
+                    startActivity(new Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + u.optString("phone"))));
+                } catch (Exception ignored) {
+                }
+            });
+        }
+        b.show();
+    }
+
+    // ======================= v0.7: 바코드 스캔 · 시리얼 촬영 인식 =======================
+    private EditText ocrTarget;
+    private boolean ocrAppend;
+    private File ocrFile;
+
+    private static void putLine(EditText t, String v, boolean append) {
+        String cur = t.getText().toString();
+        if (!append || cur.trim().isEmpty()) {
+            t.setText(v);
+        } else {
+            for (String l : cur.split("\\n")) if (l.trim().equals(v)) return; // 같은 줄이 있으면 중복 방지
+            t.setText(cur.replaceAll("\\s+$", "") + "\n" + v);
+        }
+        t.setSelection(t.getText().length());
+    }
+
+    /** 구글 코드 스캐너(카메라 앱)로 바코드를 읽어 칸에 넣는다. loop 면 취소할 때까지 계속 읽는다. */
+    private void scanBarcode(final EditText target, final boolean append, final boolean loop) {
+        com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions opts = new com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions.Builder()
+                .enableAutoZoom().build();
+        com.google.mlkit.vision.codescanner.GmsBarcodeScanner sc = com.google.mlkit.vision.codescanner.GmsBarcodeScanning.getClient(this, opts);
+        sc.startScan().addOnSuccessListener(b -> {
+            String v = b.getRawValue();
+            if (v == null || v.trim().isEmpty()) {
+                Ui.toast(this, "바코드 값을 읽지 못했어요.");
+            } else {
+                putLine(target, v.trim(), append);
+                Ui.toast(this, "읽었어요: " + v.trim());
+            }
+            if (loop) new Handler().postDelayed(() -> scanBarcode(target, append, true), 500);
+        }).addOnFailureListener(e -> Ui.toast(this, "바코드 스캔을 시작하지 못했어요. (" + e.getMessage() + ")"));
+    }
+
+    /** 시리얼 라벨을 카메라로 찍어 글자를 읽는다. */
+    private void ocrSerial(EditText target, boolean append) {
+        ocrTarget = target;
+        ocrAppend = append;
+        ocrFile = new File(Media.dir(this), "ocr.jpg");
+        try {
+            startActivityForResult(cameraIntent(ocrFile), REQ_OCR);
+        } catch (Exception e) {
+            Ui.toast(this, "카메라 앱을 열 수 없어요.");
+        }
+    }
+
+    private void runOcr() {
+        if (ocrTarget == null || ocrFile == null || !ocrFile.exists()) return;
+        android.graphics.Bitmap bmp = Media.decode(getContentResolver(), Uri.fromFile(ocrFile), 2400);
+        if (bmp == null) {
+            Ui.toast(this, "사진을 읽지 못했어요.");
+            return;
+        }
+        Ui.toast(this, "글자를 읽는 중…");
+        com.google.mlkit.vision.text.TextRecognition.getClient(com.google.mlkit.vision.text.latin.TextRecognizerOptions.DEFAULT_OPTIONS)
+                .process(com.google.mlkit.vision.common.InputImage.fromBitmap(bmp, 0))
+                .addOnSuccessListener(t -> handleOcr(t.getText()))
+                .addOnFailureListener(e -> Ui.toast(this, "글자를 읽지 못했어요. (" + e.getMessage() + ")"));
+    }
+
+    /** 읽은 글자 중 시리얼처럼 생긴 것(영문·숫자, 6~30자, 숫자 포함)만 추려서 고르게 한다. */
+    private void handleOcr(String text) {
+        List<String> cand = new ArrayList<>();
+        for (String raw : text.split("[\\s:：,;|]+")) {
+            String tk = raw.replaceAll("^(?i)(S/N|SN|SERIAL|NO\\.?)[.:#-]*", "").replaceAll("[^0-9A-Za-z-]", "");
+            if (tk.length() >= 6 && tk.length() <= 30 && tk.matches(".*[0-9].*") && !cand.contains(tk)) cand.add(tk);
+        }
+        if (cand.isEmpty()) {
+            new AlertDialog.Builder(this).setTitle("시리얼을 찾지 못했어요")
+                    .setMessage("글자가 또렷하게 나오도록 가까이서, 흔들리지 않게 다시 찍어 보세요. 바코드가 있으면 '바코드 스캔'이 더 정확해요.")
+                    .setPositiveButton("확인", null).show();
+            return;
+        }
+        final String[] arr = cand.toArray(new String[0]);
+        final boolean[] on = new boolean[arr.length];
+        if (arr.length == 1) on[0] = true;
+        new AlertDialog.Builder(this).setTitle("읽은 시리얼 (맞는 것을 고르세요)")
+                .setMultiChoiceItems(arr, on, (d, i, c) -> on[i] = c)
+                .setNegativeButton("취소", null)
+                .setPositiveButton("넣기", (d, w) -> {
+                    boolean first = true;
+                    for (int i = 0; i < arr.length; i++) {
+                        if (!on[i]) continue;
+                        putLine(ocrTarget, arr[i], ocrAppend || !first);
+                        first = false;
+                    }
+                }).show();
+    }
+
+    /** 칸 아래에 붙이는 [바코드 스캔][시리얼 촬영] 버튼 줄. */
+    private LinearLayout scanButtons(final EditText target, final boolean append, final boolean loop) {
+        LinearLayout r = new LinearLayout(this);
+        Button a = Ui.button(this, loop ? "바코드 연속 스캔" : "바코드 스캔", Ui.TINT, Ui.DEEP);
+        a.setOnClickListener(v -> scanBarcode(target, append, loop));
+        Button b = Ui.button(this, "시리얼 촬영", Ui.TINT, Ui.DEEP);
+        b.setOnClickListener(v -> ocrSerial(target, append));
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        p.rightMargin = Ui.dp(this, 4);
+        LinearLayout.LayoutParams q = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        q.leftMargin = Ui.dp(this, 4);
+        r.addView(a, p);
+        r.addView(b, q);
+        LinearLayout.LayoutParams rp = Ui.lp(this, 6);
+        r.setLayoutParams(rp);
+        return r;
+    }
+
+    // ======================= v0.7: 단가·수익, 월별 비교 =======================
+    private static long parseWon(EditText e) {
+        try {
+            return Long.parseLong(e.getText().toString().replaceAll("[^0-9]", ""));
+        } catch (Exception x) {
+            return 0;
+        }
+    }
+
+    private static String monthKey(int y, int m, int delta) {
+        int t = y * 12 + (m - 1) + delta;
+        return String.format(Locale.KOREA, "%04d-%02d", t / 12, t % 12 + 1);
+    }
+
+    /** 수익 계산에 쓰는 한 줄: 출고된 장비 하나의 {월, 담당, 입고가, 출고가, 재고줄}. */
+    private static final class Sale {
+        String month;
+        int who;
+        long buy, sell;
+        JSONObject row;
+        boolean priced;
+    }
+
+    private List<Sale> sales() {
+        List<Sale> out = new ArrayList<>();
+        for (JSONObject r : store.list(store.arr("stock"))) {
+            if (r.optBoolean("deleted")) continue;
+            String st = r.optString("status");
+            if (!"출고중".equals(st) && !"설치완료".equals(st)) continue;
+            JSONObject c = store.byId("contracts", r.optInt("contract"));
+            if (c == null) continue;
+            Sale s = new Sale();
+            s.month = c.optString("date").length() >= 7 ? c.optString("date").substring(0, 7) : "";
+            s.who = c.optInt("who");
+            s.row = r;
+            JSONObject cd = store.costDoc(r.optInt("id"), false);
+            s.buy = cd == null ? 0 : cd.optLong("buy");
+            s.sell = cd == null ? 0 : cd.optLong("sell");
+            s.priced = cd != null && (s.buy > 0 || s.sell > 0);
+            out.add(s);
+        }
+        return out;
+    }
+
+    private void renderProfit() {
+        Calendar now = Calendar.getInstance();
+        if (perfY == 0) {
+            perfY = now.get(Calendar.YEAR);
+            perfM = now.get(Calendar.MONTH) + 1;
+        }
+        content.addView(title("수익 현황"));
+        content.addView(Ui.text(this, "재고에 적어 둔 입고 단가(산 값)와 출고 단가(판 값)의 차이로 계산해요. 계약에 올라가 출고된 장비가 대상입니다.", 13, Ui.GRAY, false));
+        monthNav(() -> render());
+        String key = String.format(Locale.KOREA, "%04d-%02d", perfY, perfM);
+        List<Sale> all = sales();
+        long totSell = 0, totBuy = 0, mSell = 0, mBuy = 0;
+        int mCnt = 0, missing = 0;
+        java.util.Map<Integer, long[]> byWho = new java.util.HashMap<>();
+        for (Sale s : all) {
+            if (!s.priced) {
+                missing++;
+                continue;
+            }
+            totSell += s.sell;
+            totBuy += s.buy;
+            if (s.month.equals(key)) {
+                mSell += s.sell;
+                mBuy += s.buy;
+                mCnt++;
+                long[] a = byWho.get(s.who);
+                if (a == null) {
+                    a = new long[2];
+                    byWho.put(s.who, a);
+                }
+                a[0]++;
+                a[1] += s.sell - s.buy;
+            }
+        }
+        LinearLayout hero = new LinearLayout(this);
+        hero.setOrientation(LinearLayout.VERTICAL);
+        hero.setBackground(Ui.round(Ui.GOLD, 24, this));
+        hero.setPadding(Ui.dp(this, 20), Ui.dp(this, 20), Ui.dp(this, 20), Ui.dp(this, 20));
+        hero.addView(Ui.text(this, "지금까지 총 수익", 14, Color.argb(200, 31, 27, 18), false));
+        hero.addView(Ui.text(this, won(totSell - totBuy), 30, Ui.DARK, true));
+        hero.addView(Ui.text(this, "매출 " + won(totSell) + " − 매입 " + won(totBuy), 13, Color.argb(200, 31, 27, 18), false), Ui.lp(this, 4));
+        content.addView(hero, Ui.lp(this, 14));
+
+        LinearLayout mc = Ui.card(this);
+        mc.addView(Ui.text(this, perfM + "월 수익", 14, Ui.GRAY, false));
+        mc.addView(Ui.text(this, won(mSell - mBuy), 24, mSell - mBuy < 0 ? Ui.RED : Ui.INK, true));
+        mc.addView(Ui.text(this, mCnt + "대 · 매출 " + won(mSell) + " · 매입 " + won(mBuy), 13, Ui.GRAY, false), Ui.lp(this, 2));
+        content.addView(mc, Ui.lp(this, 10));
+
+        // 최근 6개월 수익 그래프
+        content.addView(Ui.text(this, "최근 6개월 수익", 18, Ui.INK, true), Ui.lp(this, 24));
+        long[] pr = new long[6];
+        String[] lb = new String[6];
+        long max = 1;
+        for (int i = 0; i < 6; i++) {
+            String k = monthKey(perfY, perfM, i - 5);
+            lb[i] = Integer.parseInt(k.substring(5)) + "월";
+            for (Sale s : all) if (s.priced && s.month.equals(k)) pr[i] += s.sell - s.buy;
+            max = Math.max(max, Math.abs(pr[i]));
+        }
+        for (int i = 0; i < 6; i++) {
+            LinearLayout row = new LinearLayout(this);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.addView(Ui.text(this, lb[i], 13, Ui.GRAY, false), new LinearLayout.LayoutParams(Ui.dp(this, 40), ViewGroup.LayoutParams.WRAP_CONTENT));
+            row.addView(bar((int) (Math.abs(pr[i]) * 100 / max), pr[i] < 0 ? Ui.RED : (i == 5 ? Ui.GOLD : Ui.DEEP), Ui.FIELD, 14), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            TextView v = Ui.text(this, won(pr[i]), 12, Ui.INK, false);
+            v.setGravity(Gravity.END);
+            row.addView(v, new LinearLayout.LayoutParams(Ui.dp(this, 96), ViewGroup.LayoutParams.WRAP_CONTENT));
+            content.addView(row, Ui.lp(this, 8));
+        }
+        // 직원별(선택한 달)
+        content.addView(Ui.text(this, perfM + "월 직원별 수익", 18, Ui.INK, true), Ui.lp(this, 24));
+        if (byWho.isEmpty()) content.addView(Ui.text(this, "이 달에 단가가 입력된 출고 장비가 없습니다.", 14, Ui.GRAY, false), Ui.lp(this, 8));
+        for (java.util.Map.Entry<Integer, long[]> e : byWho.entrySet()) {
+            LinearLayout row = Ui.cardH(this);
+            row.addView(Ui.text(this, store.userName(e.getKey()), 15, Ui.INK, true), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            row.addView(Ui.text(this, e.getValue()[0] + "대 · " + won(e.getValue()[1]), 14, e.getValue()[1] < 0 ? Ui.RED : Ui.DEEP, true));
+            content.addView(row, Ui.lp(this, 8));
+        }
+        // 단가 미입력
+        if (missing > 0) {
+            content.addView(Ui.text(this, "단가를 아직 안 적은 출고 장비 " + missing + "대", 18, Ui.RED, true), Ui.lp(this, 24));
+            content.addView(Ui.text(this, "눌러서 입고·출고 단가를 입력하면 수익에 반영돼요.", 12, Ui.GRAY, false));
+            int n = 0;
+            for (final Sale s : all) {
+                if (s.priced) continue;
+                if (++n > 30) break;
+                LinearLayout row = Ui.cardH(this);
+                row.addView(Ui.text(this, s.row.optString("model") + (s.row.optString("serial").isEmpty() ? "" : "  ·  " + s.row.optString("serial")), 14, Ui.INK, false), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+                row.addView(Ui.text(this, s.month, 12, Ui.GRAY, false));
+                row.setOnClickListener(v -> showStockRow(s.row));
+                content.addView(row, Ui.lp(this, 6));
+            }
+        }
+    }
+
+    /** 월별 비교: 지난달 → 이번달 건수와 성장률, 최근 6개월 추이. */
+    private void renderTrend(String key, boolean mine) {
+        int y = Integer.parseInt(key.substring(0, 4)), m = Integer.parseInt(key.substring(5));
+        String prevKey = monthKey(y, m, -1);
+        int pm = Integer.parseInt(prevKey.substring(5));
+        java.util.Map<Integer, long[]> cur = perfStats(key, mine), pre = perfStats(prevKey, mine);
+        content.addView(Ui.text(this, "월별 성과  (" + pm + "월 → " + m + "월)", 18, Ui.INK, true), Ui.lp(this, 24));
+        long ct = 0, pt = 0;
+        for (long[] a : cur.values()) ct += a[0];
+        for (long[] a : pre.values()) pt += a[0];
+        LinearLayout tot = Ui.card(this);
+        tot.addView(Ui.text(this, mine ? "내 신규 계약" : "전체 신규 계약", 13, Ui.GRAY, false));
+        TextView g = Ui.text(this, pt + "대 → " + ct + "대   " + growth(ct, pt), 20, growthColor(ct, pt), true);
+        tot.addView(g, Ui.lp(this, 2));
+        content.addView(tot, Ui.lp(this, 8));
+        if (!mine) {
+            long max = 1;
+            for (long[] a : cur.values()) max = Math.max(max, a[0]);
+            for (long[] a : pre.values()) max = Math.max(max, a[0]);
+            for (JSONObject u : rankedStaff(cur)) {
+                long[] a = cur.get(u.optInt("id")), b = pre.get(u.optInt("id"));
+                long cn = a == null ? 0 : a[0], pn = b == null ? 0 : b[0];
+                if (cn == 0 && pn == 0) continue;
+                LinearLayout row = new LinearLayout(this);
+                row.setGravity(Gravity.CENTER_VERTICAL);
+                row.addView(Ui.text(this, u.optString("name"), 14, Ui.INK, true), new LinearLayout.LayoutParams(Ui.dp(this, 64), ViewGroup.LayoutParams.WRAP_CONTENT));
+                LinearLayout bars = new LinearLayout(this);
+                bars.setOrientation(LinearLayout.VERTICAL);
+                bars.addView(bar((int) (pn * 100 / max), Color.rgb(200, 204, 214), Ui.FIELD, 8));
+                bars.addView(bar((int) (cn * 100 / max), Ui.GOLD, Ui.FIELD, 8), Ui.lp(this, 3));
+                row.addView(bars, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+                LinearLayout rt = new LinearLayout(this);
+                rt.setOrientation(LinearLayout.VERTICAL);
+                rt.setGravity(Gravity.END);
+                rt.addView(Ui.text(this, pn + " → " + cn, 12, Ui.GRAY, false));
+                rt.addView(Ui.text(this, growth(cn, pn), 13, growthColor(cn, pn), true));
+                row.addView(rt, new LinearLayout.LayoutParams(Ui.dp(this, 84), ViewGroup.LayoutParams.WRAP_CONTENT));
+                content.addView(row, Ui.lp(this, 10));
+            }
+            content.addView(Ui.text(this, "회색 막대 = 지난달, 금색 막대 = 선택한 달", 11, Ui.GRAY, false), Ui.lp(this, 6));
+        }
+        content.addView(Ui.text(this, "최근 6개월 신규 계약", 16, Ui.INK, true), Ui.lp(this, 18));
+        long[] n6 = new long[6];
+        long mx = 1;
+        for (int i = 0; i < 6; i++) {
+            for (long[] a : perfStats(monthKey(y, m, i - 5), mine).values()) n6[i] += a[0];
+            mx = Math.max(mx, n6[i]);
+        }
+        for (int i = 0; i < 6; i++) {
+            LinearLayout row = new LinearLayout(this);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            int mm = Integer.parseInt(monthKey(y, m, i - 5).substring(5));
+            row.addView(Ui.text(this, mm + "월", 13, Ui.GRAY, false), new LinearLayout.LayoutParams(Ui.dp(this, 40), ViewGroup.LayoutParams.WRAP_CONTENT));
+            row.addView(bar((int) (n6[i] * 100 / mx), i == 5 ? Ui.GOLD : Ui.DEEP, Ui.FIELD, 14), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            TextView v = Ui.text(this, n6[i] + "대", 12, Ui.INK, false);
+            v.setGravity(Gravity.END);
+            row.addView(v, new LinearLayout.LayoutParams(Ui.dp(this, 48), ViewGroup.LayoutParams.WRAP_CONTENT));
+            content.addView(row, Ui.lp(this, 8));
+        }
+    }
+
+    private static String growth(long cur, long prev) {
+        if (prev == 0) return cur > 0 ? "신규" : "-";
+        long p = Math.round((cur - prev) * 100.0 / prev);
+        return (p > 0 ? "▲ +" : p < 0 ? "▼ " : "") + p + "%";
+    }
+
+    private static int growthColor(long cur, long prev) {
+        if (cur > prev) return Ui.GREEN;
+        if (cur < prev) return Ui.RED;
+        return Ui.GRAY;
+    }
+
     // ======================= v0.6: 일정 삭제·상세, 실적 순위, 일일보고, 실적 보고서 =======================
     private boolean canReport() {
-        return can(Perm.REPORT_VIEW) || can(Perm.STAFF_MANAGE);
+        return can(Perm.REPORT_VIEW);
     }
 
     private String dailyDate = "";
@@ -2727,6 +3714,7 @@ public class MainActivity extends Activity {
         hero.addView(Ui.text(this, total + "대", 34, Ui.DARK, true));
         hero.addView(Ui.text(this, "판매금액 합계 " + won(sales), 13, Color.argb(200, 31, 27, 18), false), Ui.lp(this, 4));
         content.addView(hero, Ui.lp(this, 14));
+        renderTrend(key, mine);
         if (!mine) {
             content.addView(Ui.text(this, "직원별 순위", 18, Ui.INK, true), Ui.lp(this, 24));
             List<JSONObject> staff = rankedStaff(st);

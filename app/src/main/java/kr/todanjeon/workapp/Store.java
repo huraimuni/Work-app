@@ -26,7 +26,7 @@ import java.util.Map;
  * 자료는 삭제하지 않는다. 바뀐 문서는 서버에 올리면서 변경 기록(audit)도 남긴다.
  */
 final class Store {
-    static final String[] COLLS = {"users", "tasks", "notices", "projects", "contracts", "events", "merchants", "stock", "rooms", "msgs", "reports"};
+    static final String[] COLLS = {"users", "tasks", "notices", "projects", "contracts", "events", "merchants", "stock", "rooms", "msgs", "reports", "profiles", "costs"};
     static final String[] GRADES = {"S · 5만원 이상", "A · 3만원 이상", "B · 1만원 이상", "C · 1만원 미만", "해지가맹점", "신규가맹점", "", "협력사"};
 
     private final SharedPreferences sp;
@@ -92,6 +92,7 @@ final class Store {
         actor = uid;
         online = true;
         for (final String coll : COLLS) {
+            if ("costs".equals(coll) && !canPerf) continue; // 단가는 실적 권한자만
             Query q = Cloud.fs().collection(coll);
             if ("contracts".equals(coll) && !canPerf) q = q.whereEqualTo("who", (long) uid);
             if ("reports".equals(coll) && !canReport) q = q.whereEqualTo("who", (long) uid);
@@ -176,8 +177,9 @@ final class Store {
                         m.put("who", (long) o.optInt("who"));
                         m.put("date", o.optString("date"));
                     }
+                    if ("profiles".equals(coll)) m.put("who", (long) id); // 본인 문서만 고칠 수 있게 하는 표식
                     Cloud.fs().collection(coll).document(String.valueOf(id)).set(m);
-                    if ("msgs".equals(coll)) {
+                    if ("msgs".equals(coll) || "profiles".equals(coll)) { // 기록(audit)을 남기지 않는 컬렉션
                         pushed.put(key, s);
                         continue;
                     }
@@ -541,6 +543,15 @@ final class Store {
                 use.put("safe", row.optInt("safe"));
                 use.put("deleted", false);
             }
+            if (use != row) {
+                JSONObject rc = costDoc(row.optInt("id"), false);
+                if (rc != null) {
+                    JSONObject nc = create("costs");
+                    nc.put("stock", use.optInt("id"));
+                    nc.put("buy", rc.optLong("buy"));
+                    nc.put("sell", rc.optLong("sell"));
+                }
+            }
             use.put("qty", 1);
             use.put("status", "출고중");
             use.put("merchant", merchant);
@@ -549,5 +560,39 @@ final class Store {
         } catch (JSONException e) {
             return row;
         }
+    }
+
+    // ---------- 프로필(사진·상태메시지), 재고 단가 ----------
+    /** 직원 한 명의 프로필 문서(없으면 null). 문서 번호는 직원 번호와 같다. */
+    JSONObject profile(int uid) {
+        return byId("profiles", uid);
+    }
+
+    /** 내 프로필 문서를 돌려준다(없으면 만든다). */
+    JSONObject myProfile(int uid) {
+        JSONObject p = profile(uid);
+        if (p != null) return p;
+        try {
+            p = new JSONObject();
+            p.put("id", uid);
+            arr("profiles").put(p);
+        } catch (JSONException ignored) {
+        }
+        return p;
+    }
+
+    /** 재고 한 줄의 단가 문서: {stock, buy(입고), sell(출고)}. */
+    JSONObject costDoc(int stockId, boolean create) {
+        JSONArray a = arr("costs");
+        for (int i = 0; i < a.length(); i++) if (a.optJSONObject(i).optInt("stock") == stockId) return a.optJSONObject(i);
+        if (!create) return null;
+        JSONObject c = create("costs");
+        try {
+            c.put("stock", stockId);
+            c.put("buy", 0L);
+            c.put("sell", 0L);
+        } catch (JSONException ignored) {
+        }
+        return c;
     }
 }
