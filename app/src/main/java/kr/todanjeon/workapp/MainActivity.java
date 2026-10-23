@@ -61,13 +61,17 @@ public class MainActivity extends Activity {
         l.setGravity(Gravity.CENTER_VERTICAL);
         l.setBackgroundColor(Ui.BG);
         l.setPadding(Ui.dp(this, 20), Ui.dp(this, 24), Ui.dp(this, 20), Ui.dp(this, 24));
-        TextView logo = Ui.text(this, "업", 24, Color.WHITE, true);
-        logo.setGravity(Gravity.CENTER);
-        logo.setBackground(Ui.round(Ui.BLUE, 18, this));
-        logo.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(this, 56), Ui.dp(this, 56)));
+        android.widget.ImageView logo = new android.widget.ImageView(this);
+        logo.setImageResource(R.drawable.logo9);
+        logo.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
+        logo.setBackground(Ui.round(Color.WHITE, 28, this));
+        logo.setClipToOutline(true);
+        logo.setPadding(Ui.dp(this, 8), Ui.dp(this, 8), Ui.dp(this, 8), Ui.dp(this, 8));
+        logo.setContentDescription("나인페이먼츠 로고");
+        logo.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(this, 112), Ui.dp(this, 112)));
         l.addView(logo);
-        l.addView(Ui.text(this, headline, 28, Ui.INK, true), Ui.lp(this, 24));
-        l.addView(Ui.text(this, sub, 15, Ui.GRAY, false), Ui.lp(this, 10));
+        l.addView(Ui.text(this, "나인패밀리", 30, Ui.INK, true), Ui.lp(this, 24));
+        l.addView(Ui.text(this, headline + "\n" + sub, 15, Ui.GRAY, false), Ui.lp(this, 8));
         l.addView(card, Ui.lp(this, 32));
         return l;
     }
@@ -95,7 +99,7 @@ public class MainActivity extends Activity {
             }
         });
         card.addView(go, Ui.lp(this, 16));
-        setContentView(authScreen("처음 오셨네요", "관리자 계정부터 만들어 주세요.\n(이 버전은 이 폰 안에만 저장되는 시험판입니다.)", card));
+        setContentView(authScreen("처음 오셨네요.", "관리자 계정부터 만들어 주세요.\n(이 버전은 이 폰 안에만 저장되는 시험판입니다.)", card));
     }
 
     private void showLogin() {
@@ -115,7 +119,7 @@ public class MainActivity extends Activity {
             }
         });
         card.addView(go, Ui.lp(this, 16));
-        setContentView(authScreen("오늘 업무,\n바로 확인하세요", "이름과 비밀번호로 로그인", card));
+        setContentView(authScreen("오늘 업무, 바로 확인하세요.", "이름과 비밀번호로 로그인", card));
     }
 
     // ---------------- 메인 틀 ----------------
