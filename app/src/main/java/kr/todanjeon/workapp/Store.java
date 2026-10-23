@@ -2,47 +2,67 @@ package kr.todanjeon.workapp;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.Handler;
+import android.os.Looper;
+
+import com.google.firebase.firestore.DocumentChange;
+import com.google.firebase.firestore.Query;
 
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 /**
- * v0.1 로컬 저장소. 이 폰 안에만 저장된다(데모용). 서버(Firebase) 연결 시 이 클래스만 교체한다.
- * 업무 이력은 삭제하지 않고 계속 보관한다.
+ * 앱의 저장소. 폰 안 보관본(빠른 시작·오프라인)을 두고, 로그인 후에는 서버(Firestore)와 실시간으로 맞춘다.
+ * 자료는 삭제하지 않는다. 바뀐 문서는 서버에 올리면서 변경 기록(audit)도 남긴다.
  */
 final class Store {
+    static final String[] COLLS = {"users", "tasks", "notices", "projects", "contracts", "events"};
+
     private final SharedPreferences sp;
+    private final Handler main = new Handler(Looper.getMainLooper());
     private JSONObject db;
+    private final Map<String, String> pushed = new HashMap<>();
+    private final Map<String, String> pushedPhone = new HashMap<>();
+    private final SecureRandom rnd = new SecureRandom();
+    private final List<com.google.firebase.firestore.ListenerRegistration> regs = new ArrayList<>();
+    private int actor = 0;
+    private boolean online = false;
 
     Store(Context c) {
         sp = c.getSharedPreferences("workapp", Context.MODE_PRIVATE);
         try {
-            db = new JSONObject(sp.getString("db", "{}"));
+            db = new JSONObject(sp.getString("db2", "{}"));
         } catch (JSONException e) {
             db = new JSONObject();
         }
         try {
-            if (!db.has("users")) db.put("users", new JSONArray());
-            if (!db.has("tasks")) db.put("tasks", new JSONArray());
-            if (!db.has("notices")) db.put("notices", new JSONArray());
-            if (!db.has("projects")) db.put("projects", new JSONArray());
-            if (!db.has("contracts")) db.put("contracts", new JSONArray());
-            if (!db.has("events")) db.put("events", new JSONArray());
-            if (!db.has("seq")) db.put("seq", 0);
+            for (String k : COLLS) if (!db.has(k)) db.put(k, new JSONArray());
         } catch (JSONException ignored) {
+        }
+        for (String k : COLLS) {
+            JSONArray a = db.optJSONArray(k);
+            for (int i = 0; i < a.length(); i++) pushed.put(k + "/" + a.optJSONObject(i).optInt("id"), a.optJSONObject(i).toString());
         }
     }
 
+    // ---------- 저장·동기화 ----------
     void save() {
-        sp.edit().putString("db", db.toString()).apply();
+        sp.edit().putString("db2", db.toString()).apply();
+        push();
+    }
+
+    private void saveLocal() {
+        sp.edit().putString("db2", db.toString()).apply();
     }
 
     static String now() {
@@ -50,23 +70,133 @@ final class Store {
     }
 
     int nextId() {
-        int n = db.optInt("seq") + 1;
-        try {
-            db.put("seq", n);
-        } catch (JSONException ignored) {
+        for (int tries = 0; tries < 50; tries++) {
+            int n = 1 + rnd.nextInt(2000000000);
+            if (!idUsed(n)) return n;
         }
-        return n;
+        return (int) (System.currentTimeMillis() % 2000000000L);
     }
 
-    static String hash(String pin) {
+    private boolean idUsed(int id) {
+        for (String k : COLLS) {
+            JSONArray a = db.optJSONArray(k);
+            for (int i = 0; i < a.length(); i++) if (a.optJSONObject(i).optInt("id") == id) return true;
+        }
+        return false;
+    }
+
+    /** 로그인 후 호출: 이 사람의 번호표(uid)로 서버와 실시간 연결한다. */
+    void attach(int uid, boolean canPerf, final Runnable onChange) {
+        detach();
+        actor = uid;
+        online = true;
+        for (final String coll : COLLS) {
+            Query q = Cloud.fs().collection(coll);
+            if ("contracts".equals(coll) && !canPerf) q = q.whereEqualTo("who", (long) uid);
+            regs.add(q.addSnapshotListener((snap, err) -> {
+                if (snap == null) return;
+                boolean changed = false;
+                for (DocumentChange dc : snap.getDocumentChanges()) {
+                    if (dc.getType() == DocumentChange.Type.REMOVED) continue;
+                    String j = dc.getDocument().getString("j");
+                    if (j == null) continue;
+                    try {
+                        JSONObject o = new JSONObject(j);
+                        int id = o.optInt("id");
+                        String key = coll + "/" + id;
+                        if (j.equals(pushed.get(key))) continue;
+                        pushed.put(key, j);
+                        replace(db.optJSONArray(coll), o);
+                        if ("users".equals(coll)) pushedPhone.put(key, phoneSig(o));
+                        changed = true;
+                    } catch (JSONException ignored) {
+                    }
+                }
+                if (changed) {
+                    saveLocal();
+                    if (onChange != null) main.post(onChange);
+                }
+            }));
+        }
+        push();
+    }
+
+    /** 로그아웃·다른 사람 로그인 때 폰에 남은 보관본을 비운다(서버 자료는 그대로). */
+    void clear() {
+        detach();
+        pushed.clear();
+        pushedPhone.clear();
+        db = new JSONObject();
         try {
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            byte[] d = md.digest(("workapp:" + pin).getBytes("UTF-8"));
-            StringBuilder sb = new StringBuilder();
-            for (byte b : d) sb.append(String.format("%02x", b));
-            return sb.toString();
-        } catch (Exception e) {
-            return pin;
+            for (String k : COLLS) db.put(k, new JSONArray());
+        } catch (JSONException ignored) {
+        }
+        sp.edit().remove("db2").remove("session").remove("perf").apply();
+    }
+
+    void detach() {
+        for (com.google.firebase.firestore.ListenerRegistration r : regs) r.remove();
+        regs.clear();
+        online = false;
+    }
+
+    private void replace(JSONArray a, JSONObject o) throws JSONException {
+        int id = o.optInt("id");
+        for (int i = 0; i < a.length(); i++) {
+            if (a.optJSONObject(i).optInt("id") == id) {
+                a.put(i, o);
+                return;
+            }
+        }
+        a.put(o);
+    }
+
+    private static String phoneSig(JSONObject u) {
+        return u.optString("phone") + "|" + has(u, Perm.STAFF_MANAGE) + "|" + has(u, Perm.PERF_VIEW) + "|"
+                + u.optBoolean("active", true) + "|" + u.optString("name") + "|" + u.optInt("id");
+    }
+
+    private void push() {
+        if (!online) return;
+        for (String coll : COLLS) {
+            JSONArray a = db.optJSONArray(coll);
+            for (int i = 0; i < a.length(); i++) {
+                JSONObject o = a.optJSONObject(i);
+                int id = o.optInt("id");
+                String key = coll + "/" + id;
+                String s = o.toString();
+                if (!s.equals(pushed.get(key))) {
+                    Map<String, Object> m = new HashMap<>();
+                    m.put("j", s);
+                    m.put("u", System.currentTimeMillis());
+                    if ("contracts".equals(coll)) {
+                        m.put("who", (long) o.optInt("who"));
+                        m.put("date", o.optString("date"));
+                    }
+                    Cloud.fs().collection(coll).document(String.valueOf(id)).set(m);
+                    Map<String, Object> au = new HashMap<>();
+                    au.put("c", coll);
+                    au.put("id", (long) id);
+                    au.put("by", (long) actor);
+                    au.put("u", System.currentTimeMillis());
+                    au.put("j", s);
+                    Cloud.fs().collection("audit").add(au);
+                    pushed.put(key, s);
+                }
+                if ("users".equals(coll) && !o.optString("phone").isEmpty()) {
+                    String sig = phoneSig(o);
+                    if (!sig.equals(pushedPhone.get(key))) {
+                        Map<String, Object> p = new HashMap<>();
+                        p.put("uid", (long) id);
+                        p.put("admin", has(o, Perm.STAFF_MANAGE));
+                        p.put("perf", has(o, Perm.PERF_VIEW));
+                        p.put("active", o.optBoolean("active", true));
+                        p.put("name", o.optString("name"));
+                        Cloud.fs().collection("phones").document(o.optString("phone")).set(p);
+                        pushedPhone.put(key, sig);
+                    }
+                }
+            }
         }
     }
 
@@ -75,15 +205,47 @@ final class Store {
         sp.edit().putInt("session", id).apply();
     }
 
+    int sessionId() {
+        return sp.getInt("session", 0);
+    }
+
     JSONObject sessionUser() {
-        int id = sp.getInt("session", 0);
+        int id = sessionId();
         JSONObject u = id == 0 ? null : user(id);
         return u != null && u.optBoolean("active", true) ? u : null;
     }
 
+    void setCaps(boolean perf) {
+        sp.edit().putBoolean("perf", perf).apply();
+    }
+
+    boolean cachedPerf() {
+        return sp.getBoolean("perf", false);
+    }
+
+    /** 서버에 처음 로그인한 관리자의 직원 정보가 아직 없으면 만든다. */
+    void ensureUser(int uid, String name, String phone, boolean admin, boolean perf) {
+        if (user(uid) != null) return;
+        try {
+            JSONObject u = new JSONObject();
+            u.put("id", uid);
+            u.put("name", name);
+            u.put("phone", phone);
+            u.put("active", true);
+            List<String> perms = new ArrayList<>();
+            if (admin) perms.addAll(java.util.Arrays.asList(Perm.KEYS));
+            else if (perf) perms.add(Perm.PERF_VIEW);
+            u.put("perms", new JSONArray(perms));
+            users().put(u);
+            pushedPhone.put("users/" + uid, phoneSig(u));
+            save();
+        } catch (JSONException ignored) {
+        }
+    }
+
     // ---------- 직원 ----------
     boolean hasUsers() {
-        return db.optJSONArray("users").length() > 0;
+        return users().length() > 0;
     }
 
     JSONArray users() {
@@ -101,29 +263,24 @@ final class Store {
         return u == null ? "(알 수 없음)" : u.optString("name");
     }
 
-    JSONObject login(String name, String pin) {
-        JSONArray a = users();
-        for (int i = 0; i < a.length(); i++) {
-            JSONObject u = a.optJSONObject(i);
-            if (u.optString("name").equals(name) && u.optString("pin").equals(hash(pin)) && u.optBoolean("active", true)) {
-                return u;
-            }
-        }
-        return null;
-    }
-
     boolean nameExists(String name) {
         JSONArray a = users();
         for (int i = 0; i < a.length(); i++) if (a.optJSONObject(i).optString("name").equals(name)) return true;
         return false;
     }
 
-    JSONObject addUser(String name, String pin, List<String> perms) {
+    boolean phoneExists(String e164) {
+        JSONArray a = users();
+        for (int i = 0; i < a.length(); i++) if (a.optJSONObject(i).optString("phone").equals(e164)) return true;
+        return false;
+    }
+
+    JSONObject addUser(String name, String phone, List<String> perms) {
         try {
             JSONObject u = new JSONObject();
             u.put("id", nextId());
             u.put("name", name);
-            u.put("pin", hash(pin));
+            u.put("phone", phone);
             u.put("active", true);
             u.put("perms", new JSONArray(perms));
             users().put(u);

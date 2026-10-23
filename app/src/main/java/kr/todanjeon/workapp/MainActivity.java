@@ -59,16 +59,58 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
+        Cloud.init(this);
         store = new Store(this);
         showSplash();
         new Handler().postDelayed(() -> {
-            JSONObject saved = store.sessionUser();
-            if (saved != null) {
-                me = saved;
-                buildMain();
-            } else if (store.hasUsers()) showLogin();
-            else showSetup();
+            if (Cloud.auth().getCurrentUser() != null && store.sessionId() != 0) enterApp();
+            else showLogin();
         }, 1800);
+    }
+
+    /** 로그인된 상태로 앱에 들어간다: 서버와 실시간 연결하고, 내 정보가 도착하면 화면을 그린다. */
+    private void enterApp() {
+        store.attach(store.sessionId(), store.cachedPerf(), this::onRemote);
+        me = store.sessionUser();
+        if (me != null) buildMain();
+        else showLoading();
+    }
+
+    private void onRemote() {
+        if (store.sessionId() == 0) return;
+        JSONObject u = store.user(store.sessionId());
+        if (u != null && !u.optBoolean("active", true)) {
+            doLogout();
+            Ui.toast(this, "사용이 중지된 계정입니다.");
+            return;
+        }
+        if (me == null) {
+            me = store.sessionUser();
+            if (me != null) buildMain();
+        } else if (nav != null) {
+            render();
+        }
+    }
+
+    private void showLoading() {
+        lastAuth = this::showLoading;
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.addView(Ui.text(this, "서버에서 내 정보를 불러오는 중입니다…", 15, Ui.GRAY, false));
+        Button out = Ui.button(this, "취소하고 처음으로", Ui.FIELD, Ui.INK);
+        out.setOnClickListener(v -> doLogout());
+        card.addView(out, Ui.lp(this, 16));
+        setContentView(authScreen("잠시만요.", "인터넷 연결을 확인해 주세요.", card));
+    }
+
+    private void doLogout() {
+        store.detach();
+        Cloud.auth().signOut();
+        store.clear();
+        me = null;
+        sub = null;
+        tab = "task";
+        showLogin();
     }
 
     /** 폴드를 펼치거나 돌려도 앱이 새로 시작되지 않고, 화면 폭에 맞게 다시 그린다. */
@@ -164,56 +206,114 @@ public class MainActivity extends Activity {
         return l;
     }
 
-    // ---------------- 첫 실행: 관리자 만들기 ----------------
-    private void showSetup() {
-        lastAuth = this::showSetup;
-        LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        final EditText name = Ui.field(this, "관리자 이름", false);
-        final EditText pin = Ui.field(this, "비밀번호 숫자 4자리 이상", true);
-        final EditText pin2 = Ui.field(this, "비밀번호 확인", true);
-        card.addView(name);
-        card.addView(pin, Ui.lp(this, 10));
-        card.addView(pin2, Ui.lp(this, 10));
-        Button go = Ui.button(this, "관리자 만들기", Ui.GOLD, Ui.DARK);
-        go.setOnClickListener(v -> {
-            String n = name.getText().toString().trim();
-            String p = pin.getText().toString();
-            if (n.isEmpty()) {
-                Ui.toast(this, "이름을 입력해 주세요.");
-            } else if (p.length() < 4 || !p.equals(pin2.getText().toString())) {
-                Ui.toast(this, "비밀번호는 숫자 4자리 이상이고 두 칸이 같아야 합니다.");
-            } else {
-                me = store.addUser(n, p, Perm.preset("관리자"));
-                store.setSession(me.optInt("id"));
-                buildMain();
-            }
-        });
-        card.addView(go, Ui.lp(this, 16));
-        setContentView(authScreen("처음 오셨네요.", "관리자 계정부터 만들어 주세요.\n(이 버전은 이 폰 안에만 저장되는 시험판입니다.)", card));
-    }
+    // ---------------- 휴대폰 문자 인증 로그인 ----------------
+    private String pendingPhone = "";
+    private String verificationId = null;
+    private com.google.firebase.auth.PhoneAuthProvider.ForceResendingToken resendToken = null;
 
     private void showLogin() {
         lastAuth = this::showLogin;
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
-        final EditText name = Ui.field(this, "이름", false);
-        final EditText pin = Ui.field(this, "비밀번호", true);
-        card.addView(name);
-        card.addView(pin, Ui.lp(this, 10));
-        Button go = Ui.button(this, "로그인", Ui.GOLD, Ui.DARK);
+        final EditText phone = Ui.field(this, "휴대폰 번호 (예: 01012345678)", false);
+        phone.setInputType(android.text.InputType.TYPE_CLASS_PHONE);
+        if (!pendingPhone.isEmpty()) phone.setText(pendingPhone);
+        card.addView(phone);
+        final Button go = Ui.button(this, "인증번호 받기", Ui.GOLD, Ui.DARK);
         go.setOnClickListener(v -> {
-            JSONObject u = store.login(name.getText().toString().trim(), pin.getText().toString());
-            if (u == null) {
-                Ui.toast(this, "이름 또는 비밀번호가 맞지 않거나 사용이 중지된 계정입니다.");
-            } else {
-                me = u;
-                store.setSession(u.optInt("id"));
-                buildMain();
+            String raw = phone.getText().toString().trim();
+            if (raw.replaceAll("[^0-9]", "").length() < 10) {
+                Ui.toast(this, "휴대폰 번호를 정확히 입력해 주세요.");
+                return;
             }
+            pendingPhone = raw;
+            go.setEnabled(false);
+            go.setText("문자 보내는 중…");
+            sendCode(Cloud.e164(raw), go);
         });
         card.addView(go, Ui.lp(this, 16));
-        setContentView(authScreen("오늘도 반갑습니다.", "이름과 비밀번호로 로그인 (휴대폰 인증은 서버 연결 후 켜집니다)", card));
+        setContentView(authScreen("오늘도 반갑습니다.", "등록된 휴대폰 번호로 문자 인증을 해 주세요.\n(한 번 로그인하면 계속 유지됩니다)", card));
+    }
+
+    private void sendCode(final String e164, final Button go) {
+        com.google.firebase.auth.PhoneAuthOptions.Builder ob = com.google.firebase.auth.PhoneAuthOptions.newBuilder(Cloud.auth())
+                .setPhoneNumber(e164)
+                .setTimeout(60L, java.util.concurrent.TimeUnit.SECONDS)
+                .setActivity(this)
+                .setCallbacks(new com.google.firebase.auth.PhoneAuthProvider.OnVerificationStateChangedCallbacks() {
+                    @Override
+                    public void onVerificationCompleted(com.google.firebase.auth.PhoneAuthCredential cred) {
+                        signIn(cred, e164);
+                    }
+
+                    @Override
+                    public void onVerificationFailed(com.google.firebase.FirebaseException e) {
+                        Ui.toast(MainActivity.this, "문자 인증을 시작하지 못했습니다: " + e.getMessage());
+                        showLogin();
+                    }
+
+                    @Override
+                    public void onCodeSent(String id, com.google.firebase.auth.PhoneAuthProvider.ForceResendingToken t) {
+                        verificationId = id;
+                        resendToken = t;
+                        showCode(e164);
+                    }
+                });
+        com.google.firebase.auth.PhoneAuthProvider.verifyPhoneNumber(ob.build());
+    }
+
+    private void showCode(final String e164) {
+        lastAuth = () -> showCode(e164);
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        final EditText code = Ui.field(this, "문자로 받은 인증번호 6자리", false);
+        code.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        card.addView(code);
+        Button go = Ui.button(this, "확인", Ui.GOLD, Ui.DARK);
+        go.setOnClickListener(v -> {
+            String c = code.getText().toString().trim();
+            if (c.length() < 6 || verificationId == null) {
+                Ui.toast(this, "인증번호 6자리를 입력해 주세요.");
+                return;
+            }
+            signIn(com.google.firebase.auth.PhoneAuthProvider.getCredential(verificationId, c), e164);
+        });
+        card.addView(go, Ui.lp(this, 16));
+        Button back = Ui.button(this, "번호 다시 입력", Ui.FIELD, Ui.INK);
+        back.setOnClickListener(v -> showLogin());
+        card.addView(back, Ui.lp(this, 8));
+        setContentView(authScreen("문자를 보냈어요.", e164 + " 로 보낸 인증번호를 입력해 주세요.", card));
+    }
+
+    private void signIn(com.google.firebase.auth.PhoneAuthCredential cred, final String e164) {
+        Cloud.auth().signInWithCredential(cred).addOnSuccessListener(r ->
+                Cloud.fs().collection("phones").document(e164).get().addOnSuccessListener(doc -> {
+                    if (!doc.exists() || !Boolean.TRUE.equals(doc.getBoolean("active"))) {
+                        Cloud.auth().signOut();
+                        Ui.toast(this, "등록되지 않은 번호입니다. 관리자에게 등록을 요청해 주세요.");
+                        showLogin();
+                        return;
+                    }
+                    final long uid = doc.getLong("uid") == null ? 0 : doc.getLong("uid");
+                    final String name = doc.getString("name") == null ? "" : doc.getString("name");
+                    final boolean admin = Boolean.TRUE.equals(doc.getBoolean("admin"));
+                    final boolean perf = Boolean.TRUE.equals(doc.getBoolean("perf"));
+                    store.clear();
+                    store.setSession((int) uid);
+                    store.setCaps(perf || admin);
+                    Cloud.fs().collection("users").document(String.valueOf(uid)).get().addOnSuccessListener(ud -> {
+                        if (!ud.exists()) store.ensureUser((int) uid, name, e164, admin, perf);
+                        enterApp();
+                    }).addOnFailureListener(e -> enterApp());
+                }).addOnFailureListener(e -> {
+                    Cloud.auth().signOut();
+                    Ui.toast(this, "등록 정보를 확인하지 못했습니다: " + e.getMessage());
+                    showLogin();
+                })
+        ).addOnFailureListener(e -> {
+            Ui.toast(this, "인증번호가 맞지 않습니다.");
+            showCode(e164);
+        });
     }
 
     // ---------------- 메인 틀 ----------------
@@ -328,6 +428,10 @@ public class MainActivity extends Activity {
     }
 
     private void render() {
+        if (me != null) {
+            JSONObject fresh = store.user(me.optInt("id"));
+            if (fresh != null) me = fresh;
+        }
         // 넓은 화면의 왼쪽 메뉴는 맨 위 로고(첫 번째 자식)를 남기고 메뉴만 다시 만든다.
         int keep = wide() ? 1 : 0;
         while (nav.getChildCount() > keep) nav.removeViewAt(nav.getChildCount() - 1);
@@ -839,7 +943,8 @@ public class MainActivity extends Activity {
         f.setOrientation(LinearLayout.VERTICAL);
         f.setPadding(Ui.dp(this, 20), Ui.dp(this, 8), Ui.dp(this, 20), 0);
         final EditText name = Ui.field(this, "직원 이름", false);
-        final EditText pin = Ui.field(this, "처음 비밀번호 (숫자 4자리 이상)", true);
+        final EditText pin = Ui.field(this, "휴대폰 번호 (예: 01012345678)", false);
+        pin.setInputType(android.text.InputType.TYPE_CLASS_PHONE);
         final Spinner preset = new Spinner(this);
         preset.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, Perm.PRESET_NAMES));
         f.addView(name);
@@ -850,11 +955,13 @@ public class MainActivity extends Activity {
                 .setNegativeButton("취소", null)
                 .setPositiveButton("추가", (d, w) -> {
                     String n = name.getText().toString().trim();
-                    String p = pin.getText().toString();
-                    if (n.isEmpty() || p.length() < 4) {
-                        Ui.toast(this, "이름과 4자리 이상 비밀번호를 입력해 주세요.");
+                    String p = Cloud.e164(pin.getText().toString());
+                    if (n.isEmpty() || p.length() < 12) {
+                        Ui.toast(this, "이름과 휴대폰 번호를 입력해 주세요.");
                     } else if (store.nameExists(n)) {
                         Ui.toast(this, "같은 이름의 직원이 있습니다.");
+                    } else if (store.phoneExists(p)) {
+                        Ui.toast(this, "이미 등록된 번호입니다.");
                     } else {
                         store.addUser(n, p, Perm.preset(Perm.PRESET_NAMES[preset.getSelectedItemPosition()]));
                         render();
@@ -873,8 +980,6 @@ public class MainActivity extends Activity {
             boxes[i].setChecked(Store.has(u, Perm.KEYS[i]));
             f.addView(boxes[i]);
         }
-        final EditText pin = Ui.field(this, "비밀번호 재설정 (바꿀 때만 입력)", true);
-        f.addView(pin, Ui.lp(this, 8));
         final boolean active = u.optBoolean("active", true);
         ScrollView sv = new ScrollView(this);
         sv.addView(f);
@@ -904,7 +1009,6 @@ public class MainActivity extends Activity {
                     }
                     try {
                         u.put("perms", np);
-                        if (pin.getText().length() >= 4) u.put("pin", Store.hash(pin.getText().toString()));
                     } catch (Exception ignored) {
                     }
                     store.save();
@@ -1249,13 +1353,7 @@ public class MainActivity extends Activity {
         content.addView(sectionLabel("계정"));
         content.addView(menuRow("로그아웃", "", () -> new AlertDialog.Builder(this).setTitle("로그아웃")
                 .setMessage("로그아웃 할까요?").setNegativeButton("취소", null)
-                .setPositiveButton("로그아웃", (d, w) -> {
-                    me = null;
-                    store.setSession(0);
-                    sub = null;
-                    tab = "task";
-                    showLogin();
-                }).show()));
+                .setPositiveButton("로그아웃", (d, w) -> doLogout()).show()));
     }
 
     private TextView sectionLabel(String s) {
