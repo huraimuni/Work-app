@@ -248,8 +248,9 @@ public class MainActivity extends Activity {
 
                     @Override
                     public void onVerificationFailed(com.google.firebase.FirebaseException e) {
-                        Ui.toast(MainActivity.this, "문자 인증을 시작하지 못했습니다: " + e.getMessage());
                         showLogin();
+                        new AlertDialog.Builder(MainActivity.this).setTitle("문자 인증을 시작하지 못했습니다")
+                                .setMessage(String.valueOf(e.getMessage())).setPositiveButton("확인", null).show();
                     }
 
                     @Override
