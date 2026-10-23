@@ -27,7 +27,7 @@ import java.util.Map;
  */
 final class Store {
     static final String[] COLLS = {"users", "tasks", "notices", "projects", "contracts", "events", "merchants", "stock", "rooms", "msgs", "reports"};
-    static final String[] GRADES = {"우량", "중상", "중간", "중하", "주의", "신규"};
+    static final String[] GRADES = {"S · 5만원 이상", "A · 3만원 이상", "B · 1만원 이상", "C · 1만원 미만", "해지가맹점", "신규가맹점", "", "협력사"};
 
     private final SharedPreferences sp;
     private final Handler main = new Handler(Looper.getMainLooper());
