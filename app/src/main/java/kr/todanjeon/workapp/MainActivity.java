@@ -8,12 +8,14 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.TextWatcher;
+import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Spinner;
@@ -23,6 +25,9 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.net.URLEncoder;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -49,25 +54,33 @@ public class MainActivity extends Activity {
         else showSetup();
     }
 
-    private LinearLayout formRoot() {
+    /** 로그인/첫 설정 공통 화면: 로고 + 큰 문구 + 흰 카드. */
+    private LinearLayout authScreen(String headline, String sub, LinearLayout card) {
         LinearLayout l = new LinearLayout(this);
         l.setOrientation(LinearLayout.VERTICAL);
+        l.setGravity(Gravity.CENTER_VERTICAL);
         l.setBackgroundColor(Ui.BG);
-        l.setPadding(Ui.dp(this, 24), Ui.dp(this, 60), Ui.dp(this, 24), Ui.dp(this, 24));
+        l.setPadding(Ui.dp(this, 20), Ui.dp(this, 24), Ui.dp(this, 20), Ui.dp(this, 24));
+        TextView logo = Ui.text(this, "업", 24, Color.WHITE, true);
+        logo.setGravity(Gravity.CENTER);
+        logo.setBackground(Ui.round(Ui.BLUE, 18, this));
+        logo.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(this, 56), Ui.dp(this, 56)));
+        l.addView(logo);
+        l.addView(Ui.text(this, headline, 28, Ui.INK, true), Ui.lp(this, 24));
+        l.addView(Ui.text(this, sub, 15, Ui.GRAY, false), Ui.lp(this, 10));
+        l.addView(card, Ui.lp(this, 32));
         return l;
     }
 
     // ---------------- 첫 실행: 관리자 만들기 ----------------
     private void showSetup() {
-        LinearLayout l = formRoot();
-        l.addView(Ui.text(this, "사내 업무앱", 26, Ui.NAVY, true));
-        l.addView(Ui.text(this, "처음 사용입니다. 관리자 계정을 만들어 주세요.\n(이 버전은 이 폰 안에만 저장되는 시험판입니다.)", 14, Ui.GRAY, false), Ui.lp(this, 6));
+        LinearLayout card = Ui.card(this);
         final EditText name = Ui.field(this, "관리자 이름", false);
         final EditText pin = Ui.field(this, "비밀번호 숫자 4자리 이상", true);
         final EditText pin2 = Ui.field(this, "비밀번호 확인", true);
-        l.addView(name, Ui.lp(this, 24));
-        l.addView(pin, Ui.lp(this, 8));
-        l.addView(pin2, Ui.lp(this, 8));
+        card.addView(name);
+        card.addView(pin, Ui.lp(this, 10));
+        card.addView(pin2, Ui.lp(this, 10));
         Button go = Ui.button(this, "관리자 만들기", Ui.BLUE, Color.WHITE);
         go.setOnClickListener(v -> {
             String n = name.getText().toString().trim();
@@ -81,17 +94,16 @@ public class MainActivity extends Activity {
                 buildMain();
             }
         });
-        l.addView(go, Ui.lp(this, 16));
-        setContentView(l);
+        card.addView(go, Ui.lp(this, 16));
+        setContentView(authScreen("처음 오셨네요", "관리자 계정부터 만들어 주세요.\n(이 버전은 이 폰 안에만 저장되는 시험판입니다.)", card));
     }
 
     private void showLogin() {
-        LinearLayout l = formRoot();
-        l.addView(Ui.text(this, "사내 업무앱", 26, Ui.NAVY, true));
+        LinearLayout card = Ui.card(this);
         final EditText name = Ui.field(this, "이름", false);
         final EditText pin = Ui.field(this, "비밀번호", true);
-        l.addView(name, Ui.lp(this, 30));
-        l.addView(pin, Ui.lp(this, 8));
+        card.addView(name);
+        card.addView(pin, Ui.lp(this, 10));
         Button go = Ui.button(this, "로그인", Ui.BLUE, Color.WHITE);
         go.setOnClickListener(v -> {
             JSONObject u = store.login(name.getText().toString().trim(), pin.getText().toString());
@@ -102,8 +114,8 @@ public class MainActivity extends Activity {
                 buildMain();
             }
         });
-        l.addView(go, Ui.lp(this, 16));
-        setContentView(l);
+        card.addView(go, Ui.lp(this, 16));
+        setContentView(authScreen("오늘 업무,\n바로 확인하세요", "이름과 비밀번호로 로그인", card));
     }
 
     // ---------------- 메인 틀 ----------------
@@ -115,37 +127,67 @@ public class MainActivity extends Activity {
         return me.optInt("id");
     }
 
+    private TextView fab;
+
     private void buildMain() {
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(Ui.BG);
+
         main = new LinearLayout(this);
         main.setOrientation(LinearLayout.VERTICAL);
-        main.setBackgroundColor(Ui.BG);
-        main.setPadding(0, Ui.dp(this, 36), 0, 0);
+        main.setPadding(0, Ui.dp(this, 48), 0, 0);
 
         LinearLayout head = new LinearLayout(this);
         head.setOrientation(LinearLayout.HORIZONTAL);
-        head.setPadding(Ui.dp(this, 16), Ui.dp(this, 8), Ui.dp(this, 16), Ui.dp(this, 8));
-        TextView title = Ui.text(this, "사내 업무앱  ·  " + me.optString("name"), 17, Ui.NAVY, true);
-        head.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        TextView out = Ui.text(this, "로그아웃", 14, Ui.GRAY, false);
-        out.setOnClickListener(v -> {
-            me = null;
-            showLogin();
-        });
-        head.addView(out);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        head.setPadding(Ui.dp(this, 20), Ui.dp(this, 8), Ui.dp(this, 20), Ui.dp(this, 12));
+        LinearLayout hl = new LinearLayout(this);
+        hl.setOrientation(LinearLayout.VERTICAL);
+        hl.addView(Ui.text(this, new SimpleDateFormat("M월 d일 EEEE", Locale.KOREA).format(new Date()), 13, Ui.GRAY, false));
+        hl.addView(Ui.text(this, me.optString("name") + "님, 안녕하세요", 22, Ui.INK, true), Ui.lp(this, 2));
+        head.addView(hl, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView av = Ui.circle(this, me.optString("name"), 44, Color.WHITE, Ui.BLUE);
+        av.setOnClickListener(v -> new AlertDialog.Builder(this).setTitle("로그아웃")
+                .setMessage("로그아웃 할까요?").setNegativeButton("취소", null)
+                .setPositiveButton("로그아웃", (d, w) -> {
+                    me = null;
+                    showLogin();
+                }).show());
+        head.addView(av);
         main.addView(head);
 
         ScrollView sv = new ScrollView(this);
+        sv.setVerticalScrollBarEnabled(false);
         content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), Ui.dp(this, 12));
+        content.setPadding(Ui.dp(this, 20), 0, Ui.dp(this, 20), Ui.dp(this, 150));
         sv.addView(content);
         main.addView(sv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        root.addView(main, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        fab = Ui.text(this, "+", 28, Color.WHITE, false);
+        fab.setGravity(Gravity.CENTER);
+        fab.setBackground(Ui.round(Ui.NAVY, 28, this));
+        fab.setElevation(Ui.dp(this, 6));
+        FrameLayout.LayoutParams fp = new FrameLayout.LayoutParams(Ui.dp(this, 56), Ui.dp(this, 56));
+        fp.gravity = Gravity.BOTTOM | Gravity.END;
+        fp.rightMargin = Ui.dp(this, 20);
+        fp.bottomMargin = Ui.dp(this, 104);
+        root.addView(fab, fp);
 
         nav = new LinearLayout(this);
         nav.setOrientation(LinearLayout.HORIZONTAL);
-        nav.setBackgroundColor(Color.WHITE);
-        main.addView(nav);
-        setContentView(main);
+        nav.setGravity(Gravity.CENTER_VERTICAL);
+        nav.setBackground(Ui.round(Color.WHITE, 24, this));
+        nav.setElevation(Ui.dp(this, 8));
+        nav.setPadding(Ui.dp(this, 8), Ui.dp(this, 8), Ui.dp(this, 8), Ui.dp(this, 8));
+        FrameLayout.LayoutParams np = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 64));
+        np.gravity = Gravity.BOTTOM;
+        np.leftMargin = Ui.dp(this, 16);
+        np.rightMargin = Ui.dp(this, 16);
+        np.bottomMargin = Ui.dp(this, 20);
+        root.addView(nav, np);
+        setContentView(root);
         render();
     }
 
@@ -165,64 +207,136 @@ public class MainActivity extends Activity {
 
     private void render() {
         nav.removeAllViews();
-        addNav("task", "업무" + (newCount() > 0 ? " (" + newCount() + ")" : ""));
-        addNav("notice", "공지" + (unreadNotices() > 0 ? " (" + unreadNotices() + ")" : ""));
-        addNav("history", "이력");
-        if (can(Perm.STAFF_MANAGE)) addNav("staff", "직원");
+        addNav("task", "업무", newCount());
+        addNav("notice", "공지", unreadNotices());
+        addNav("history", "이력", 0);
+        if (can(Perm.STAFF_MANAGE)) addNav("staff", "직원", 0);
         content.removeAllViews();
         if ("task".equals(tab)) renderTasks();
         else if ("notice".equals(tab)) renderNotices();
         else if ("history".equals(tab)) renderHistory();
         else renderStaff();
+        updateFab();
     }
 
-    private void addNav(final String key, String label) {
-        TextView t = Ui.text(this, label, 15, key.equals(tab) ? Ui.BLUE : Ui.GRAY, key.equals(tab));
-        t.setGravity(android.view.Gravity.CENTER);
-        t.setPadding(0, Ui.dp(this, 14), 0, Ui.dp(this, 14));
+    private void updateFab() {
+        if ("task".equals(tab) && can(Perm.TASK_CREATE)) {
+            fab.setVisibility(View.VISIBLE);
+            fab.setContentDescription("업무 지시");
+            fab.setOnClickListener(v -> showCreateTask());
+        } else if ("notice".equals(tab) && can(Perm.NOTICE_WRITE)) {
+            fab.setVisibility(View.VISIBLE);
+            fab.setContentDescription("공지 작성");
+            fab.setOnClickListener(v -> showCreateNotice());
+        } else if ("staff".equals(tab)) {
+            fab.setVisibility(View.VISIBLE);
+            fab.setContentDescription("직원 추가");
+            fab.setOnClickListener(v -> showAddStaff());
+        } else {
+            fab.setVisibility(View.GONE);
+        }
+    }
+
+    private void addNav(final String key, String label, int badge) {
+        boolean on = key.equals(tab);
+        TextView t = Ui.text(this, label + (badge > 0 ? "  " + badge : ""), 14, on ? Ui.BLUE : Ui.GRAY, on);
+        t.setGravity(Gravity.CENTER);
+        if (on) t.setBackground(Ui.round(Ui.TINT, 16, this));
         t.setOnClickListener(v -> {
             tab = key;
             render();
         });
-        nav.addView(t, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        nav.addView(t, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
     }
 
     private int statusColor(String s) {
         switch (s) {
             case "지시됨":
-                return Ui.RED;
+                return Ui.AMBER;
             case "확인함":
+                return Color.rgb(74, 79, 94);
             case "진행중":
                 return Ui.BLUE;
             case "보류":
-                return Ui.AMBER;
+                return Ui.RED;
             default:
                 return Ui.GREEN;
         }
     }
 
+    private int statusBg(String s) {
+        switch (s) {
+            case "지시됨":
+                return Color.rgb(255, 241, 219);
+            case "확인함":
+                return Color.rgb(238, 240, 244);
+            case "진행중":
+                return Ui.TINT;
+            case "보류":
+                return Color.rgb(255, 233, 229);
+            default:
+                return Color.rgb(227, 246, 238);
+        }
+    }
+
     // ---------------- 업무 ----------------
     private void renderTasks() {
-        if (can(Perm.TASK_CREATE)) {
-            Button add = Ui.button(this, "+ 업무 지시", Ui.BLUE, Color.WHITE);
-            add.setOnClickListener(v -> showCreateTask());
-            content.addView(add, Ui.lp(this, 4));
+        int open = 0, doing = 0, fresh = 0, done = 0;
+        String today = Store.now().substring(0, 10);
+        for (JSONObject t : store.list(store.tasks())) {
+            if (t.optInt("assignee") != myId()) continue;
+            String st = t.optString("status");
+            if ("완료".equals(st)) {
+                if (t.optString("doneAt").startsWith(today)) done++;
+            } else {
+                open++;
+                if ("진행중".equals(st)) doing++;
+                if ("지시됨".equals(st)) fresh++;
+            }
         }
+        LinearLayout hero = new LinearLayout(this);
+        hero.setOrientation(LinearLayout.VERTICAL);
+        hero.setBackground(Ui.round(Ui.BLUE, 24, this));
+        hero.setPadding(Ui.dp(this, 20), Ui.dp(this, 20), Ui.dp(this, 20), Ui.dp(this, 20));
+        LinearLayout hr = new LinearLayout(this);
+        hr.setGravity(Gravity.BOTTOM);
+        LinearLayout hl = new LinearLayout(this);
+        hl.setOrientation(LinearLayout.VERTICAL);
+        hl.addView(Ui.text(this, "남은 업무", 14, Color.argb(220, 255, 255, 255), false));
+        hl.addView(Ui.text(this, open + "건", 34, Color.WHITE, true));
+        hr.addView(hl, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        hr.addView(Ui.text(this, "새 업무 " + fresh + " · 진행 " + doing + " · 오늘 완료 " + done, 13, Color.argb(220, 255, 255, 255), false));
+        hero.addView(hr);
+        int total = open + done;
+        View bar = new View(this);
+        bar.setBackground(Ui.round(Color.argb(70, 255, 255, 255), 4, this));
+        FrameLayout track = new FrameLayout(this);
+        track.addView(bar, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 8)));
+        View fill = new View(this);
+        fill.setBackground(Ui.round(Color.WHITE, 4, this));
+        final float ratio = total == 0 ? 0f : (float) done / total;
+        final FrameLayout trackF = track;
+        final View fillF = fill;
+        track.addView(fill, new FrameLayout.LayoutParams(0, Ui.dp(this, 8)));
+        track.post(() -> {
+            FrameLayout.LayoutParams lp2 = (FrameLayout.LayoutParams) fillF.getLayoutParams();
+            lp2.width = Math.round(trackF.getWidth() * ratio);
+            fillF.setLayoutParams(lp2);
+        });
+        hero.addView(track, Ui.lp(this, 16));
+        content.addView(hero);
+
         if (can(Perm.TASK_VIEW_ALL)) {
             LinearLayout row = new LinearLayout(this);
-            Button mine = Ui.button(this, "내 업무", showAll ? Color.WHITE : Ui.NAVY, showAll ? Ui.NAVY : Color.WHITE);
-            Button all = Ui.button(this, "전체 업무", showAll ? Ui.NAVY : Color.WHITE, showAll ? Color.WHITE : Ui.NAVY);
-            mine.setOnClickListener(v -> {
+            row.addView(pill("내 업무", !showAll, () -> {
                 showAll = false;
                 render();
-            });
-            all.setOnClickListener(v -> {
+            }));
+            row.addView(pill("전체 업무", showAll, () -> {
                 showAll = true;
                 render();
-            });
-            row.addView(mine, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-            row.addView(all, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-            content.addView(row, Ui.lp(this, 8));
+            }));
+            content.addView(row, Ui.lp(this, 16));
         }
         List<JSONObject> list = new ArrayList<>();
         for (JSONObject t : store.list(store.tasks())) {
@@ -231,18 +345,36 @@ public class MainActivity extends Activity {
         }
         Collections.sort(list, (a, b) -> b.optString("created").compareTo(a.optString("created")));
         if (list.isEmpty()) {
-            content.addView(Ui.text(this, "진행 중인 업무가 없습니다.", 15, Ui.GRAY, false), Ui.lp(this, 24));
+            content.addView(Ui.text(this, "진행 중인 업무가 없습니다.", 15, Ui.GRAY, false), Ui.lp(this, 28));
         }
-        for (final JSONObject t : list) content.addView(taskCard(t), Ui.lp(this, 8));
+        for (final JSONObject t : list) content.addView(taskCard(t), Ui.lp(this, 10));
+    }
+
+    private TextView pill(String label, boolean on, final Runnable r) {
+        TextView t = Ui.text(this, label, 14, on ? Color.WHITE : Ui.GRAY, on);
+        t.setGravity(Gravity.CENTER);
+        t.setBackground(Ui.round(on ? Ui.NAVY : Color.WHITE, 18, this));
+        t.setPadding(Ui.dp(this, 16), Ui.dp(this, 9), Ui.dp(this, 16), Ui.dp(this, 9));
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        p.rightMargin = Ui.dp(this, 8);
+        t.setLayoutParams(p);
+        t.setOnClickListener(v -> r.run());
+        return t;
     }
 
     private View taskCard(final JSONObject t) {
-        LinearLayout c = Ui.card(this);
-        c.addView(Ui.text(this, "[" + t.optString("type") + "] " + t.optString("title"), 16, Ui.INK, true));
+        LinearLayout c = Ui.cardH(this);
+        c.addView(Ui.typeTile(this, t.optString("type")));
+        LinearLayout mid = new LinearLayout(this);
+        mid.setOrientation(LinearLayout.VERTICAL);
+        mid.setPadding(Ui.dp(this, 14), 0, Ui.dp(this, 8), 0);
+        mid.addView(Ui.text(this, t.optString("title"), 16, Ui.INK, true));
         String sub = t.optString("client");
-        c.addView(Ui.text(this, (sub.isEmpty() ? "" : sub + "  ·  ") + "담당 " + store.userName(t.optInt("assignee"))
-                + (t.optString("due").isEmpty() ? "" : "  ·  기한 " + t.optString("due")), 13, Ui.GRAY, false), Ui.lp(this, 2));
-        c.addView(Ui.text(this, t.optString("status"), 14, statusColor(t.optString("status")), true), Ui.lp(this, 4));
+        mid.addView(Ui.text(this, (sub.isEmpty() ? "" : sub + " · ") + store.userName(t.optInt("assignee"))
+                + (t.optString("due").isEmpty() ? "" : " · " + t.optString("due")), 13, Ui.GRAY, false), Ui.lp(this, 2));
+        c.addView(mid, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        String st = t.optString("status");
+        c.addView(Ui.chip(this, st, statusBg(st), statusColor(st)));
         c.setOnClickListener(v -> showTask(t.optInt("id")));
         return c;
     }
@@ -414,11 +546,6 @@ public class MainActivity extends Activity {
 
     // ---------------- 공지 ----------------
     private void renderNotices() {
-        if (can(Perm.NOTICE_WRITE)) {
-            Button add = Ui.button(this, "+ 공지 작성", Ui.BLUE, Color.WHITE);
-            add.setOnClickListener(v -> showCreateNotice());
-            content.addView(add, Ui.lp(this, 4));
-        }
         List<JSONObject> list = store.list(store.notices());
         Collections.sort(list, new Comparator<JSONObject>() {
             @Override
@@ -432,10 +559,10 @@ public class MainActivity extends Activity {
         for (final JSONObject n : list) {
             LinearLayout c = Ui.card(this);
             boolean read = store.isRead(n, myId());
-            c.addView(Ui.text(this, (n.optBoolean("pinned") ? "📌 " : "") + (read ? "" : "● ") + n.optString("title"), 16, Ui.INK, !read));
+            c.addView(Ui.text(this, (n.optBoolean("pinned") ? "[고정] " : "") + (read ? "" : "● ") + n.optString("title"), 16, Ui.INK, !read));
             c.addView(Ui.text(this, n.optString("t") + "  ·  " + store.userName(n.optInt("author")), 12, Ui.GRAY, false), Ui.lp(this, 2));
             c.setOnClickListener(v -> showNotice(n));
-            content.addView(c, Ui.lp(this, 8));
+            content.addView(c, Ui.lp(this, 10));
         }
     }
 
@@ -480,8 +607,9 @@ public class MainActivity extends Activity {
     // ---------------- 이력 ----------------
     private void renderHistory() {
         final EditText q = Ui.field(this, "검색 (제목, 거래처, 담당자, 완료 메시지)", false);
+        q.setBackground(Ui.round(Color.WHITE, 16, this));
         q.setText(historyQuery);
-        content.addView(q, Ui.lp(this, 4));
+        content.addView(q, Ui.lp(this, 0));
         final LinearLayout listBox = new LinearLayout(this);
         listBox.setOrientation(LinearLayout.VERTICAL);
         content.addView(listBox);
@@ -521,15 +649,12 @@ public class MainActivity extends Activity {
             c.addView(Ui.text(this, t.optString("client") + "  ·  " + store.userName(t.optInt("assignee")) + "  ·  완료 " + t.optString("doneAt"), 12, Ui.GRAY, false), Ui.lp(this, 2));
             c.addView(Ui.text(this, t.optString("doneMsg"), 13, Ui.GREEN, false), Ui.lp(this, 4));
             c.setOnClickListener(v -> showTask(t.optInt("id")));
-            box.addView(c, Ui.lp(this, 8));
+            box.addView(c, Ui.lp(this, 10));
         }
     }
 
     // ---------------- 직원/권한 ----------------
     private void renderStaff() {
-        Button add = Ui.button(this, "+ 직원 추가", Ui.BLUE, Color.WHITE);
-        add.setOnClickListener(v -> showAddStaff());
-        content.addView(add, Ui.lp(this, 4));
         for (final JSONObject u : store.list(store.users())) {
             LinearLayout c = Ui.card(this);
             boolean active = u.optBoolean("active", true);
@@ -538,7 +663,7 @@ public class MainActivity extends Activity {
             for (int i = 0; i < Perm.KEYS.length; i++) if (Store.has(u, Perm.KEYS[i])) sb.append(sb.length() > 0 ? ", " : "").append(Perm.LABELS[i]);
             c.addView(Ui.text(this, sb.length() == 0 ? "기본 권한(내 업무만)" : sb.toString(), 12, Ui.GRAY, false), Ui.lp(this, 2));
             c.setOnClickListener(v -> showEditStaff(u));
-            content.addView(c, Ui.lp(this, 8));
+            content.addView(c, Ui.lp(this, 10));
         }
     }
 

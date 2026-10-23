@@ -15,14 +15,15 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 final class Ui {
-    static final int NAVY = Color.rgb(32, 40, 66);
-    static final int BLUE = Color.rgb(37, 99, 235);
-    static final int GREEN = Color.rgb(22, 163, 74);
-    static final int RED = Color.rgb(220, 38, 38);
-    static final int AMBER = Color.rgb(217, 119, 6);
-    static final int GRAY = Color.rgb(107, 114, 128);
-    static final int BG = Color.rgb(243, 244, 246);
-    static final int INK = Color.rgb(17, 24, 39);
+    static final int NAVY = Color.rgb(15, 18, 34);
+    static final int BLUE = Color.rgb(47, 70, 224);
+    static final int TINT = Color.rgb(236, 239, 255);
+    static final int GREEN = Color.rgb(11, 122, 85);
+    static final int RED = Color.rgb(179, 38, 30);
+    static final int AMBER = Color.rgb(138, 82, 0);
+    static final int GRAY = Color.rgb(107, 112, 128);
+    static final int BG = Color.rgb(243, 244, 248);
+    static final int INK = Color.rgb(15, 18, 34);
 
     static int dp(Context c, int v) {
         return Math.round(v * c.getResources().getDisplayMetrics().density);
@@ -50,7 +51,9 @@ final class Ui {
         b.setTextColor(fg);
         b.setAllCaps(false);
         b.setTextSize(15);
-        b.setBackground(round(bg, 10, c));
+        b.setBackground(round(bg, 16, c));
+        b.setStateListAnimator(null);
+        b.setTypeface(Typeface.DEFAULT_BOLD);
         b.setPadding(dp(c, 12), dp(c, 8), dp(c, 12), dp(c, 8));
         return b;
     }
@@ -60,6 +63,13 @@ final class Ui {
         e.setHint(hint);
         e.setSingleLine(true);
         e.setTextSize(16);
+        e.setTextColor(INK);
+        e.setHintTextColor(GRAY);
+        e.setBackground(round(BG, 14, c));
+        e.setPadding(dp(c, 16), dp(c, 14), dp(c, 16), dp(c, 14));
+        LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        ep.topMargin = dp(c, 8);
+        e.setLayoutParams(ep);
         if (pin) e.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
         return e;
     }
@@ -74,9 +84,59 @@ final class Ui {
     static LinearLayout card(Context c) {
         LinearLayout l = new LinearLayout(c);
         l.setOrientation(LinearLayout.VERTICAL);
-        l.setBackground(round(Color.WHITE, 12, c));
-        l.setPadding(dp(c, 14), dp(c, 12), dp(c, 14), dp(c, 12));
+        l.setBackground(round(Color.WHITE, 20, c));
+        l.setPadding(dp(c, 16), dp(c, 16), dp(c, 16), dp(c, 16));
         return l;
+    }
+
+    static LinearLayout cardH(Context c) {
+        LinearLayout l = card(c);
+        l.setOrientation(LinearLayout.HORIZONTAL);
+        l.setGravity(Gravity.CENTER_VERTICAL);
+        return l;
+    }
+
+    static TextView chip(Context c, String s, int bg, int fg) {
+        TextView t = text(c, s, 12, fg, true);
+        t.setBackground(round(bg, 10, c));
+        t.setPadding(dp(c, 10), dp(c, 5), dp(c, 10), dp(c, 5));
+        return t;
+    }
+
+    static TextView tile(Context c, String s, int bg, int fg) {
+        TextView t = text(c, s, 13, fg, true);
+        t.setGravity(Gravity.CENTER);
+        t.setBackground(round(bg, 14, c));
+        t.setLayoutParams(new LinearLayout.LayoutParams(dp(c, 44), dp(c, 44)));
+        return t;
+    }
+
+    static TextView typeTile(Context c, String type) {
+        switch (type) {
+            case "신규 설치":
+                return tile(c, "설치", TINT, BLUE);
+            case "AS":
+                return tile(c, "AS", Color.rgb(227, 246, 238), GREEN);
+            case "영업 방문":
+                return tile(c, "영업", Color.rgb(241, 236, 251), Color.rgb(106, 63, 196));
+            case "서류 접수":
+                return tile(c, "서류", Color.rgb(255, 241, 219), AMBER);
+            case "카드사 서류":
+                return tile(c, "카드", Color.rgb(255, 241, 219), AMBER);
+            default:
+                return tile(c, "기타", Color.rgb(238, 240, 244), Color.rgb(74, 79, 94));
+        }
+    }
+
+    static TextView circle(Context c, String name, int sizeDp, int bg, int fg) {
+        TextView t = text(c, name.isEmpty() ? "?" : name.substring(0, 1), sizeDp > 44 ? 20 : 16, fg, true);
+        t.setGravity(Gravity.CENTER);
+        GradientDrawable g = new GradientDrawable();
+        g.setShape(GradientDrawable.OVAL);
+        g.setColor(bg);
+        t.setBackground(g);
+        t.setLayoutParams(new LinearLayout.LayoutParams(dp(c, sizeDp), dp(c, sizeDp)));
+        return t;
     }
 
     static void toast(Context c, String s) {
