@@ -19,6 +19,9 @@ import java.io.InputStream;
 final class Media {
     /** 문서 하나(1MiB)에 base64로 들어가야 하므로 원본 기준 이 크기까지만 올린다. */
     static final int MAX_BYTES = 700 * 1024;
+    /** 파일 하나의 최대 크기(조각 여러 개로 나눠 올림)와 조각 크기. */
+    static final int MAX_FILE = 3 * 1024 * 1024;
+    static final int CHUNK = 600 * 1024;
 
     static Bitmap decode(ContentResolver cr, Uri uri, int maxSide) {
         try {

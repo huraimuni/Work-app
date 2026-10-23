@@ -499,6 +499,7 @@ public class MainActivity extends Activity {
         else if ("contracts".equals(k)) renderContracts();
         else if ("manual".equals(k)) renderManual();
         else if ("about".equals(k)) renderAbout();
+        else if ("sms".equals(k)) renderSms();
         else if ("profit".equals(k) && canPerf()) renderProfit();
         else renderAll();
         updateFab();
@@ -1266,6 +1267,84 @@ public class MainActivity extends Activity {
     
 
     // ---------------- 전체 ----------------
+    /** 전체 탭에서 검색되는 기능 한 줄. */
+    private static final class Entry {
+        final String section, label, words;
+        String badge = "";
+        final Runnable go;
+
+        Entry(String section, String label, String words, Runnable go) {
+            this.section = section;
+            this.label = label;
+            this.words = words;
+            this.go = go;
+        }
+    }
+
+    private void goSub(final String s) {
+        sub = s;
+        chatRoom = 0;
+        render();
+    }
+
+    private List<Entry> menuEntries() {
+        List<Entry> e = new ArrayList<>();
+        e.add(new Entry("바로가기", "업무", "업무 지시 할일 설치 AS 서류", () -> {
+            tab = "task";
+            sub = null;
+            render();
+        }));
+        e.add(new Entry("바로가기", "프로젝트", "프로젝트 진행률", () -> {
+            tab = "project";
+            sub = null;
+            render();
+        }));
+        e.add(new Entry("바로가기", "채팅", "채팅 대화 메시지 방 사진 파일 스티커 이모티콘", () -> {
+            tab = "chat";
+            sub = null;
+            render();
+        }));
+        e.add(new Entry("바로가기", "일정 (달력)", "일정 달력 캘린더 방문 약속", () -> {
+            tab = "calendar";
+            sub = null;
+            render();
+        }));
+        e.add(new Entry("일", "재고", "재고 장비 바코드 시리얼 단가 입고 출고 스캔", () -> goSub("stock")));
+        e.add(new Entry("일", "가맹점", "가맹점 거래처 상호 사업자 등급 삭제", () -> goSub("merchants")));
+        Entry c = new Entry("일", "계약 관리 (설치 완료·만료 알림)", "계약 설치 완료 만료 알림 장비 추가", () -> goSub("contracts"));
+        int ex = expiringContracts().size();
+        c.badge = ex > 0 ? "만료 " + ex : "";
+        e.add(c);
+        e.add(new Entry("일", "신규 계약 올리기", "신규 계약 올리기 CMS 판매 렌탈", () -> showAddContract()));
+        e.add(new Entry("일", "단체 문자 보내기 (가맹점)", "단체 문자 sms 발송 가맹점 문자 안내", () -> goSub("sms")));
+        e.add(new Entry("일", "내 실적", "내 실적 월별 성장률 계약", () -> goSub("myperf")));
+        if (canPerf()) {
+            e.add(new Entry("일", "전체 실적·직원별 순위", "전체 실적 직원별 순위 성장률 월별 그래프", () -> goSub("perf")));
+            e.add(new Entry("일", "수익 현황 (입고·출고 단가)", "수익 현황 입고 출고 단가 매출 매입 총수익 얼마 벌었", () -> goSub("profit")));
+            e.add(new Entry("일", "실적 보고서 올리기 (대표님께)", "실적 보고서 올리기 대표님 본부장", () -> goSub("perfreport")));
+        }
+        e.add(new Entry("일", "일일보고 쓰기", "일일보고 보고 오늘 한 일", () -> goSub("daily")));
+        if (canReport()) {
+            e.add(new Entry("일", "일일보고 종합 보기", "일일보고 종합 대표님 직원별", () -> goSub("reportview")));
+            if (!canPerf()) e.add(new Entry("일", "실적 보고서 보기", "실적 보고서 보기 대표님", () -> goSub("perfreport")));
+        }
+        e.add(new Entry("일", "지난 업무 기록", "지난 업무 기록 이력 완료 검색", () -> goSub("history")));
+        e.add(new Entry("회사", "사용설명서", "사용설명서 매뉴얼 도움말 사용법", () -> goSub("manual")));
+        e.add(new Entry("회사", "버전·업데이트 내역", "버전 업데이트 내역 변경 이력", () -> goSub("about")));
+        Entry n = new Entry("회사", "공지사항", "공지사항 공지 알림", () -> goSub("notice"));
+        int un = unreadNotices();
+        n.badge = un > 0 ? String.valueOf(un) : "";
+        e.add(n);
+        if (can(Perm.STAFF_MANAGE)) e.add(new Entry("관리자", "직원과 권한", "직원 권한 등록 사용 중지 관리자", () -> goSub("staff")));
+        e.add(new Entry("계정", "내 프로필 (사진·상태 메시지)", "프로필 사진 상태 메시지 내 정보", () -> showProfile(myId())));
+        e.add(new Entry("계정", "로그아웃", "로그아웃 나가기", () -> new AlertDialog.Builder(this).setTitle("로그아웃")
+                .setMessage("로그아웃 할까요?").setNegativeButton("취소", null)
+                .setPositiveButton("로그아웃", (d, w) -> doLogout()).show()));
+        return e;
+    }
+
+    private String allQuery = "";
+
     private void renderAll() {
         content.addView(title("전체"));
         LinearLayout prof = Ui.cardH(this);
@@ -1279,87 +1358,53 @@ public class MainActivity extends Activity {
         pt.addView(Ui.text(this, "눌러서 프로필 사진·상태 메시지 바꾸기", 11, Ui.GRAY, false), Ui.lp(this, 2));
         prof.addView(pt);
         content.addView(prof, Ui.lp(this, 8));
-        content.addView(sectionLabel("일"));
-        content.addView(menuRow("재고", "", () -> {
-            sub = "stock";
-            render();
-        }));
-        content.addView(menuRow("가맹점", "", () -> {
-            sub = "merchants";
-            render();
-        }));
-        int ex = expiringContracts().size();
-        content.addView(menuRow("계약 관리 (설치 완료·만료 알림)", ex > 0 ? "만료 " + ex : "", () -> {
-            sub = "contracts";
-            render();
-        }));
-        content.addView(menuRow("신규 계약 올리기", "", () -> showAddContract()));
-        content.addView(menuRow("내 실적", "", () -> {
-            sub = "myperf";
-            render();
-        }));
-        if (canPerf()) {
-            content.addView(menuRow("전체 실적·직원별 순위", "", () -> {
-                sub = "perf";
-                render();
-            }));
-            content.addView(menuRow("수익 현황 (입고·출고 단가)", "", () -> {
-                sub = "profit";
-                render();
-            }));
-            content.addView(menuRow("실적 보고서 올리기 (대표님께)", "", () -> {
-                sub = "perfreport";
-                render();
-            }));
-        }
-        content.addView(menuRow("일일보고 쓰기", "", () -> {
-            sub = "daily";
-            render();
-        }));
-        if (canReport()) {
-            content.addView(menuRow("일일보고 종합 보기", "", () -> {
-                sub = "reportview";
-                render();
-            }));
-            if (!canPerf()) {
-                content.addView(menuRow("실적 보고서 보기", "", () -> {
-                    sub = "perfreport";
-                    render();
-                }));
+
+        final EditText q = Ui.field(this, "🔍  기능 검색 (예: 재고, ㅈㄱ, 문자, 수익)", false);
+        q.setText(allQuery);
+        content.addView(q, Ui.lp(this, 10));
+        final LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        content.addView(list);
+        final List<Entry> entries = menuEntries();
+        final Runnable fill = () -> {
+            list.removeAllViews();
+            String s = allQuery.trim();
+            if (s.isEmpty()) {
+                String lastSec = "";
+                for (Entry en : entries) {
+                    if ("바로가기".equals(en.section)) continue;
+                    if (!en.section.equals(lastSec)) {
+                        lastSec = en.section;
+                        list.addView(sectionLabel(en.section));
+                    }
+                    list.addView(menuRow(en.label, en.badge, en.go));
+                }
+            } else {
+                int n = 0;
+                for (Entry en : entries) {
+                    if (!Kor.match(en.label + " " + en.words, s)) continue;
+                    n++;
+                    list.addView(menuRow(en.label, en.badge, en.go), Ui.lp(this, 0));
+                }
+                if (n == 0) list.addView(Ui.text(this, "'" + s + "' 에 맞는 기능이 없어요. 다른 단어로 찾아보세요.", 14, Ui.GRAY, false), Ui.lp(this, 16));
             }
-        }
-        content.addView(menuRow("지난 업무 기록", "", () -> {
-            sub = "history";
-            render();
-        }));
-        content.addView(sectionLabel("회사"));
-        content.addView(menuRow("사용설명서", "", () -> {
-            sub = "manual";
-            render();
-        }));
-        content.addView(menuRow("버전·업데이트 내역", appVersion(), () -> {
-            sub = "about";
-            render();
-        }));
-        int un = unreadNotices();
-        content.addView(menuRow("공지사항", un > 0 ? String.valueOf(un) : "", () -> {
-            sub = "notice";
-            render();
-        }));
-        if (can(Perm.STAFF_MANAGE)) {
-            content.addView(sectionLabel("관리자"));
-            content.addView(menuRow("직원과 권한", "", () -> {
-                sub = "staff";
-                render();
-            }));
-        }
-        content.addView(sectionLabel("계정"));
-        content.addView(menuRow("로그아웃", "", () -> new AlertDialog.Builder(this).setTitle("로그아웃")
-                .setMessage("로그아웃 할까요?").setNegativeButton("취소", null)
-                .setPositiveButton("로그아웃", (d, w) -> doLogout()).show()));
-        TextView ver = Ui.text(this, "나인패밀리 " + appVersion() + "  ·  주식회사 나인페이먼츠", 12, Ui.GRAY, false);
-        ver.setGravity(Gravity.CENTER);
-        content.addView(ver, Ui.lp(this, 28));
+            TextView ver = Ui.text(this, "나인패밀리 " + appVersion() + "  ·  주식회사 나인페이먼츠", 12, Ui.GRAY, false);
+            ver.setGravity(Gravity.CENTER);
+            list.addView(ver, Ui.lp(this, 28));
+        };
+        q.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            public void onTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            public void afterTextChanged(Editable s) {
+                allQuery = s.toString();
+                fill.run();
+            }
+        });
+        fill.run();
     }
 
     private TextView sectionLabel(String s) {
@@ -1688,8 +1733,10 @@ public class MainActivity extends Activity {
         f.addView(memo);
         ScrollView sv = new ScrollView(this);
         sv.addView(f);
-        final AlertDialog dlg = new AlertDialog.Builder(this).setTitle(existing == null ? "가맹점 등록" : "가맹점 정보 수정").setView(sv)
-                .setNegativeButton("취소", null).setPositiveButton("저장", null).create();
+        AlertDialog.Builder mb = new AlertDialog.Builder(this).setTitle(existing == null ? "가맹점 등록" : "가맹점 정보 수정").setView(sv)
+                .setNegativeButton("취소", null).setPositiveButton("저장", null);
+        if (existing != null && can(Perm.STAFF_MANAGE)) mb.setNeutralButton("삭제", (d, w) -> confirmDeleteMerchant(existing, cb != null ? cb : x -> render()));
+        final AlertDialog dlg = mb.create();
         dlg.show();
         dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
             String n = name.getText().toString().trim();
@@ -1721,9 +1768,33 @@ public class MainActivity extends Activity {
         TextView t = Ui.text(this, merchantInfo(m), 15, Ui.INK, false);
         t.setLineSpacing(0, 1.3f);
         l.addView(t);
-        new AlertDialog.Builder(this).setTitle("가맹점 정보").setView(l)
+        AlertDialog.Builder b = new AlertDialog.Builder(this).setTitle("가맹점 정보").setView(l)
                 .setNegativeButton("닫기", null)
-                .setPositiveButton("수정", (d, w) -> showEditMerchant(m, x -> render())).show();
+                .setPositiveButton("수정", (d, w) -> showEditMerchant(m, x -> render()));
+        if (can(Perm.STAFF_MANAGE)) b.setNeutralButton("삭제", (d, w) -> confirmDeleteMerchant(m, x -> render()));
+        b.show();
+    }
+
+    /** 가맹점 삭제는 최고관리자만. 목록에서만 사라지고 서버 기록·기존 계약 글자는 남는다. */
+    private void confirmDeleteMerchant(final JSONObject m, final java.util.function.Consumer<JSONObject> after) {
+        if (!can(Perm.STAFF_MANAGE)) {
+            Ui.toast(this, "가맹점 삭제는 최고관리자만 할 수 있어요.");
+            return;
+        }
+        int cn = 0, en = 0;
+        for (JSONObject c : store.list(store.contracts())) if (c.optInt("merchant") == m.optInt("id")) cn++;
+        for (JSONObject e : store.list(store.arr("events"))) if (e.optInt("merchant") == m.optInt("id")) en++;
+        new AlertDialog.Builder(this).setTitle("'" + m.optString("name") + "' 삭제할까요?")
+                .setMessage("가맹점 목록에서 지워집니다.\n연결된 계약 " + cn + "건·일정 " + en + "건의 기록은 그대로 남고, 서버에도 기록이 보관돼요.")
+                .setNegativeButton("취소", null).setPositiveButton("삭제", (d, w) -> {
+                    try {
+                        m.put("deleted", true);
+                    } catch (Exception ignored) {
+                    }
+                    store.save();
+                    Ui.toast(this, "삭제했어요.");
+                    after.accept(m);
+                }).show();
     }
 
     private void renderMerchants() {
@@ -1795,7 +1866,7 @@ public class MainActivity extends Activity {
         final EditText q = Ui.field(this, "모델명·시리얼 검색 (초성도 돼요)", false);
         content.addView(q, Ui.lp(this, 10));
         Button scq = Ui.button(this, "바코드로 찾기", Ui.TINT, Ui.DEEP);
-        scq.setOnClickListener(v -> scanBarcode(q, false, false));
+        scq.setOnClickListener(v -> scanBarcode(q, false));
         content.addView(scq, Ui.lp(this, 6));
         final LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
@@ -1863,7 +1934,7 @@ public class MainActivity extends Activity {
         buy.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
         f.addView(model);
         f.addView(serials);
-        f.addView(scanButtons(serials, true, true));
+        f.addView(scanButtons(serials, true));
         f.addView(qty);
         f.addView(safe);
         if (canPerf()) f.addView(buy);
@@ -1936,7 +2007,7 @@ public class MainActivity extends Activity {
         safe.setText(String.valueOf(r.optInt("safe")));
         f.addView(model);
         f.addView(serial);
-        f.addView(scanButtons(serial, false, false));
+        f.addView(scanButtons(serial, false));
         f.addView(safe);
         final EditText buy = Ui.field(this, "입고 단가 (산 값, 원)", false);
         buy.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
@@ -1990,6 +2061,34 @@ public class MainActivity extends Activity {
                 }).show();
     }
 
+    private void showDirectEquip(String serialPrefill, final java.util.function.Consumer<List<JSONObject>> cb) {
+        LinearLayout f = form();
+        final EditText model = Ui.field(this, "모델명", false);
+        final EditText serial = Ui.field(this, "시리얼", false);
+        serial.setText(serialPrefill);
+        f.addView(model);
+        f.addView(serial);
+        f.addView(scanButtons(serial, false));
+        new AlertDialog.Builder(this).setTitle("장비 직접 입력").setView(f)
+                .setNegativeButton("취소", null)
+                .setPositiveButton("추가", (d2, w2) -> {
+                    if (model.getText().toString().trim().isEmpty()) {
+                        Ui.toast(this, "모델명을 입력해 주세요.");
+                        return;
+                    }
+                    JSONObject e = new JSONObject();
+                    try {
+                        e.put("sid", 0);
+                        e.put("model", model.getText().toString().trim());
+                        e.put("serial", serial.getText().toString().trim());
+                    } catch (Exception ignored) {
+                    }
+                    List<JSONObject> one = new ArrayList<>();
+                    one.add(e);
+                    cb.accept(one);
+                }).show();
+    }
+
     /** 재고에서 장비를 고르는 창. 직접 입력도 가능. */
     private void pickStock(final java.util.function.Consumer<List<JSONObject>> cb) {
         LinearLayout box = new LinearLayout(this);
@@ -1999,8 +2098,37 @@ public class MainActivity extends Activity {
         final LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
         box.addView(q);
-        Button sc = Ui.button(this, "바코드로 찾기", Ui.TINT, Ui.DEEP);
-        sc.setOnClickListener(v -> scanBarcode(q, false, false));
+        final AlertDialog[] dref = new AlertDialog[1];
+        Button sc = Ui.button(this, "바코드 스캔 (한 번에 한 대)", Ui.TINT, Ui.DEEP);
+        sc.setOnClickListener(v -> scanOnce(code -> {
+            JSONObject hit = null;
+            for (JSONObject r : store.list(store.arr("stock"))) {
+                if (!r.optBoolean("deleted") && !r.optString("serial").isEmpty() && r.optString("serial").trim().equalsIgnoreCase(code.trim())) {
+                    hit = r;
+                    if ("재고".equals(r.optString("status"))) break;
+                }
+            }
+            if (hit != null && "재고".equals(hit.optString("status"))) {
+                JSONObject e = new JSONObject();
+                try {
+                    e.put("sid", hit.optInt("id"));
+                    e.put("model", hit.optString("model"));
+                    e.put("serial", hit.optString("serial"));
+                } catch (Exception ignored) {
+                }
+                List<JSONObject> one = new ArrayList<>();
+                one.add(e);
+                if (dref[0] != null) dref[0].dismiss();
+                Ui.toast(this, "장비를 추가했어요: " + hit.optString("model") + " · " + code);
+                cb.accept(one);
+            } else if (hit != null) {
+                Ui.toast(this, "이미 출고된 장비예요: " + code);
+            } else {
+                if (dref[0] != null) dref[0].dismiss();
+                Ui.toast(this, "재고에 없는 번호예요. 모델명을 적어 직접 입력해 주세요.");
+                showDirectEquip(code, cb);
+            }
+        }));
         box.addView(sc, Ui.lp(this, 6));
         box.addView(list);
         final java.util.Set<Integer> chosen = new java.util.HashSet<>();
@@ -2036,34 +2164,9 @@ public class MainActivity extends Activity {
             }
         });
         fill.run();
-        new AlertDialog.Builder(this).setTitle("장비 선택 (재고)").setView(sv)
+        dref[0] = new AlertDialog.Builder(this).setTitle("장비 선택 (재고)").setView(sv)
                 .setNegativeButton("닫기", null)
-                .setNeutralButton("직접 입력", (d, w) -> {
-                    LinearLayout f = form();
-                    final EditText model = Ui.field(this, "모델명", false);
-                    final EditText serial = Ui.field(this, "시리얼", false);
-                    f.addView(model);
-                    f.addView(serial);
-                    f.addView(scanButtons(serial, false, false));
-                    new AlertDialog.Builder(this).setTitle("장비 직접 입력").setView(f)
-                            .setNegativeButton("취소", null)
-                            .setPositiveButton("추가", (d2, w2) -> {
-                                if (model.getText().toString().trim().isEmpty()) {
-                                    Ui.toast(this, "모델명을 입력해 주세요.");
-                                    return;
-                                }
-                                JSONObject e = new JSONObject();
-                                try {
-                                    e.put("sid", 0);
-                                    e.put("model", model.getText().toString().trim());
-                                    e.put("serial", serial.getText().toString().trim());
-                                } catch (Exception ignored) {
-                                }
-                                List<JSONObject> one = new ArrayList<>();
-                                one.add(e);
-                                cb.accept(one);
-                            }).show();
-                })
+                .setNeutralButton("직접 입력", (d, w) -> showDirectEquip("", cb))
                 .setPositiveButton("선택 완료", (d, w) -> {
                     List<JSONObject> out = new ArrayList<>();
                     for (Integer id : chosen) {
@@ -2553,16 +2656,17 @@ public class MainActivity extends Activity {
             {"처음 시작하기 · 로그인", "1. 앱을 켜면 잠깐 시작 화면이 나오고, 처음에는 로그인 화면이 나옵니다.\n2. 관리자가 등록해 둔 내 휴대폰 번호(예: 01012345678)를 입력하고 '인증번호 받기'를 누릅니다.\n3. 문자로 온 인증번호 6자리를 입력하고 '확인'을 누릅니다.\n4. 한 번 로그인하면 계속 유지됩니다. 다시 묻지 않아요.\n\n※ '등록되지 않은 번호입니다'가 나오면 관리자에게 내 번호 등록을 요청하세요.\n※ 로그아웃은 맨 아래 탭 '전체' → 맨 아래 '로그아웃'입니다. 폰을 바꾸면 같은 번호로 다시 인증하면 됩니다."},
             {"업무 탭", "내게 지시된 업무를 확인하고 처리하는 곳입니다.\n\n■ 화면 구성\n- 맨 위 금색 카드: 남은 업무 수, 새 업무·진행·오늘 완료 수와 진행 막대\n- 계약 만료 알림: 만료가 3개월 안으로 남은 계약이 있으면 카드가 나타납니다. 누르면 계약 관리로 이동합니다.\n- 업무 카드: 종류(설치·AS·영업·서류·카드), 제목, 거래처, 기한, 상태\n\n■ 업무 처리\n1. 카드를 누르면 상세가 열립니다.\n2. 아래 버튼으로 상태를 바꿉니다: 확인함 → 진행중 → 완료(또는 보류).\n3. '완료'를 누르면 완료 메시지를 적을 수 있어요. 모든 처리 기록은 이력으로 남습니다.\n\n■ 업무 지시하기 (업무 지시 권한이 있는 사람)\n- 오른쪽 아래 + 버튼 → 제목, 종류, 거래처, 전화, 주소, 기한, 메모, 담당 직원 입력 후 '지시하기'.\n- '가맹점 조회'를 누르면 등록된 가맹점을 검색해 선택할 수 있고, 거래처·전화·주소가 자동으로 채워집니다.\n- '전체 업무' 보기 권한이 있으면 위쪽 '내 업무 / 전체 업무' 버튼이 보입니다."},
             {"프로젝트 탭", "여러 사람이 오래 진행하는 일을 관리합니다.\n\n1. 오른쪽 아래 + 로 프로젝트를 만듭니다 (제목, 기한, 메모, 책임자).\n2. 프로젝트를 누르면 진행률(%) 슬라이더, '점검 필요' 체크, 메모를 수정할 수 있습니다.\n3. 저장할 때마다 진행 기록이 쌓여서 누가 언제 무엇을 바꿨는지 볼 수 있어요."},
-            {"채팅 탭", "직원끼리 대화하는 곳이에요. 원하는 만큼 채팅방을 만들 수 있습니다.\n\n■ 채팅방 만들기\n- 맨 위 '+ 새 채팅방 만들기' → 이름을 적고 '만들기'. (예: 거래처 A/S, 서류 접수, 입금 확인)\n- 방이 하나도 없으면 '기본 채팅방 만들기'로 전체방·서류접수·입금확인·신규계약·AS설치·공지 방을 한 번에 만들 수 있어요.\n\n■ 대화방 (v0.7.0에서 카카오톡처럼 바뀌었어요)\n- 방을 누르면 전체 화면 대화방이 열리고, 입력줄은 맨 아래에 고정됩니다. 왼쪽 위 ‹ 또는 폰의 뒤로가기로 목록에 돌아갑니다.\n- 내 말풍선은 금색·오른쪽, 다른 사람은 흰색·왼쪽이고 옆에 이름과 프로필 사진이 나옵니다. 같은 사람이 같은 분에 이어 보내면 사진·이름은 한 번만 나와요.\n- 날짜가 바뀌면 가운데에 날짜 띠가 나옵니다.\n- 말풍선을 길게 누르면 글이 복사됩니다.\n- 사람 사진을 누르면 그 직원의 프로필(이름·상태 메시지·전화번호)이 나오고, '전화하기'로 바로 걸 수 있어요.\n\n■ 사진·파일·이모티콘\n- 입력줄 왼쪽 '+' → 사진 보내기(앨범) / 사진 찍어 보내기 / 파일 보내기.\n- 사진은 자동으로 줄여서 올라가요. 대화 속 사진을 누르면 크게 보이고, '다른 앱으로 열기·저장'으로 저장할 수 있습니다.\n- 파일은 700KB까지 보낼 수 있어요(작은 문서·엑셀·PDF용). 더 큰 파일은 사진으로 찍어 보내 주세요. 파일 말풍선을 누르면 내려받아 열립니다.\n- 입력줄 오른쪽 ☺ 를 누르면 이모티콘 판이 열리고, 누르면 글 사이에 들어갑니다.\n\n■ 보내는 중 안내\n- 사진·파일은 인터넷이 연결돼야 올라가요. '보내는 중…'이 뜬 뒤 대화에 나타납니다. 안 나타나면 인터넷을 확인하고 다시 보내 주세요.\n\n※ 모든 직원이 모든 채팅방을 볼 수 있습니다. 민감한 개인 이야기·개인정보 파일은 올리지 마세요."},
+            {"채팅 탭", "직원끼리 대화하는 곳이에요. 원하는 만큼 채팅방을 만들 수 있습니다.\n\n■ 채팅방 만들기\n- 맨 위 '+ 새 채팅방 만들기' → 이름을 적고 '만들기'. (예: 거래처 A/S, 서류 접수, 입금 확인)\n- 방이 하나도 없으면 '기본 채팅방 만들기'로 전체방·서류접수·입금확인·신규계약·AS설치·공지 방을 한 번에 만들 수 있어요.\n\n■ 대화방\n- 방을 누르면 전체 화면 대화방이 열리고, 입력줄은 맨 아래에 고정됩니다. 왼쪽 위 ‹ 또는 폰의 뒤로가기로 목록에 돌아갑니다.\n- 내 말풍선은 금색·오른쪽, 다른 사람은 흰색·왼쪽이고 옆에 이름과 프로필 사진이 나옵니다. 같은 사람이 같은 분에 이어 보내면 사진·이름은 한 번만 나와요.\n- 사람 사진을 누르면 그 직원의 프로필(이름·상태 메시지·전화번호)이 나오고, '전화하기'로 바로 걸 수 있어요.\n\n■ 답장 · 반응 · 삭제 (v0.8.0, 텔레그램처럼)\n- 말풍선을 두 번 빠르게 누르면 ❤️ 좋아요가 붙습니다. 같은 걸 다시 두 번 누르면 취소돼요.\n- 말풍선을 길게 누르면 메뉴가 열립니다: 답장 / 이모티콘 반응(👍 ❤️ 😂 😮 😢 🙏 🔥 👏) / 복사(글만) / 삭제(내 메시지만).\n- 답장을 고르면 입력줄 위에 '○○에게 답장' 띠가 생기고, 그 상태로 보내면 말풍선 위에 인용이 붙어요. 띠의 ✕ 로 취소합니다.\n- 말풍선 아래 이모티콘 숫자를 누르면 내 반응을 켜고 끌 수 있습니다.\n- 삭제한 내 메시지는 대화에서 사라지고, 서버에는 기록이 보관됩니다.\n\n■ 사진·파일·이모지·스티커\n- 입력줄 왼쪽 '+' → 사진 보내기(앨범) / 사진 찍어 보내기 / 파일 보내기.\n- 사진은 자동으로 줄여서 올라가요. 대화 속 사진을 누르면 크게 보이고, '다른 앱으로 열기·저장'으로 저장할 수 있습니다.\n- 파일은 3MB까지 보낼 수 있어요(문서·엑셀·PDF용). 더 큰 파일은 지금은 보낼 수 없습니다. 파일 말풍선을 누르면 내려받아 열립니다.\n- 입력줄 오른쪽 ☺ 를 누르면 판이 열려요. '이모지' 탭은 글 사이에 들어가고, '나인이 스티커' 탭은 누르면 바로 스티커가 전송됩니다.\n- 나인이는 우리 회사 캐릭터예요. 화이팅!, 수고했어요, 최고예요!, 대박!, 감사합니다, 힘내세요!, 오늘도 굿!, 퇴근각, 확인했어요, 잠시만요, 계약 성공!, 같이 해요! 12종이 있습니다.\n\n■ 보내는 중 안내\n- 사진·파일은 인터넷이 연결돼야 올라가요. '보내는 중…'이 뜬 뒤 대화에 나타납니다. 안 나타나면 인터넷을 확인하고 다시 보내 주세요.\n\n※ 모든 직원이 모든 채팅방을 볼 수 있습니다. 민감한 개인 이야기·개인정보 파일은 올리지 마세요."},
             {"일정 탭 (달력)", "한국 달력과 앞으로의 일정을 함께 봅니다.\n\n■ 달력\n- 일요일·공휴일은 빨간색, 토요일은 파란색, 오늘은 금색 원입니다. 공휴일 이름도 표시돼요. (2026~2028년 기준)\n- ‹ › 로 달을 넘기고 '오늘'을 누르면 오늘로 돌아옵니다.\n- 일정이나 업무 기한이 있는 날은 작은 금색 점이 찍혀요.\n- 날짜를 누르면 그날의 일정과 업무가 아래에 나옵니다.\n\n■ 일정 남기기\n1. 오른쪽 아래 + 버튼.\n2. 제목과 날짜를 적고, 시간은 선택입니다.\n3. '가맹점 조회·선택'을 누르면 등록된 가맹점 중에서 찾아 고릅니다 (초성 검색 가능). 고르면 사업자번호·연락처·주소·계약조건·등급이 불러와지고, 장소에는 가맹점 주소가 자동으로 들어갑니다.\n4. '추가'를 누르면 달력에 바로 표시되고, 달력 아래 '다가오는 일정'에도 올라갑니다.\n\n■ 다가오는 일정\n- 오늘부터 앞으로의 일정과 내 업무 기한이 날짜 순으로 나와서, 언제 어디로 가야 하는지 한눈에 확인할 수 있습니다.\n- 가맹점이 연결된 일정을 누르면 가맹점 상세 정보가 열립니다."},
-            {"전체 탭", "나머지 모든 기능으로 들어가는 메뉴판입니다.\n\n- 맨 위 내 카드를 누르면 프로필 사진과 상태 메시지를 바꿀 수 있어요.\n- 재고: 장비 재고 관리 (바코드 스캔, 단가)\n- 가맹점: 가맹점 정보 관리\n- 신규 계약 올리기 / 계약 관리: 계약 등록과 설치 완료 처리, 만료 알림\n- 내 실적: 나만 보는 월별 실적과 지난달 비교\n- 전체 실적·직원별 순위 / 수익 현황 / 실적 보고서 올리기: (권한이 있는 사람만 보임)\n- 일일보고 쓰기, 일일보고 종합 보기(권한자)\n- 지난 업무 기록: 완료된 업무 검색\n- 사용설명서, 버전·업데이트 내역, 공지사항\n- 직원과 권한: (관리자만) 직원 추가·권한 설정\n- 로그아웃\n\n※ 맨 아래에 현재 앱 버전이 표시됩니다. 문의할 때 이 버전을 알려 주세요."},
-            {"재고", "장비를 우리가 직접 입력해서 관리합니다. (전체 → 재고)\n\n■ 재고 추가\n1. 오른쪽 아래 + 버튼.\n2. 모델명을 적고, 시리얼은 한 줄에 하나씩 적습니다. 여러 줄을 붙여 넣으면 장비가 한꺼번에 등록돼요.\n3. 시리얼이 없는 소모품(롤지 등)은 시리얼 대신 '수량'만 적습니다.\n4. 안전재고: 이 수 아래로 내려가면 빨간색으로 '부족해요!'가 표시됩니다.\n5. 입고 단가: 실적 권한자에게만 보이는 칸입니다. 1대당 산 값을 적으면 시리얼 전체에 같이 적용돼요.\n\n■ 바코드 스캔 (v0.7.0)\n- '바코드 연속 스캔'을 누르면 카메라가 열립니다. 장비 상자의 바코드에 비추면 번호가 시리얼 칸에 한 줄씩 자동으로 들어가고, 바로 다음 바코드를 읽을 준비가 됩니다. 끝내려면 카메라 화면에서 뒤로가기(또는 X)를 누르세요. 같은 번호는 두 번 들어가지 않아요.\n- 재고 목록 위 '바코드로 찾기'를 누르면 바코드를 읽어 그 시리얼을 바로 검색합니다. 계약에서 장비를 고르는 창에서도 같은 버튼이 있어요.\n\n■ 시리얼 촬영 인식 (v0.7.0)\n- '시리얼 촬영'을 누르고 장비 뒷면의 S/N 라벨을 가까이서 찍으면 글자를 읽어 줍니다.\n- 시리얼처럼 보이는 글자 후보가 목록으로 나오고, 맞는 것을 체크해서 '넣기'를 누르세요. 0(영)과 O(오), 1과 I처럼 헷갈리기 쉬운 글자는 꼭 눈으로 확인해 주세요.\n- 바코드가 같이 있으면 바코드 스캔이 더 정확합니다.\n- 스캔과 촬영은 구글 서비스가 있는 폰에서 동작합니다.\n\n■ 보기·검색\n- 모델별로 묶여서 '재고 n대'가 보이고, 그 아래에 시리얼이 나열됩니다.\n- 검색창에 모델명·시리얼을 치면 찾아줘요. 'ㅌㅅㅍㅅ' 같은 초성도 됩니다.\n\n■ 수정·삭제\n- 시리얼 줄을 누르면 수정창이 열립니다. 시리얼 칸에도 스캔·촬영 버튼이 있어요. '삭제'를 누르면 목록에서 지워져요 (기록은 서버에 남아 복구 가능).\n\n■ 단가와 수익 (실적 권한자 전용)\n- 재고 줄을 누르면 입고 단가(산 값)와 출고 단가(판 값)를 적을 수 있어요.\n- 재고 화면 맨 위에 보유 재고 자산(입고 단가 합계)이 나오고, '수익 현황 보기'로 이동합니다.\n- 단가는 서버에서도 실적 권한자만 읽을 수 있게 따로 보관됩니다. 권한이 없는 직원에게는 칸 자체가 보이지 않아요.\n\n■ 상태가 바뀌는 순서\n재고 → (계약에서 선택하면) 출고중 → (설치 완료 처리하면) 재고 목록에서 사라짐"},
-            {"가맹점", "우리 거래처(가맹점) 정보를 관리합니다. (전체 → 가맹점)\n\n■ 등록\n- 오른쪽 아래 + 버튼 → 상호(필수), 사업자번호, 연락처, 주소, 계약조건, 등급 코드, 메모.\n- 계약·일정·업무 지시 화면의 '가맹점 조회'에서 바로 '새 가맹점 등록'도 가능합니다.\n\n■ 등급 코드\n밴피(VAN) 기준입니다.\n0 S · 월 5만원 이상\n1 A · 3만원 이상\n2 B · 1만원 이상\n3 C · 1만원 미만\n4 해지가맹점\n5 신규가맹점\n7 협력사\n\n■ 수정\n- 목록에서 가맹점을 누르면 정보가 보이고, '수정'으로 바꿀 수 있습니다.\n\n■ 검색\n- 상호·사업자번호·전화·주소 어느 것으로든, 초성으로도 검색됩니다."},
+            {"전체 탭", "나머지 모든 기능으로 들어가는 메뉴판입니다.\n\n■ 기능 검색 (v0.8.0)\n- 맨 위 프로필 카드 아래 '🔍 기능 검색' 칸에 단어나 초성을 치면 그 기능이 바로 나옵니다. 예: '재고', 'ㅈㄱ', '문자', '수익', '바코드', '프로필'.\n- 눌러서 바로 이동해요. 지우면 원래 메뉴판으로 돌아갑니다. (업무·채팅·일정 같은 탭도 검색됩니다.)\n\n■ 메뉴\n- 맨 위 내 카드를 누르면 프로필 사진과 상태 메시지를 바꿀 수 있어요.\n- 재고: 장비 재고 관리 (바코드 스캔, 단가)\n- 가맹점: 가맹점 정보 관리\n- 신규 계약 올리기 / 계약 관리: 계약 등록과 설치 완료 처리, 만료 알림\n- 단체 문자 보내기: 가맹점에 안내 문자\n- 내 실적: 나만 보는 월별 실적과 지난달 비교\n- 전체 실적·직원별 순위 / 수익 현황 / 실적 보고서 올리기: (권한이 있는 사람만 보임)\n- 일일보고 쓰기, 일일보고 종합 보기(권한자)\n- 지난 업무 기록: 완료된 업무 검색\n- 사용설명서, 버전·업데이트 내역, 공지사항\n- 직원과 권한: (관리자만) 직원 추가·권한 설정\n- 로그아웃\n\n※ 맨 아래에 현재 앱 버전이 표시됩니다. 문의할 때 이 버전을 알려 주세요."},
+            {"재고", "장비를 우리가 직접 입력해서 관리합니다. (전체 → 재고)\n\n■ 재고 추가\n1. 오른쪽 아래 + 버튼.\n2. 모델명을 적고, 시리얼은 한 줄에 하나씩 적습니다. 여러 줄을 붙여 넣으면 장비가 한꺼번에 등록돼요.\n3. 시리얼이 없는 소모품(롤지 등)은 시리얼 대신 '수량'만 적습니다.\n4. 안전재고: 이 수 아래로 내려가면 빨간색으로 '부족해요!'가 표시됩니다.\n5. 입고 단가: 실적 권한자에게만 보이는 칸입니다. 1대당 산 값을 적으면 시리얼 전체에 같이 적용돼요.\n\n■ 바코드 스캔\n- '바코드 스캔'을 누르면 카메라가 열리고, 읽으면 번호가 시리얼 칸에 한 줄 들어갑니다. 한 번 누르면 한 번만 읽어요. 다음 장비는 버튼을 다시 눌러 주세요. 같은 번호는 두 번 들어가지 않아요.\n- 재고 목록 위 '바코드로 찾기'를 누르면 바코드를 읽어 그 시리얼을 바로 검색합니다.\n- 계약에서 '+ 장비 추가'를 누르고 '바코드 스캔(한 번에 한 대)'을 누르면, 읽은 번호가 재고에 있을 때 그 장비가 바로 추가돼요. 다음 장비는 다시 '+ 장비 추가'를 눌러 같은 방식으로 넣습니다. 재고에 없는 번호면 모델명만 적어 직접 입력하게 열려요.\n\n■ 시리얼 촬영 인식 (v0.7.0)\n- '시리얼 촬영'을 누르고 장비 뒷면의 S/N 라벨을 가까이서 찍으면 글자를 읽어 줍니다.\n- 시리얼처럼 보이는 글자 후보가 목록으로 나오고, 맞는 것을 체크해서 '넣기'를 누르세요. 0(영)과 O(오), 1과 I처럼 헷갈리기 쉬운 글자는 꼭 눈으로 확인해 주세요.\n- 바코드가 같이 있으면 바코드 스캔이 더 정확합니다.\n- 스캔과 촬영은 구글 서비스가 있는 폰에서 동작합니다.\n\n■ 보기·검색\n- 모델별로 묶여서 '재고 n대'가 보이고, 그 아래에 시리얼이 나열됩니다.\n- 검색창에 모델명·시리얼을 치면 찾아줘요. 'ㅌㅅㅍㅅ' 같은 초성도 됩니다.\n\n■ 수정·삭제\n- 시리얼 줄을 누르면 수정창이 열립니다. 시리얼 칸에도 스캔·촬영 버튼이 있어요. '삭제'를 누르면 목록에서 지워져요 (기록은 서버에 남아 복구 가능).\n\n■ 단가와 수익 (실적 권한자 전용)\n- 재고 줄을 누르면 입고 단가(산 값)와 출고 단가(판 값)를 적을 수 있어요.\n- 재고 화면 맨 위에 보유 재고 자산(입고 단가 합계)이 나오고, '수익 현황 보기'로 이동합니다.\n- 단가는 서버에서도 실적 권한자만 읽을 수 있게 따로 보관됩니다. 권한이 없는 직원에게는 칸 자체가 보이지 않아요.\n\n■ 상태가 바뀌는 순서\n재고 → (계약에서 선택하면) 출고중 → (설치 완료 처리하면) 재고 목록에서 사라짐"},
+            {"가맹점", "우리 거래처(가맹점) 정보를 관리합니다. (전체 → 가맹점)\n\n■ 등록\n- 오른쪽 아래 + 버튼 → 상호(필수), 사업자번호, 연락처, 주소, 계약조건, 등급 코드, 메모.\n- 계약·일정·업무 지시 화면의 '가맹점 조회'에서 바로 '새 가맹점 등록'도 가능합니다.\n\n■ 등급 코드\n밴피(VAN) 기준입니다.\n0 S · 월 5만원 이상\n1 A · 3만원 이상\n2 B · 1만원 이상\n3 C · 1만원 미만\n4 해지가맹점\n5 신규가맹점\n7 협력사\n\n■ 수정\n- 목록에서 가맹점을 누르면 정보가 보이고, '수정'으로 바꿀 수 있습니다.\n\n■ 삭제 (최고관리자만, v0.8.0)\n- 가맹점 정보 창의 '삭제', 또는 수정 창의 '삭제'를 누르면 확인 창이 나오고 목록에서 지워집니다.\n- 그 가맹점에 연결된 계약·일정이 몇 건인지 같이 알려 드려요. 이미 올라간 계약·일정 기록은 그대로 남고, 서버에도 기록이 보관됩니다.\n- 관리자가 아닌 직원에게는 삭제 버튼이 보이지 않아요.\n\n■ 검색\n- 상호·사업자번호·전화·주소 어느 것으로든, 초성으로도 검색됩니다."},
             {"신규 계약 올리기", "계약이 되면 바로 올려 주세요. (전체 → 신규 계약 올리기, 또는 계약 관리 화면의 + 버튼)\n\n1. 가맹점 조회·선택: 등록된 가맹점을 고릅니다. 없으면 '새 가맹점 등록'.\n2. 결제 연동: VAN사 또는 PG사, 업체명 (예: 다우데이타).\n3. 구분을 고르면 금액 입력 이름이 바뀝니다.\n   - 판매 → 판매금액\n   - CMS → CMS 금액\n   - 렌탈 → 월 렌탈료\n4. 나가는 장비: '+ 장비 추가'를 눌러 재고에서 체크해 고릅니다. 재고에 없으면 '직접 입력'으로 모델명·시리얼을 적어요. 잘못 고른 장비는 오른쪽 − 로 뺍니다. 장비를 여러 번 + 해서 여러 대를 넣을 수 있어요.\n5. 장비 메모: 설치 조건 등 자유롭게 적습니다.\n6. 계약일과 만료일: 만료일 아래 '+12개월 / +24개월 / +36개월' 버튼을 누르면 계약일 기준으로 자동 계산됩니다.\n7. '올리기'.\n\n※ 올리면 고른 장비는 재고에서 '출고중'이 됩니다."},
             {"계약 관리 · 설치 완료 · 만료 알림", "(전체 → 계약 관리)\n\n■ 계약 보기\n- 위쪽에 '만료가 가까운 계약(3개월 이내)'이 빨간 D-숫자와 함께 먼저 나옵니다. 아래는 전체 계약입니다.\n- 일반 직원은 내가 올린 계약만, 실적 권한이 있는 사람은 전체 계약이 보입니다.\n\n■ 설치 완료\n- 계약을 누르고 '설치 완료'를 누르면 나간 장비가 재고에서 완전히 빠집니다.\n\n■ 장비 추가\n- 같은 가맹점에 장비가 더 나가면 계약을 열어 '장비 추가'를 눌러 모델명·시리얼을 이어서 추가합니다.\n\n■ 만료 알림\n- 만료가 90일 이하로 남은 계약이 있으면 '업무' 탭 위에 알림 카드가 뜨고, 전체 탭에도 숫자가 표시됩니다."},
             {"실적 (권한자 전용)", "■ 내 실적 (전체 → 내 실적)\n- 나만 볼 수 있습니다. 이번 달 신규 계약 대수, 판매금액, 올린 계약 목록, 지난달과의 비교가 나와요.\n\n■ 전체 실적·직원별 순위 (실적 보기 권한자)\n- 위 ‹ › 로 월을 바꿉니다.\n- 신규 계약 대수와 판매금액, 직원별 순위 막대 그래프, 올라온 계약 목록이 나옵니다.\n- 월별 성과 (v0.7.0): '지난달 → 선택한 달' 계약 대수와 성장률(▲ 늘어남 / ▼ 줄어듦, 지난달이 0이면 '신규')을 직원별 막대 두 개(회색 지난달, 금색 이번 달)로 보여 줍니다. 그 아래 최근 6개월 추이 그래프도 있어요.\n- 계약을 누르면 상세 정보와 장비를 볼 수 있어요.\n\n■ 수익 현황 (실적 보기 권한자, 전체 → 수익 현황)\n- 지금까지 총 수익, 선택한 달 수익(매출·매입), 최근 6개월 수익 그래프, 직원별 수익이 나옵니다.\n- 계약에 올라가 출고된 장비(출고중·설치완료)의 '출고 단가 − 입고 단가'를 합산하고, 월은 계약일 기준이에요.\n- 단가를 아직 안 적은 장비는 수익에서 빠지고, 맨 아래 목록에 나옵니다. 눌러서 단가를 적으면 바로 반영돼요."},
             {"공지사항 · 직원과 권한", "■ 공지사항 (전체 → 공지사항)\n- 공지 쓰기 권한이 있으면 + 버튼으로 작성합니다. '맨 위에 고정'을 켜면 항상 위에 보여요.\n- 읽지 않은 공지는 ● 표시와 전체 탭 숫자로 알려줍니다. 누르면 읽음 처리돼요.\n\n■ 직원과 권한 (관리자 전용)\n- + 버튼 → 이름, 휴대폰 번호, 권한 묶음을 선택해 직원을 등록합니다. 등록된 번호로만 로그인할 수 있어요.\n- 직원을 누르면 항목별 권한을 켜고 끌 수 있고, '사용 중지'로 퇴사자의 접근을 막습니다.\n- 마지막 관리자는 중지하거나 권한을 끌 수 없습니다.\n\n※ '실적 보기'(수익 현황과 재고 단가 포함)와 '일일보고·실적보고 종합 보기'는 서버에서 강제로 막혀 안전합니다. 나머지 권한은 화면에서 숨기는 방식이에요."},
             {"일일보고 · 실적 보고서", "■ 일일보고 쓰기 (전체 → 일일보고 쓰기)\n- 날짜를 확인하고, 오늘 한 일·특이사항·내일 계획을 적어 '제출하기'를 누릅니다.\n- 그날 완료한 업무와 올린 계약은 자동으로 같이 집계돼요.\n- 같은 날 다시 쓰면 수정본으로 덮어씁니다. 아래에서 내가 낸 보고를 다시 열어 볼 수 있어요.\n\n■ 일일보고 종합 (대표님)\n- 전체 → 일일보고 종합 보기: 날짜별로 직원별 보고가 한 화면에 모이고, 미제출자는 빨간색으로 표시됩니다.\n- 이 메뉴는 '일일보고·실적보고 종합 보기' 권한이 켜진 사람만 봅니다. 관리자도 예외가 아니에요(v0.7.0부터). 처음에는 관리자에게 켜져 있고, 대표님을 등록하면 대표님께 켜 드린 뒤 관리자 쪽을 끄면 됩니다.\n\n■ 실적 보고서 (본부장 → 대표님)\n- 전체 → 실적 보고서 올리기: 이번 달 실적이 자동 집계되어 채워져 있고, 고쳐서 '대표님께 보고하기'를 누릅니다.\n- 대표님은 같은 메뉴에서 올라온 보고서를 봅니다.\n\n※ 보고서 양식은 정해지면 그 모양에 맞춰 바꿀 수 있어요."},
+            {"단체 문자 (가맹점)", "(전체 → 단체 문자 보내기, 또는 전체 탭 검색창에 '문자')\n\n■ 이렇게 동작해요\n- 내용을 쓰고, 보낼 가맹점을 고른 뒤 '문자 보내기 시작'을 누르면 가맹점 한 곳씩 이 폰의 문자 앱이 열립니다. 내용이 미리 채워져 있으니 확인하고 '전송'만 누르면 돼요.\n- 한 곳씩 따로 보내서 받는 분들끼리 번호가 보이지 않습니다. 문자 요금은 이 폰의 요금제로 나갑니다.\n- 내용에 {상호} 라고 쓰면 가맹점 이름으로 바뀝니다. 예: {상호} 사장님, 안녕하세요. 나인페이먼츠입니다.\n\n■ 받는 가맹점 고르기\n- 칸을 눌러 하나씩 고르거나, 위의 'S 등급 선택' 같은 버튼으로 등급 전체를 한 번에 고릅니다. '보이는 전체 선택'은 검색 결과 전체를 고르고, '선택 해제'는 모두 풉니다.\n- 유선 번호(02·062 등)는 문자를 받을 수 없어서 선택할 수 없어요.\n\n■ 보내는 순서\n1. '문자 앱 열기' → 문자 앱에서 전송.\n2. 이 앱으로 돌아오면 다음 가맹점이 준비돼 있습니다. 필요 없으면 '건너뛰기', 그만두려면 '중단'.\n3. 끝나면 문자 앱의 보낸 기록에서 보내졌는지 확인하세요. 앱은 전송을 눌렀는지 알 수 없어요.\n\n※ 수십 곳 이상을 한꺼번에 보내는 기능(문자 업체 연동)은 서버 요금제 전환 후에 만들 예정입니다."},
             {"프로필 · 버전", "■ 프로필 (v0.7.0)\n- 전체 탭 맨 위 내 카드(또는 오른쪽 위 동그라미)를 누르면 프로필이 열립니다.\n- '사진 변경'으로 앨범에서 사진을 고르면 자동으로 동그랗게 잘려 저장되고, 채팅과 화면 위쪽에 나와요.\n- '상태 메시지'에 외근 중, 오후 복귀 같은 한 줄을 적어 두면 다른 직원이 프로필에서 볼 수 있어요.\n- 채팅에서 다른 직원 사진을 누르면 그 직원의 프로필과 전화하기 버튼이 나옵니다.\n\n■ 버전 보기\n- 전체 탭 맨 아래, 로그인 화면, 전체 → 버전·업데이트 내역에 현재 버전이 표시됩니다. (예: v0.7.0 (빌드 9))\n- 업데이트 내역에는 버전마다 무엇이 바뀌었는지 적혀 있어요.\n\n■ 버전 번호 규칙\n- 가운데 숫자(0.7.0): 새 기능이나 새 메뉴가 들어갈 때 올라갑니다.\n- 끝 숫자(0.7.1): 새 기능 없이 오류를 고치거나 문구·디자인을 다듬을 때 올라갑니다.\n- 괄호 안 빌드 번호: 배포할 때마다 1씩 올라갑니다.\n- 실제 문자 인증으로 전 직원이 쓰기 시작하면 1.0.0이 됩니다.\n- 새 버전이 나올 때마다 이 사용설명서도 함께 새로 고쳐집니다."},
             {"자주 묻는 질문", "Q. 인증번호 문자가 안 와요.\nA. 번호가 등록되었는지, 폰 신호가 되는지 확인하세요. 하루에 받을 수 있는 횟수가 제한되어 있어 여러 번 시도하면 잠시 막힐 수 있어요.\n\nQ. 폰을 바꿨어요.\nA. 새 폰에 앱을 설치하고 같은 번호로 다시 인증하면 모든 자료가 그대로 나옵니다. 자료는 서버에 저장돼 있어요.\n\nQ. 인터넷이 없을 때도 써도 되나요?\nA. 열어서 보기와 입력은 가능하고, 인터넷이 다시 연결되면 자동으로 서버에 올라갑니다.\n\nQ. 실수로 지웠어요.\nA. 지운 자료도 서버에는 기록이 남아 있으니 관리자에게 말씀해 주세요."},
     };
@@ -2600,6 +2704,7 @@ public class MainActivity extends Activity {
 
     /** {버전, 날짜, 내용}. 새 버전은 맨 위에 추가. CI 가 현재 versionName 항목이 있는지 검사한다. */
     private static final String[][] CHANGELOG = {
+            {"0.8.0", "2026-10-24", "• 채팅: 말풍선 두 번 누르면 ❤️ 좋아요, 길게 누르면 답장·이모티콘 반응·복사·삭제 (텔레그램 방식)\n• 우리 회사 캐릭터 '나인이' 스티커 12종, 이모지/스티커 판\n• 채팅 파일을 3MB까지 보낼 수 있게 확대\n• 가맹점 삭제 (최고관리자만, 수정 창에도 삭제 버튼)\n• 바코드는 한 번 누르면 한 번만 입력, 계약 장비 추가에서 바코드를 읽으면 그 장비가 바로 추가\n• 전체 탭 맨 위 기능 검색(단어·초성)\n• 가맹점 단체 문자: 폰 문자 앱으로 한 곳씩, {상호} 자동 치환"},
             {"0.7.0", "2026-10-24", "• 채팅 개편: 입력줄 맨 아래 고정, 내 말풍선·상대 말풍선 구분, 시간 표시, 날짜 띠\n• 채팅에 사진·파일(700KB까지)·이모티콘 보내기\n• 프로필 사진과 상태 메시지, 채팅에서 사진을 누르면 프로필·전화하기\n• 재고 바코드 스캔(연속 스캔, 바코드로 찾기)과 시리얼 라벨 촬영 인식\n• 재고 입고·출고 단가(권한자 전용), 보유 재고 자산, 수익 현황(누적·월별·직원별)\n• 실적: 지난달 대비 성장률과 최근 6개월 그래프\n• 일일보고 종합 보기를 관리자와 분리해 권한 항목 하나로만 켜고 끔\n• 앱 버전 표시와 업데이트 내역, 가맹점 등급 코드를 밴피 기준으로 변경"},
             {"0.6.0", "2026-10-24", "• 일정: 달력에서 일정을 눌러 상세 보기·삭제, 회사 일정은 최고관리자만 추가\n• 내 실적(본인만) / 전체 실적·직원별 순위(권한자)\n• 일일보고 쓰기, 대표님용 일일보고 종합, 실적 보고서"},
             {"0.5.0", "2026-10-24", "• 5개 탭(업무/프로젝트/채팅/일정/전체), 채팅방, 재고, 가맹점, 계약(장비·만료 알림), 사용설명서"},
@@ -2640,6 +2745,8 @@ public class MainActivity extends Activity {
         roomScroll = null;
         roomInput = null;
         emojiPanel = null;
+        replyBar = null;
+        replyTo = null;
         lastMsgCount = -1;
         buildMain();
     }
@@ -2715,6 +2822,22 @@ public class MainActivity extends Activity {
         emojiPanel.setVisibility(View.GONE);
         root.addView(emojiPanel);
 
+        replyBar = new LinearLayout(this);
+        replyBar.setGravity(Gravity.CENTER_VERTICAL);
+        replyBar.setBackgroundColor(Ui.TINT);
+        replyBar.setPadding(Ui.dp(this, 14), Ui.dp(this, 8), Ui.dp(this, 8), Ui.dp(this, 8));
+        replyTv = Ui.text(this, "", 13, Ui.DEEP, false);
+        replyTv.setSingleLine(true);
+        replyTv.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        replyBar.addView(replyTv, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView rx = Ui.text(this, "✕", 18, Ui.GRAY, true);
+        rx.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), 0);
+        rx.setOnClickListener(v -> clearReply());
+        replyBar.addView(rx);
+        replyBar.setVisibility(View.GONE);
+        root.addView(replyBar);
+        replyTo = null;
+
         View line2 = new View(this);
         line2.setBackgroundColor(Ui.FIELD);
         root.addView(line2, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 1)));
@@ -2769,7 +2892,7 @@ public class MainActivity extends Activity {
         send.setOnClickListener(v -> {
             String t = roomInput.getText().toString().trim();
             if (t.isEmpty()) return;
-            sendMsg(t, "", "", "", 0);
+            sendMsg(t, "", "", "", 0, 0);
             draft = "";
             roomInput.setText("");
         });
@@ -2789,11 +2912,31 @@ public class MainActivity extends Activity {
         fillMsgs();
     }
 
+    private static final String[] STK_NAMES = {"화이팅!", "수고했어요", "최고예요!", "대박!", "감사합니다", "힘내세요!", "오늘도 굿!", "퇴근각", "확인했어요", "잠시만요", "계약 성공!", "같이 해요!"};
+    private static final String[] REACTS = {"👍", "❤️", "😂", "😮", "😢", "🙏", "🔥", "👏"};
+    private JSONObject replyTo = null;
+    private LinearLayout replyBar;
+    private TextView replyTv;
+
+    /** 아래쪽 이모지·스티커 판: 위 탭으로 바꾼다. */
     private LinearLayout buildEmojiPanel() {
-        ScrollView sv = new ScrollView(this);
+        final LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setBackgroundColor(Ui.CARD);
+        final LinearLayout tabs = new LinearLayout(this);
+        final TextView t1 = Ui.chip(this, "이모지", Ui.GOLD, Ui.DARK);
+        final TextView t2 = Ui.chip(this, "나인이 스티커", Ui.FIELD, Ui.INK);
+        LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        tp.rightMargin = Ui.dp(this, 8);
+        tabs.setPadding(Ui.dp(this, 10), Ui.dp(this, 8), Ui.dp(this, 10), Ui.dp(this, 4));
+        tabs.addView(t1, tp);
+        tabs.addView(t2, tp);
+        box.addView(tabs);
+
+        ScrollView emojiSv = new ScrollView(this);
         LinearLayout grid = new LinearLayout(this);
         grid.setOrientation(LinearLayout.VERTICAL);
-        grid.setPadding(Ui.dp(this, 6), Ui.dp(this, 6), Ui.dp(this, 6), Ui.dp(this, 6));
+        grid.setPadding(Ui.dp(this, 6), Ui.dp(this, 2), Ui.dp(this, 6), Ui.dp(this, 6));
         LinearLayout row = null;
         for (int i = 0; i < EMOJIS.length; i++) {
             if (i % 8 == 0) {
@@ -2810,15 +2953,82 @@ public class MainActivity extends Activity {
             });
             row.addView(t, new LinearLayout.LayoutParams(0, Ui.dp(this, 46), 1f));
         }
-        sv.addView(grid);
-        LinearLayout box = new LinearLayout(this);
-        box.setBackgroundColor(Ui.CARD);
-        box.addView(sv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 230)));
+        emojiSv.addView(grid);
+
+        final ScrollView stkSv = new ScrollView(this);
+        LinearLayout sg = new LinearLayout(this);
+        sg.setOrientation(LinearLayout.VERTICAL);
+        sg.setPadding(Ui.dp(this, 8), Ui.dp(this, 2), Ui.dp(this, 8), Ui.dp(this, 8));
+        LinearLayout srow = null;
+        for (int i = 0; i < STK_NAMES.length; i++) {
+            if (i % 4 == 0) {
+                srow = new LinearLayout(this);
+                sg.addView(srow);
+            }
+            final int idx = i + 1;
+            ImageView iv = new ImageView(this);
+            iv.setImageResource(stkRes(idx));
+            iv.setAdjustViewBounds(true);
+            iv.setPadding(Ui.dp(this, 4), Ui.dp(this, 4), Ui.dp(this, 4), Ui.dp(this, 4));
+            iv.setOnClickListener(v -> {
+                sendMsg(STK_NAMES[idx - 1], "stk", String.valueOf(idx), "", 0, 0);
+                emojiPanel.setVisibility(View.GONE);
+            });
+            srow.addView(iv, new LinearLayout.LayoutParams(0, Ui.dp(this, 88), 1f));
+        }
+        stkSv.addView(sg);
+        stkSv.setVisibility(View.GONE);
+        FrameLayout body = new FrameLayout(this);
+        body.addView(emojiSv);
+        body.addView(stkSv);
+        box.addView(body, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 236)));
+        final ScrollView esv = emojiSv;
+        t1.setOnClickListener(v -> {
+            esv.setVisibility(View.VISIBLE);
+            stkSv.setVisibility(View.GONE);
+            t1.setBackground(Ui.round(Ui.GOLD, 10, this));
+            t2.setBackground(Ui.round(Ui.FIELD, 10, this));
+        });
+        t2.setOnClickListener(v -> {
+            esv.setVisibility(View.GONE);
+            stkSv.setVisibility(View.VISIBLE);
+            t2.setBackground(Ui.round(Ui.GOLD, 10, this));
+            t1.setBackground(Ui.round(Ui.FIELD, 10, this));
+        });
         return box;
     }
 
+    private int stkRes(int idx) {
+        return getResources().getIdentifier(String.format(Locale.US, "stk_%02d", idx), "drawable", getPackageName());
+    }
+
+    private static String snippet(JSONObject m) {
+        String k = m.optString("kind");
+        if ("img".equals(k)) return "사진";
+        if ("stk".equals(k)) return "스티커";
+        if ("file".equals(k)) return "파일: " + m.optString("fname");
+        String t = m.optString("text").replace('\n', ' ');
+        return t.length() > 60 ? t.substring(0, 60) + "…" : t;
+    }
+
+    private void setReply(JSONObject m) {
+        replyTo = m;
+        if (replyBar == null) return;
+        replyTv.setText(store.userName(m.optInt("who")) + "에게 답장  ·  " + snippet(m));
+        replyBar.setVisibility(View.VISIBLE);
+        if (roomInput != null) {
+            roomInput.requestFocus();
+            ((android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE)).showSoftInput(roomInput, 0);
+        }
+    }
+
+    private void clearReply() {
+        replyTo = null;
+        if (replyBar != null) replyBar.setVisibility(View.GONE);
+    }
+
     private void showAttachMenu() {
-        final String[] items = {"사진 보내기 (앨범)", "사진 찍어 보내기", "파일 보내기 (700KB까지)"};
+        final String[] items = {"사진 보내기 (앨범)", "사진 찍어 보내기", "파일 보내기 (3MB까지)"};
         new AlertDialog.Builder(this).setTitle("보내기").setItems(items, (d, w) -> {
             try {
                 if (w == 0) {
@@ -2848,7 +3058,7 @@ public class MainActivity extends Activity {
         return i;
     }
 
-    private void sendMsg(String text, String kind, String blob, String fname, long size) {
+    private void sendMsg(String text, String kind, String blob, String fname, long size, int chunks) {
         JSONObject m = store.create("msgs");
         try {
             m.put("room", chatRoom);
@@ -2860,36 +3070,52 @@ public class MainActivity extends Activity {
                 m.put("blob", blob);
                 m.put("fname", fname);
                 m.put("size", size);
+                if (chunks > 0) m.put("chunks", chunks);
+            }
+            if (replyTo != null) {
+                JSONObject r = new JSONObject();
+                r.put("id", replyTo.optInt("id"));
+                r.put("who", replyTo.optInt("who"));
+                r.put("text", snippet(replyTo));
+                m.put("rto", r);
             }
         } catch (Exception ignored) {
         }
+        clearReply();
         store.save();
         fillMsgs();
     }
 
-    /** 사진·파일을 서버 보관함(blobs)에 올린 뒤 대화에 올린다. */
+    /** 사진·파일을 서버 보관함(blobs)에 조각(600KB)으로 나눠 올린 뒤 대화에 올린다. */
     private void sendBlob(final String kind, final byte[] data, final String mime, final String fname) {
         final String id = String.valueOf(store.nextId());
         Media.write(Media.blobFile(this, id), data);
-        java.util.Map<String, Object> d = new java.util.HashMap<>();
-        d.put("d", Media.b64(data));
-        d.put("mime", mime);
-        d.put("name", fname);
-        d.put("u", System.currentTimeMillis());
-        d.put("by", (long) myId());
+        final int n = Math.max(1, (data.length + Media.CHUNK - 1) / Media.CHUNK);
+        final java.util.concurrent.atomic.AtomicInteger left = new java.util.concurrent.atomic.AtomicInteger(n);
+        final java.util.concurrent.atomic.AtomicBoolean failed = new java.util.concurrent.atomic.AtomicBoolean(false);
         final int room = chatRoom;
         Ui.toast(this, "보내는 중…");
-        Cloud.fs().collection("blobs").document(id).set(d).addOnSuccessListener(x -> {
-            if (chatRoom != room) {
-                // 보내는 사이 다른 방으로 옮겼어도 원래 방에 올린다.
-                int keep = chatRoom;
-                chatRoom = room;
-                sendMsg(kind.equals("img") ? "사진" : fname, kind, id, fname, data.length);
-                chatRoom = keep;
-            } else {
-                sendMsg(kind.equals("img") ? "사진" : fname, kind, id, fname, data.length);
-            }
-        }).addOnFailureListener(e -> Ui.toast(this, "보내지 못했어요. 인터넷을 확인해 주세요."));
+        for (int i = 0; i < n; i++) {
+            int from = i * Media.CHUNK, to = Math.min(data.length, from + Media.CHUNK);
+            java.util.Map<String, Object> d = new java.util.HashMap<>();
+            d.put("d", Media.b64(java.util.Arrays.copyOfRange(data, from, to)));
+            d.put("mime", mime);
+            d.put("name", fname);
+            d.put("i", (long) i);
+            d.put("n", (long) n);
+            d.put("u", System.currentTimeMillis());
+            d.put("by", (long) myId());
+            Cloud.fs().collection("blobs").document(id + "_" + i).set(d).addOnSuccessListener(x -> {
+                if (left.decrementAndGet() == 0 && !failed.get()) {
+                    int keep = chatRoom;
+                    chatRoom = room;
+                    sendMsg(kind.equals("img") ? "사진" : fname, kind, id, fname, data.length, n);
+                    chatRoom = keep;
+                }
+            }).addOnFailureListener(e -> {
+                if (failed.compareAndSet(false, true)) Ui.toast(this, "보내지 못했어요. 인터넷을 확인해 주세요.");
+            });
+        }
     }
 
     @Override
@@ -2912,12 +3138,12 @@ public class MainActivity extends Activity {
             final Uri u = data.getData();
             if (u == null) return;
             new Thread(() -> {
-                byte[] b = Media.readAll(cr, u, Media.MAX_BYTES);
+                byte[] b = Media.readAll(cr, u, Media.MAX_FILE);
                 final String nm = Media.name(cr, u);
                 final String mime = cr.getType(u) == null ? "application/octet-stream" : cr.getType(u);
                 runOnUiThread(() -> {
                     if (b == null) new AlertDialog.Builder(this).setTitle("파일이 너무 커요")
-                            .setMessage("지금은 700KB 이하의 파일만 보낼 수 있어요. 사진은 자동으로 줄여서 보내니 사진으로 보내 주세요.").setPositiveButton("확인", null).show();
+                            .setMessage("지금은 3MB 이하의 파일만 보낼 수 있어요. 사진은 자동으로 줄여서 보내니 사진으로 보내 주세요.").setPositiveButton("확인", null).show();
                     else sendBlob("file", b, mime, nm);
                 });
             }).start();
@@ -2963,26 +3189,47 @@ public class MainActivity extends Activity {
         return c;
     }
 
-    /** 보관함에서 파일을 폰으로 받아 둔다(이미 있으면 바로 완료). */
-    private void fetchBlob(final String id, final Runnable done) {
+    /** 보관함에서 파일을 폰으로 받아 둔다(이미 있으면 바로 완료). chunks<=0 이면 0.7.0 이전의 한 덩어리 문서. */
+    private void fetchBlob(final String id, final int chunks, final Runnable done) {
         final File f = Media.blobFile(this, id);
         if (f.exists() && f.length() > 0) {
             done.run();
             return;
         }
-        Cloud.fs().collection("blobs").document(id).get().addOnSuccessListener(doc -> {
-            String d = doc.getString("d");
-            if (d == null) {
-                Ui.toast(this, "파일을 찾지 못했어요.");
-                return;
-            }
-            Media.write(f, Media.unb64(d));
-            done.run();
-        }).addOnFailureListener(e -> Ui.toast(this, "내려받지 못했어요. 인터넷을 확인해 주세요."));
+        final int n = Math.max(1, chunks);
+        final byte[][] parts = new byte[n][];
+        final java.util.concurrent.atomic.AtomicInteger left = new java.util.concurrent.atomic.AtomicInteger(n);
+        final java.util.concurrent.atomic.AtomicBoolean failed = new java.util.concurrent.atomic.AtomicBoolean(false);
+        for (int i = 0; i < n; i++) {
+            final int idx = i;
+            String docId = chunks <= 0 ? id : id + "_" + i;
+            Cloud.fs().collection("blobs").document(docId).get().addOnSuccessListener(doc -> {
+                String d = doc.getString("d");
+                if (d == null) {
+                    if (failed.compareAndSet(false, true)) Ui.toast(this, "파일을 찾지 못했어요.");
+                    return;
+                }
+                parts[idx] = Media.unb64(d);
+                if (left.decrementAndGet() == 0 && !failed.get()) {
+                    int total = 0;
+                    for (byte[] p : parts) total += p.length;
+                    byte[] all = new byte[total];
+                    int pos = 0;
+                    for (byte[] p : parts) {
+                        System.arraycopy(p, 0, all, pos, p.length);
+                        pos += p.length;
+                    }
+                    Media.write(f, all);
+                    done.run();
+                }
+            }).addOnFailureListener(e -> {
+                if (failed.compareAndSet(false, true)) Ui.toast(this, "내려받지 못했어요. 인터넷을 확인해 주세요.");
+            });
+        }
     }
 
-    private void openBlob(final String id, final String fname, final boolean isImg) {
-        fetchBlob(id, () -> {
+    private void openBlob(final String id, final int chunks, final String fname, final boolean isImg) {
+        fetchBlob(id, chunks, () -> {
             try {
                 String safe = fname.replaceAll("[^0-9A-Za-z가-힣._-]", "_");
                 File out = new File(Media.dir(this), "open_" + id + "_" + safe);
@@ -3003,8 +3250,8 @@ public class MainActivity extends Activity {
         });
     }
 
-    private void showImage(final String id, final String fname) {
-        fetchBlob(id, () -> {
+    private void showImage(final String id, final int chunks, final String fname) {
+        fetchBlob(id, chunks, () -> {
             android.graphics.Bitmap b = thumb(Media.blobFile(this, id), 1600);
             if (b == null) {
                 Ui.toast(this, "사진을 열지 못했어요.");
@@ -3017,7 +3264,7 @@ public class MainActivity extends Activity {
             ScrollView sv = new ScrollView(this);
             sv.addView(iv);
             new AlertDialog.Builder(this).setView(sv).setNegativeButton("닫기", null)
-                    .setPositiveButton("다른 앱으로 열기·저장", (d, w) -> openBlob(id, fname, true)).show();
+                    .setPositiveButton("다른 앱으로 열기·저장", (d, w) -> openBlob(id, chunks, fname, true)).show();
         });
     }
 
@@ -3116,10 +3363,119 @@ public class MainActivity extends Activity {
         if (atBottom) roomScroll.post(() -> roomScroll.fullScroll(View.FOCUS_DOWN));
     }
 
-    private View buildBubble(final JSONObject m, boolean mine) {
+    private void toggleReaction(JSONObject m, String emoji) {
+        try {
+            JSONObject r = m.optJSONObject("react");
+            if (r == null) {
+                r = new JSONObject();
+                m.put("react", r);
+            }
+            String k = String.valueOf(myId());
+            if (emoji.equals(r.optString(k))) r.remove(k);
+            else r.put(k, emoji);
+        } catch (Exception ignored) {
+        }
+        store.save();
+        fillMsgs();
+    }
+
+    /** 길게 누르면: 답장 · 반응 · 복사 · (내 글) 삭제. */
+    private void showMsgMenu(final JSONObject m) {
+        final boolean mine = m.optInt("who") == myId();
+        final boolean hasText = m.optString("kind").isEmpty();
+        final List<String> items = new ArrayList<>();
+        items.add("답장");
+        items.add("이모티콘 반응");
+        if (hasText) items.add("복사");
+        if (mine) items.add("삭제");
+        new AlertDialog.Builder(this).setItems(items.toArray(new String[0]), (d, w) -> {
+            String it = items.get(w);
+            if ("답장".equals(it)) setReply(m);
+            else if ("복사".equals(it)) {
+                ((android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE))
+                        .setPrimaryClip(android.content.ClipData.newPlainText("메시지", m.optString("text")));
+                Ui.toast(this, "복사했어요.");
+            } else if ("삭제".equals(it)) {
+                new AlertDialog.Builder(this).setTitle("내 메시지를 삭제할까요?").setMessage("대화에서 사라지고, 서버에는 기록이 보관돼요.")
+                        .setNegativeButton("취소", null).setPositiveButton("삭제", (d2, w2) -> {
+                            try {
+                                m.put("deleted", true);
+                            } catch (Exception ignored) {
+                            }
+                            store.save();
+                            fillMsgs();
+                        }).show();
+            } else {
+                LinearLayout row = new LinearLayout(this);
+                row.setGravity(Gravity.CENTER);
+                row.setPadding(Ui.dp(this, 8), Ui.dp(this, 16), Ui.dp(this, 8), Ui.dp(this, 8));
+                final AlertDialog[] dd = new AlertDialog[1];
+                for (final String e : REACTS) {
+                    TextView t = Ui.text(this, e, 28, Ui.INK, false);
+                    t.setGravity(Gravity.CENTER);
+                    t.setOnClickListener(v -> {
+                        dd[0].dismiss();
+                        toggleReaction(m, e);
+                    });
+                    row.addView(t, new LinearLayout.LayoutParams(0, Ui.dp(this, 46), 1f));
+                }
+                dd[0] = new AlertDialog.Builder(this).setTitle("반응 고르기").setView(row).setNegativeButton("닫기", null).show();
+            }
+        }).show();
+    }
+
+    /** 한 번 탭 = onTap, 두 번 탭 = ❤️ 좋아요, 길게 = 메뉴. */
+    private void attachGestures(View v, final JSONObject m, final Runnable onTap) {
+        final android.view.GestureDetector gd = new android.view.GestureDetector(this, new android.view.GestureDetector.SimpleOnGestureListener() {
+            @Override
+            public boolean onDown(android.view.MotionEvent e) {
+                return true;
+            }
+
+            @Override
+            public boolean onSingleTapConfirmed(android.view.MotionEvent e) {
+                if (onTap != null) onTap.run();
+                return true;
+            }
+
+            @Override
+            public boolean onDoubleTap(android.view.MotionEvent e) {
+                toggleReaction(m, "❤️");
+                return true;
+            }
+
+            @Override
+            public void onLongPress(android.view.MotionEvent e) {
+                showMsgMenu(m);
+            }
+        });
+        v.setOnTouchListener((x, ev) -> gd.onTouchEvent(ev));
+    }
+
+    private View quoteView(JSONObject rto, boolean onGold) {
+        LinearLayout q = new LinearLayout(this);
+        q.setOrientation(LinearLayout.VERTICAL);
+        q.setBackground(Ui.round(onGold ? Color.argb(60, 255, 255, 255) : Ui.FIELD, 8, this));
+        q.setPadding(Ui.dp(this, 8), Ui.dp(this, 5), Ui.dp(this, 8), Ui.dp(this, 5));
+        q.addView(Ui.text(this, "↪ " + store.userName(rto.optInt("who")), 11, Ui.DEEP, true));
+        TextView t = Ui.text(this, rto.optString("text"), 12, Ui.GRAY, false);
+        t.setSingleLine(true);
+        t.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        q.addView(t);
+        return q;
+    }
+
+    private View buildBubble(final JSONObject m, final boolean mine) {
         final String kind = m.optString("kind");
+        final int chunks = m.optInt("chunks", 0);
         int maxW = Math.min(Ui.dp(this, 250), (int) (getResources().getDisplayMetrics().widthPixels * 0.62));
+        LinearLayout wrap = new LinearLayout(this);
+        wrap.setOrientation(LinearLayout.VERTICAL);
+        wrap.setGravity(mine ? Gravity.END : Gravity.START);
+        JSONObject rto = m.optJSONObject("rto");
+        View core;
         if ("img".equals(kind)) {
+            if (rto != null) wrap.addView(quoteView(rto, false), new LinearLayout.LayoutParams(maxW, ViewGroup.LayoutParams.WRAP_CONTENT));
             final ImageView iv = new ImageView(this);
             iv.setAdjustViewBounds(true);
             iv.setScaleType(ImageView.ScaleType.FIT_CENTER);
@@ -3135,32 +3491,71 @@ public class MainActivity extends Activity {
                 android.graphics.Bitmap b = thumb(f, 600);
                 if (b != null) iv.setImageBitmap(b);
             } else {
-                fetchBlob(id, () -> {
+                fetchBlob(id, chunks, () -> {
                     android.graphics.Bitmap b = thumb(f, 600);
                     if (b != null) iv.setImageBitmap(b);
                 });
             }
-            iv.setOnClickListener(v -> showImage(id, m.optString("fname")));
-            return iv;
-        }
-        TextView b;
-        if ("file".equals(kind)) {
-            b = Ui.text(this, "📎 " + m.optString("fname") + "\n" + sizeText(m.optLong("size")) + " · 눌러서 열기", 14, Ui.INK, false);
-            b.setOnClickListener(v -> openBlob(m.optString("blob"), m.optString("fname"), false));
+            attachGestures(iv, m, () -> showImage(id, chunks, m.optString("fname")));
+            core = iv;
+            wrap.addView(core, Ui.lp(this, rto != null ? 3 : 0));
+        } else if ("stk".equals(kind)) {
+            if (rto != null) wrap.addView(quoteView(rto, false), new LinearLayout.LayoutParams(maxW, ViewGroup.LayoutParams.WRAP_CONTENT));
+            ImageView iv = new ImageView(this);
+            iv.setImageResource(stkRes(Integer.parseInt(m.optString("blob", "1"))));
+            iv.setAdjustViewBounds(true);
+            iv.setMaxWidth(Ui.dp(this, 150));
+            iv.setMaxHeight(Ui.dp(this, 158));
+            attachGestures(iv, m, null);
+            wrap.addView(iv, Ui.lp(this, rto != null ? 3 : 0));
         } else {
-            b = Ui.text(this, m.optString("text"), 15, Ui.INK, false);
-            b.setOnLongClickListener(v -> {
-                ((android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE))
-                        .setPrimaryClip(android.content.ClipData.newPlainText("메시지", m.optString("text")));
-                Ui.toast(this, "복사했어요.");
-                return true;
-            });
+            LinearLayout box = new LinearLayout(this);
+            box.setOrientation(LinearLayout.VERTICAL);
+            box.setBackground(Ui.round(mine ? Ui.GOLD : Color.WHITE, 16, this));
+            box.setPadding(Ui.dp(this, 12), Ui.dp(this, 8), Ui.dp(this, 12), Ui.dp(this, 8));
+            if (rto != null) {
+                box.addView(quoteView(rto, mine), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            }
+            TextView b;
+            Runnable tap = null;
+            if ("file".equals(kind)) {
+                b = Ui.text(this, "📎 " + m.optString("fname") + "\n" + sizeText(m.optLong("size")) + " · 눌러서 열기", 14, Ui.INK, false);
+                tap = () -> openBlob(m.optString("blob"), chunks, m.optString("fname"), false);
+            } else {
+                b = Ui.text(this, m.optString("text"), 15, Ui.INK, false);
+            }
+            b.setMaxWidth(maxW);
+            b.setLineSpacing(0, 1.1f);
+            box.addView(b, Ui.lp(this, rto != null ? 6 : 0));
+            attachGestures(box, m, tap);
+            wrap.addView(box);
         }
-        b.setBackground(Ui.round(mine ? Ui.GOLD : Color.WHITE, 16, this));
-        b.setPadding(Ui.dp(this, 12), Ui.dp(this, 8), Ui.dp(this, 12), Ui.dp(this, 8));
-        b.setMaxWidth(maxW);
-        b.setLineSpacing(0, 1.1f);
-        return b;
+        // 반응(이모티콘) 줄
+        JSONObject re = m.optJSONObject("react");
+        if (re != null && re.length() > 0) {
+            java.util.Map<String, Integer> cnt = new java.util.LinkedHashMap<>();
+            boolean[] mineR = new boolean[1];
+            java.util.Iterator<String> it = re.keys();
+            String myKey = String.valueOf(myId());
+            while (it.hasNext()) {
+                String k = it.next();
+                String e = re.optString(k);
+                if (e.isEmpty()) continue;
+                Integer c = cnt.get(e);
+                cnt.put(e, c == null ? 1 : c + 1);
+            }
+            LinearLayout rr = new LinearLayout(this);
+            for (final java.util.Map.Entry<String, Integer> en : cnt.entrySet()) {
+                boolean my = en.getKey().equals(re.optString(myKey));
+                TextView c = Ui.chip(this, en.getKey() + " " + en.getValue(), my ? Ui.TINT : Color.WHITE, my ? Ui.DEEP : Ui.GRAY);
+                c.setOnClickListener(v -> toggleReaction(m, en.getKey()));
+                LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                cp.rightMargin = Ui.dp(this, 4);
+                rr.addView(c, cp);
+            }
+            wrap.addView(rr, Ui.lp(this, 3));
+        }
+        return wrap;
     }
 
     // ---------- 프로필 ----------
@@ -3283,21 +3678,23 @@ public class MainActivity extends Activity {
         t.setSelection(t.getText().length());
     }
 
-    /** 구글 코드 스캐너(카메라 앱)로 바코드를 읽어 칸에 넣는다. loop 면 취소할 때까지 계속 읽는다. */
-    private void scanBarcode(final EditText target, final boolean append, final boolean loop) {
+    /** 구글 코드 스캐너(카메라 앱)로 바코드를 딱 한 번 읽는다. 더 읽으려면 다시 누른다. */
+    private void scanOnce(final java.util.function.Consumer<String> onCode) {
         com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions opts = new com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions.Builder()
                 .enableAutoZoom().build();
         com.google.mlkit.vision.codescanner.GmsBarcodeScanner sc = com.google.mlkit.vision.codescanner.GmsBarcodeScanning.getClient(this, opts);
         sc.startScan().addOnSuccessListener(b -> {
             String v = b.getRawValue();
-            if (v == null || v.trim().isEmpty()) {
-                Ui.toast(this, "바코드 값을 읽지 못했어요.");
-            } else {
-                putLine(target, v.trim(), append);
-                Ui.toast(this, "읽었어요: " + v.trim());
-            }
-            if (loop) new Handler().postDelayed(() -> scanBarcode(target, append, true), 500);
+            if (v == null || v.trim().isEmpty()) Ui.toast(this, "바코드 값을 읽지 못했어요.");
+            else onCode.accept(v.trim());
         }).addOnFailureListener(e -> Ui.toast(this, "바코드 스캔을 시작하지 못했어요. (" + e.getMessage() + ")"));
+    }
+
+    private void scanBarcode(final EditText target, final boolean append) {
+        scanOnce(v -> {
+            putLine(target, v, append);
+            Ui.toast(this, "읽었어요: " + v);
+        });
     }
 
     /** 시리얼 라벨을 카메라로 찍어 글자를 읽는다. */
@@ -3356,10 +3753,10 @@ public class MainActivity extends Activity {
     }
 
     /** 칸 아래에 붙이는 [바코드 스캔][시리얼 촬영] 버튼 줄. */
-    private LinearLayout scanButtons(final EditText target, final boolean append, final boolean loop) {
+    private LinearLayout scanButtons(final EditText target, final boolean append) {
         LinearLayout r = new LinearLayout(this);
-        Button a = Ui.button(this, loop ? "바코드 연속 스캔" : "바코드 스캔", Ui.TINT, Ui.DEEP);
-        a.setOnClickListener(v -> scanBarcode(target, append, loop));
+        Button a = Ui.button(this, "바코드 스캔", Ui.TINT, Ui.DEEP);
+        a.setOnClickListener(v -> scanBarcode(target, append));
         Button b = Ui.button(this, "시리얼 촬영", Ui.TINT, Ui.DEEP);
         b.setOnClickListener(v -> ocrSerial(target, append));
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
@@ -3584,6 +3981,202 @@ public class MainActivity extends Activity {
         if (cur > prev) return Ui.GREEN;
         if (cur < prev) return Ui.RED;
         return Ui.GRAY;
+    }
+
+
+    // ======================= v0.8: 가맹점 단체 문자 (폰 문자 앱으로 한 곳씩) =======================
+    private final java.util.Set<Integer> smsSel = new java.util.HashSet<>();
+    private String smsText = "";
+    private String smsQuery = "";
+    private List<JSONObject> smsQueue = null;
+    private int smsPos = 0;
+
+    private static String mobileOf(JSONObject m) {
+        String d = m.optString("phone").replaceAll("[^0-9]", "");
+        return d.startsWith("01") && d.length() >= 10 && d.length() <= 11 ? d : "";
+    }
+
+    private void renderSms() {
+        if (smsQueue != null) {
+            renderSmsSend();
+            return;
+        }
+        content.addView(title("단체 문자 보내기"));
+        content.addView(Ui.text(this, "고른 가맹점에 한 곳씩 이 폰의 문자 앱을 열어 드려요. 받는 분들끼리 번호가 보이지 않아요. 문자 요금은 이 폰의 요금제로 나갑니다. 내용에 {상호} 라고 쓰면 가맹점 이름으로 바뀌어요.", 13, Ui.GRAY, false));
+        final EditText msg = Ui.field(this, "보낼 내용 (예: {상호} 사장님, 안녕하세요. 나인페이먼츠입니다.)", false);
+        msg.setSingleLine(false);
+        msg.setMinLines(3);
+        msg.setText(smsText);
+        content.addView(msg, Ui.lp(this, 10));
+        final TextView cnt = Ui.text(this, "", 12, Ui.GRAY, false);
+        content.addView(cnt, Ui.lp(this, 4));
+        msg.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            public void onTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            public void afterTextChanged(Editable s) {
+                smsText = s.toString();
+                int by = 0;
+                for (char ch : smsText.toCharArray()) by += ch > 127 ? 2 : 1;
+                cnt.setText(smsText.length() + "자 · " + by + "바이트 " + (by > 90 ? "(90바이트를 넘으면 장문 문자로 나가요)" : ""));
+            }
+        });
+        msg.setText(smsText);
+
+        content.addView(Ui.text(this, "받는 가맹점", 18, Ui.INK, true), Ui.lp(this, 18));
+        final TextView sel = Ui.text(this, "", 13, Ui.DEEP, true);
+        content.addView(sel, Ui.lp(this, 2));
+        // 등급으로 한 번에 고르기
+        android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(this);
+        hs.setHorizontalScrollBarEnabled(false);
+        LinearLayout chips = new LinearLayout(this);
+        hs.addView(chips);
+        content.addView(hs, Ui.lp(this, 8));
+        final EditText q = Ui.field(this, "상호·번호 검색 (초성도 돼요)", false);
+        q.setText(smsQuery);
+        content.addView(q, Ui.lp(this, 8));
+        final LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        content.addView(list);
+        final Button go = Ui.button(this, "문자 보내기 시작", Ui.GOLD, Ui.DARK);
+        final Runnable[] fillRef = new Runnable[1];
+        final Runnable fill = () -> {
+            list.removeAllViews();
+            int n = 0;
+            for (final JSONObject m : sortedMerchants()) {
+                if (!Kor.match(m.optString("name") + " " + m.optString("phone"), smsQuery)) continue;
+                final String mob = mobileOf(m);
+                CheckBox cb = new CheckBox(this);
+                cb.setText(m.optString("name") + "  ·  " + (mob.isEmpty() ? "문자 불가(휴대폰 번호 아님)" : m.optString("phone")) + "  [" + gradeLabel(m.optInt("grade", 5)) + "]");
+                cb.setEnabled(!mob.isEmpty());
+                cb.setChecked(smsSel.contains(m.optInt("id")));
+                cb.setOnCheckedChangeListener((b, on) -> {
+                    if (on) smsSel.add(m.optInt("id"));
+                    else smsSel.remove(m.optInt("id"));
+                    sel.setText("선택 " + smsSel.size() + "곳");
+                    go.setText("문자 보내기 시작 (" + smsSel.size() + "곳)");
+                });
+                list.addView(cb);
+                if (++n >= 300) break;
+            }
+            if (n == 0) list.addView(Ui.text(this, "가맹점이 없습니다.", 14, Ui.GRAY, false), Ui.lp(this, 12));
+            sel.setText("선택 " + smsSel.size() + "곳");
+            go.setText("문자 보내기 시작 (" + smsSel.size() + "곳)");
+        };
+        fillRef[0] = fill;
+        TextView all = Ui.chip(this, "보이는 전체 선택", Ui.TINT, Ui.DEEP);
+        all.setOnClickListener(v -> {
+            for (JSONObject m : sortedMerchants()) {
+                if (mobileOf(m).isEmpty() || !Kor.match(m.optString("name") + " " + m.optString("phone"), smsQuery)) continue;
+                smsSel.add(m.optInt("id"));
+            }
+            render();
+        });
+        chips.addView(all);
+        TextView none = Ui.chip(this, "선택 해제", Ui.FIELD, Ui.INK);
+        none.setOnClickListener(v -> {
+            smsSel.clear();
+            render();
+        });
+        LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        cp.leftMargin = Ui.dp(this, 6);
+        chips.addView(none, cp);
+        for (int g = 0; g < Store.GRADES.length; g++) {
+            if (Store.GRADES[g].isEmpty()) continue;
+            final int gg = g;
+            TextView c = Ui.chip(this, Store.GRADES[g].split(" ")[0] + " 등급 선택", Ui.FIELD, Ui.INK);
+            c.setOnClickListener(v -> {
+                for (JSONObject m : sortedMerchants()) if (m.optInt("grade", 5) == gg && !mobileOf(m).isEmpty()) smsSel.add(m.optInt("id"));
+                render();
+            });
+            chips.addView(c, cp);
+        }
+        q.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            public void onTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            public void afterTextChanged(Editable s) {
+                smsQuery = s.toString();
+                fillRef[0].run();
+            }
+        });
+        fill.run();
+        go.setOnClickListener(v -> {
+            if (smsText.trim().isEmpty()) {
+                Ui.toast(this, "보낼 내용을 적어 주세요.");
+                return;
+            }
+            List<JSONObject> qlist = new ArrayList<>();
+            for (JSONObject m : sortedMerchants()) if (smsSel.contains(m.optInt("id")) && !mobileOf(m).isEmpty()) qlist.add(m);
+            if (qlist.isEmpty()) {
+                Ui.toast(this, "받는 가맹점을 골라 주세요.");
+                return;
+            }
+            smsQueue = qlist;
+            smsPos = 0;
+            render();
+        });
+        content.addView(go, Ui.lp(this, 14));
+    }
+
+    private void renderSmsSend() {
+        content.addView(title("문자 보내는 중"));
+        if (smsPos >= smsQueue.size()) {
+            content.addView(Ui.text(this, "모두 열어 드렸어요. (" + smsQueue.size() + "곳)", 16, Ui.INK, true), Ui.lp(this, 10));
+            content.addView(Ui.text(this, "문자 앱에서 '전송'을 누르지 않은 곳은 보내지지 않았으니 문자 앱의 보낸 기록을 확인해 주세요.", 13, Ui.GRAY, false), Ui.lp(this, 6));
+            Button done = Ui.button(this, "끝내기", Ui.GOLD, Ui.DARK);
+            done.setOnClickListener(v -> {
+                smsQueue = null;
+                smsSel.clear();
+                render();
+            });
+            content.addView(done, Ui.lp(this, 14));
+            return;
+        }
+        final JSONObject m = smsQueue.get(smsPos);
+        content.addView(Ui.text(this, (smsPos + 1) + " / " + smsQueue.size() + "곳", 14, Ui.DEEP, true), Ui.lp(this, 6));
+        LinearLayout c = Ui.card(this);
+        c.addView(Ui.text(this, m.optString("name"), 20, Ui.INK, true));
+        c.addView(Ui.text(this, m.optString("phone"), 14, Ui.GRAY, false), Ui.lp(this, 2));
+        final String body = smsText.replace("{상호}", m.optString("name"));
+        TextView pv = Ui.text(this, body, 15, Ui.INK, false);
+        pv.setLineSpacing(0, 1.25f);
+        pv.setBackground(Ui.round(Color.WHITE, 14, this));
+        pv.setPadding(Ui.dp(this, 12), Ui.dp(this, 10), Ui.dp(this, 12), Ui.dp(this, 10));
+        c.addView(pv, Ui.lp(this, 10));
+        content.addView(c, Ui.lp(this, 10));
+        Button open = Ui.button(this, "문자 앱 열기", Ui.GOLD, Ui.DARK);
+        open.setOnClickListener(v -> {
+            try {
+                Intent i = new Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + mobileOf(m)));
+                i.putExtra("sms_body", body);
+                startActivity(i);
+                smsPos++;
+                render();
+            } catch (Exception e) {
+                Ui.toast(this, "문자 앱을 열 수 없어요.");
+            }
+        });
+        content.addView(open, Ui.lp(this, 14));
+        content.addView(Ui.text(this, "문자 앱에서 내용을 확인하고 '전송'을 누른 뒤 이 앱으로 돌아오면 다음 가맹점이 준비돼 있어요.", 12, Ui.GRAY, false), Ui.lp(this, 8));
+        Button skip = Ui.button(this, "이 가맹점 건너뛰기", Ui.FIELD, Ui.INK);
+        skip.setOnClickListener(v -> {
+            smsPos++;
+            render();
+        });
+        content.addView(skip, Ui.lp(this, 10));
+        Button stop = Ui.button(this, "중단하고 목록으로", Ui.FIELD, Ui.INK);
+        stop.setOnClickListener(v -> {
+            smsQueue = null;
+            render();
+        });
+        content.addView(stop, Ui.lp(this, 8));
     }
 
     // ======================= v0.6: 일정 삭제·상세, 실적 순위, 일일보고, 실적 보고서 =======================
