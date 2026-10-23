@@ -33,6 +33,9 @@ final class Store {
             if (!db.has("users")) db.put("users", new JSONArray());
             if (!db.has("tasks")) db.put("tasks", new JSONArray());
             if (!db.has("notices")) db.put("notices", new JSONArray());
+            if (!db.has("projects")) db.put("projects", new JSONArray());
+            if (!db.has("contracts")) db.put("contracts", new JSONArray());
+            if (!db.has("events")) db.put("events", new JSONArray());
             if (!db.has("seq")) db.put("seq", 0);
         } catch (JSONException ignored) {
         }
@@ -229,6 +232,87 @@ final class Store {
         if (isRead(n, uid)) return;
         n.optJSONArray("readBy").put(uid);
         save();
+    }
+
+    // ---------- 프로젝트 ----------
+    JSONArray projects() {
+        return db.optJSONArray("projects");
+    }
+
+    void addProject(String title, String due, String memo, int owner, int creator) {
+        try {
+            JSONObject p = new JSONObject();
+            p.put("id", nextId());
+            p.put("title", title);
+            p.put("due", due);
+            p.put("memo", memo);
+            p.put("owner", owner);
+            p.put("pct", 0);
+            p.put("check", false);
+            p.put("created", now());
+            p.put("notes", new JSONArray());
+            projects().put(p);
+            save();
+        } catch (JSONException ignored) {
+        }
+    }
+
+    void updateProject(JSONObject p, int who, int pct, boolean check, String memo) {
+        try {
+            p.put("pct", pct);
+            p.put("check", check);
+            p.put("memo", memo);
+            JSONObject h = new JSONObject();
+            h.put("t", now());
+            h.put("who", who);
+            h.put("text", pct + "% · " + (check ? "점검 필요 · " : "") + memo);
+            p.getJSONArray("notes").put(h);
+            save();
+        } catch (JSONException ignored) {
+        }
+    }
+
+    // ---------- 신규 계약 ----------
+    JSONArray contracts() {
+        return db.optJSONArray("contracts");
+    }
+
+    void addContract(String date, String client, String product, String linkType, String company,
+                     String kind, int qty, int who) {
+        try {
+            JSONObject c = new JSONObject();
+            c.put("id", nextId());
+            c.put("date", date);
+            c.put("client", client);
+            c.put("product", product);
+            c.put("linkType", linkType);
+            c.put("company", company);
+            c.put("kind", kind);
+            c.put("qty", qty);
+            c.put("who", who);
+            c.put("created", now());
+            contracts().put(c);
+            save();
+        } catch (JSONException ignored) {
+        }
+    }
+
+    // ---------- 일정 ----------
+    JSONArray events() {
+        return db.optJSONArray("events");
+    }
+
+    void addEvent(String date, String title, int who) {
+        try {
+            JSONObject e = new JSONObject();
+            e.put("id", nextId());
+            e.put("date", date);
+            e.put("title", title);
+            e.put("who", who);
+            events().put(e);
+            save();
+        } catch (JSONException ignored) {
+        }
     }
 
     List<JSONObject> list(JSONArray a) {

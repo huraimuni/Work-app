@@ -15,15 +15,19 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 final class Ui {
-    static final int NAVY = Color.rgb(15, 18, 34);
-    static final int BLUE = Color.rgb(47, 70, 224);
-    static final int TINT = Color.rgb(236, 239, 255);
+    static final int NAVY = Color.rgb(20, 22, 26);
+    static final int GOLD = Color.rgb(205, 170, 82);
+    static final int DEEP = Color.rgb(143, 107, 20);
+    static final int DARK = Color.rgb(31, 27, 18);
+    static final int TINT = Color.rgb(247, 239, 217);
+    static final int CARD = Color.rgb(247, 248, 250);
+    static final int FIELD = Color.rgb(242, 244, 246);
     static final int GREEN = Color.rgb(11, 122, 85);
     static final int RED = Color.rgb(179, 38, 30);
     static final int AMBER = Color.rgb(138, 82, 0);
     static final int GRAY = Color.rgb(107, 112, 128);
-    static final int BG = Color.rgb(243, 244, 248);
-    static final int INK = Color.rgb(15, 18, 34);
+    static final int BG = Color.WHITE;
+    static final int INK = Color.rgb(20, 22, 26);
 
     static int dp(Context c, int v) {
         return Math.round(v * c.getResources().getDisplayMetrics().density);
@@ -65,7 +69,7 @@ final class Ui {
         e.setTextSize(16);
         e.setTextColor(INK);
         e.setHintTextColor(GRAY);
-        e.setBackground(round(BG, 14, c));
+        e.setBackground(round(FIELD, 14, c));
         e.setPadding(dp(c, 16), dp(c, 14), dp(c, 16), dp(c, 14));
         LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         ep.topMargin = dp(c, 8);
@@ -84,7 +88,7 @@ final class Ui {
     static LinearLayout card(Context c) {
         LinearLayout l = new LinearLayout(c);
         l.setOrientation(LinearLayout.VERTICAL);
-        l.setBackground(round(Color.WHITE, 20, c));
+        l.setBackground(round(CARD, 20, c));
         l.setPadding(dp(c, 16), dp(c, 16), dp(c, 16), dp(c, 16));
         return l;
     }
@@ -114,7 +118,7 @@ final class Ui {
     static TextView typeTile(Context c, String type) {
         switch (type) {
             case "신규 설치":
-                return tile(c, "설치", TINT, BLUE);
+                return tile(c, "설치", TINT, DEEP);
             case "AS":
                 return tile(c, "AS", Color.rgb(227, 246, 238), GREEN);
             case "영업 방문":
