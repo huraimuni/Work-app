@@ -586,6 +586,17 @@ final class Store {
         }
     }
 
+    /** 업무 일정(기한)을 다시 잡는다. 일정 달력은 기한을 그대로 읽어서 같이 바뀐다. */
+    void reschedule(JSONObject t, int who, String due) {
+        try {
+            String old = t.optString("due");
+            t.put("due", due);
+            log(t, who, "일정 변경 " + (old.isEmpty() ? "(없음)" : old) + " → " + (due.isEmpty() ? "(없음)" : due));
+            save();
+        } catch (JSONException ignored) {
+        }
+    }
+
     void setStatus(JSONObject t, int who, String status, String msg) {
         try {
             t.put("status", status);
