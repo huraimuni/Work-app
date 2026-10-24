@@ -2,7 +2,7 @@
 /* 나인패밀리 웹앱 — 앱과 같은 Firebase(nine-family)를 쓴다. 문서는 {j: JSON문자열, u: 시각} 형식. */
 const CFG = {apiKey: 'AIzaSyCsA-M6QGGGk0owyDXzziv1X79TqF5NptI', authDomain: 'nine-family.firebaseapp.com', projectId: 'nine-family',
   storageBucket: 'nine-family.firebasestorage.app', messagingSenderId: '48232341344', appId: '1:48232341344:web:19be016c9c1c1de5a34805'};
-const VERSION = '웹 0.1.2';
+const VERSION = '웹 0.1.3';
 const DEMO = location.hash === '#demo';
 const COLLS = ['users', 'tasks', 'notices', 'projects', 'events', 'merchants', 'rooms', 'msgs', 'profiles', 'mlogs'];
 const TYPES = ['신규 설치', 'AS', '영업 방문', '서류 접수', '카드사 서류', '기타'];
@@ -158,6 +158,7 @@ const NAVW = [['task', '업무', 'task', ''], ['project', '프로젝트', 'proje
 const isWide = () => window.innerWidth >= 900;
 function newTaskCount() { return list('tasks').filter(t => t.assignee === S.uid && t.status === '지시됨').length; }
 function render() {
+  if (S.comp) { later(); return; } // 글자 조합 중에는 화면을 갈아엎지 않는다
   if (!S.me) { refreshMe(); if (!S.me) return; }
   if (S.me.active === false) { toast('사용이 중지된 계정입니다.'); return logout(); }
   const root = $('#root');
@@ -202,9 +203,16 @@ function bind(root) {
     const n = ev.target.closest('[data-nav]'); if (n) { S.tab = n.dataset.nav; S.sub = n.dataset.sub || ''; S.room = 0; return render(); }
     const a = ev.target.closest('[data-act]'); if (a) { ACT[a.dataset.act] && ACT[a.dataset.act](a.dataset.arg, a, ev); }
   };
+  // 한글은 글자를 조합하는 동안 입력칸을 다시 그리면 'ㅌㅗㅅㅡ' 처럼 쪼개진다 → 조합이 끝난 뒤에만 다시 그린다
   root.oninput = ev => {
     const t = ev.target;
+    if (ev.isComposing || S.comp) return;
     if (t.dataset.q) { S[t.dataset.q] = t.value; if (t.dataset.q === 'mq') S.mlimit = 50; render(); }
+  };
+  root.oncompositionstart = () => { S.comp = true; };
+  root.oncompositionend = ev => {
+    S.comp = false; const t = ev.target;
+    if (t.dataset && t.dataset.q) { S[t.dataset.q] = t.value; if (t.dataset.q === 'mq') S.mlimit = 50; render(); }
   };
 }
 const ACT = {};
