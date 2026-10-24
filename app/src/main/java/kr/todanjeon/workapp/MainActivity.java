@@ -1203,6 +1203,8 @@ public class MainActivity extends Activity {
             else top.addView(Ui.text(this, p.optInt("pct") + "%", 20, Ui.DEEP, true));
             c.addView(top);
             c.addView(bar(p.optInt("pct"), Ui.GOLD, Color.rgb(239, 233, 216), 8), Ui.lp(this, 12));
+            int[] cnt = itemCount(p);
+            if (cnt[1] > 0) c.addView(Ui.text(this, "체크리스트 " + cnt[0] + " / " + cnt[1] + " 완료", 12, Ui.DEEP, true), Ui.lp(this, 6));
             String memo = p.optString("memo");
             if (!memo.isEmpty()) c.addView(Ui.text(this, memo, 13, Color.rgb(74, 79, 94), false), Ui.lp(this, 10));
             c.addView(Ui.text(this, "담당 " + store.userName(p.optInt("owner")) + (p.optString("due").isEmpty() ? "" : "  ·  " + p.optString("due") + "까지"), 12, Ui.GRAY, false), Ui.lp(this, 8));
@@ -1222,31 +1224,55 @@ public class MainActivity extends Activity {
         f.addView(ti);
         f.addView(due);
         f.addView(memo);
+        final EditText items = Ui.field(this, "체크리스트 (선택) — 한 줄에 항목 하나씩, 개수 제한 없음", false);
+        items.setSingleLine(false);
+        items.setMinLines(3);
+        f.addView(items, Ui.lp(this, 8));
         f.addView(Ui.text(this, "담당 직원", 13, Ui.GRAY, false), Ui.lp(this, 8));
         f.addView(who);
-        new AlertDialog.Builder(this).setTitle("새 프로젝트").setView(f)
+        ScrollView asv = new ScrollView(this);
+        asv.addView(f);
+        new AlertDialog.Builder(this).setTitle("새 프로젝트").setView(asv)
                 .setNegativeButton("취소", null)
                 .setPositiveButton("만들기", (d, w) -> {
                     if (ti.getText().toString().trim().isEmpty() || staff.isEmpty()) {
                         Ui.toast(this, "프로젝트 이름을 입력해 주세요.");
                         return;
                     }
+                    List<String> its = new ArrayList<>();
+                    for (String ln : items.getText().toString().split("\\n")) if (!ln.trim().isEmpty()) its.add(ln.trim());
                     store.addProject(ti.getText().toString().trim(), due.getText().toString().trim(),
-                            memo.getText().toString().trim(), staff.get(who.getSelectedItemPosition()).optInt("id"), myId());
+                            memo.getText().toString().trim(), staff.get(who.getSelectedItemPosition()).optInt("id"), myId(), its);
                     render();
                 }).show();
     }
 
+    /** {완료 수, 전체 수} */
+    private static int[] itemCount(JSONObject p) {
+        JSONArray a = p.optJSONArray("items");
+        int n = a == null ? 0 : a.length(), d = 0;
+        for (int i = 0; i < n; i++) if (a.optJSONObject(i).optBoolean("done")) d++;
+        return new int[]{d, n};
+    }
+
+    private static int itemPct(JSONObject p) {
+        int[] c = itemCount(p);
+        return c[1] == 0 ? p.optInt("pct") : Math.round(100f * c[0] / c[1]);
+    }
+
     private void showProject(final JSONObject p) {
-        LinearLayout f = form();
-        final TextView pctText = Ui.text(this, p.optInt("pct") + "%", 22, Ui.DEEP, true);
+        final LinearLayout f = form();
+        final TextView pctText = Ui.text(this, p.optInt("pct") + "%", 26, Ui.DEEP, true);
+        final TextView cntText = Ui.text(this, "", 13, Ui.GRAY, false);
+        final LinearLayout barBox = new LinearLayout(this);
+        barBox.setOrientation(LinearLayout.VERTICAL);
         final SeekBar sb = new SeekBar(this);
         sb.setMax(10);
         sb.setProgress(p.optInt("pct") / 10);
         sb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
             public void onProgressChanged(SeekBar s, int v, boolean u) {
-                pctText.setText((v * 10) + "%");
+                if (u) pctText.setText((v * 10) + "%");
             }
 
             @Override
@@ -1263,9 +1289,99 @@ public class MainActivity extends Activity {
         final CheckBox chk = new CheckBox(this);
         chk.setText("점검이 필요해요");
         chk.setChecked(p.optBoolean("check"));
+        final LinearLayout listBox = new LinearLayout(this);
+        listBox.setOrientation(LinearLayout.VERTICAL);
+        final Runnable[] refresh = new Runnable[1];
+        refresh[0] = () -> {
+            int[] c = itemCount(p);
+            listBox.removeAllViews();
+            barBox.removeAllViews();
+            if (c[1] > 0) {
+                int pc = itemPct(p);
+                try {
+                    p.put("pct", pc);
+                } catch (Exception ignored) {
+                }
+                pctText.setText(pc + "%");
+                cntText.setText(c[0] + " / " + c[1] + " 완료  ·  항목을 체크하면 자동으로 계산돼요");
+                barBox.addView(bar(pc, Ui.GOLD, Color.rgb(239, 233, 216), 10));
+                sb.setVisibility(View.GONE);
+            } else {
+                cntText.setText("체크리스트를 추가하면 진행률이 자동 계산돼요 (지금은 직접 조절)");
+                sb.setVisibility(View.VISIBLE);
+            }
+            final JSONArray arr = p.optJSONArray("items");
+            for (int i = 0; arr != null && i < arr.length(); i++) {
+                final int idx = i;
+                final JSONObject it = arr.optJSONObject(i);
+                LinearLayout row = new LinearLayout(this);
+                row.setGravity(Gravity.CENTER_VERTICAL);
+                CheckBox cb = new CheckBox(this);
+                cb.setChecked(it.optBoolean("done"));
+                cb.setText(it.optString("t"));
+                cb.setTextSize(15);
+                cb.setTextColor(it.optBoolean("done") ? Ui.GRAY : Ui.INK);
+                if (it.optBoolean("done")) cb.setPaintFlags(cb.getPaintFlags() | android.graphics.Paint.STRIKE_THRU_TEXT_FLAG);
+                cb.setOnClickListener(v -> {
+                    try {
+                        it.put("done", ((CheckBox) v).isChecked());
+                        p.put("pct", itemPct(p));
+                    } catch (Exception ignored) {
+                    }
+                    store.save();
+                    refresh[0].run();
+                });
+                row.addView(cb, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+                TextView x = Ui.text(this, "✕", 16, Ui.GRAY, true);
+                x.setPadding(Ui.dp(this, 12), Ui.dp(this, 8), Ui.dp(this, 6), Ui.dp(this, 8));
+                x.setOnClickListener(v -> new AlertDialog.Builder(this).setTitle("항목을 지울까요?").setMessage(it.optString("t"))
+                        .setNegativeButton("취소", null).setPositiveButton("지우기", (d, w) -> {
+                            try {
+                                JSONArray na = new JSONArray();
+                                for (int k = 0; k < arr.length(); k++) if (k != idx) na.put(arr.get(k));
+                                p.put("items", na);
+                                p.put("pct", itemPct(p));
+                            } catch (Exception ignored) {
+                            }
+                            store.save();
+                            refresh[0].run();
+                        }).show());
+                row.addView(x);
+                listBox.addView(row);
+            }
+        };
+        final EditText add = Ui.field(this, "새 항목 (여러 줄이면 한꺼번에 추가)", false);
+        add.setSingleLine(false);
+        Button addBtn = Ui.button(this, "+ 항목 추가", Ui.TINT, Ui.DEEP);
+        addBtn.setOnClickListener(v -> {
+            String t = add.getText().toString();
+            JSONArray arr = p.optJSONArray("items");
+            if (arr == null) arr = new JSONArray();
+            int n = 0;
+            try {
+                for (String ln : t.split("\\n")) {
+                    if (ln.trim().isEmpty()) continue;
+                    arr.put(new JSONObject().put("t", ln.trim()).put("done", false));
+                    n++;
+                }
+                if (n == 0) return;
+                p.put("items", arr);
+                p.put("pct", itemPct(p));
+            } catch (Exception ignored) {
+            }
+            add.setText("");
+            store.save();
+            refresh[0].run();
+        });
         f.addView(pctText);
+        f.addView(barBox, Ui.lp(this, 4));
+        f.addView(cntText, Ui.lp(this, 4));
         f.addView(sb);
-        f.addView(memo);
+        f.addView(Ui.text(this, "체크리스트", 13, Ui.NAVY, true), Ui.lp(this, 14));
+        f.addView(listBox);
+        f.addView(add, Ui.lp(this, 6));
+        f.addView(addBtn, Ui.lp(this, 6));
+        f.addView(memo, Ui.lp(this, 14));
         f.addView(chk, Ui.lp(this, 8));
         JSONArray notes = p.optJSONArray("notes");
         if (notes != null && notes.length() > 0) {
@@ -1275,12 +1391,15 @@ public class MainActivity extends Activity {
                 f.addView(Ui.text(this, e.optString("t") + "  " + store.userName(e.optInt("who")) + "\n" + e.optString("text"), 12, Ui.GRAY, false), Ui.lp(this, 4));
             }
         }
+        refresh[0].run();
         ScrollView sv = new ScrollView(this);
         sv.addView(f);
         new AlertDialog.Builder(this).setTitle(p.optString("title")).setView(sv)
-                .setNegativeButton("닫기", null)
+                .setNegativeButton("닫기", (d, w) -> render())
+                .setOnCancelListener(d -> render())
                 .setPositiveButton("저장", (d, w) -> {
-                    store.updateProject(p, myId(), sb.getProgress() * 10, chk.isChecked(), memo.getText().toString().trim());
+                    int pc = itemCount(p)[1] > 0 ? itemPct(p) : sb.getProgress() * 10;
+                    store.updateProject(p, myId(), pc, chk.isChecked(), memo.getText().toString().trim());
                     render();
                 }).show();
     }
@@ -3176,7 +3295,7 @@ public class MainActivity extends Activity {
     private static final String[][] MANUAL = {
             {"처음 시작하기 · 로그인", "1. 앱을 켜면 잠깐 시작 화면이 나오고, 처음에는 로그인 화면이 나옵니다.\n2. 관리자가 등록해 둔 내 휴대폰 번호(예: 01012345678)를 입력하고 '인증번호 받기'를 누릅니다.\n3. 문자로 온 인증번호 6자리를 입력하고 '확인'을 누릅니다.\n4. 한 번 로그인하면 계속 유지됩니다. 다시 묻지 않아요.\n\n※ '등록되지 않은 번호입니다'가 나오면 관리자에게 내 번호 등록을 요청하세요.\n※ 로그아웃은 맨 아래 탭 '전체' → 맨 아래 '로그아웃'입니다. 폰을 바꾸면 같은 번호로 다시 인증하면 됩니다."},
             {"업무 탭", "내게 지시된 업무를 확인하고 처리하는 곳입니다.\n\n■ 화면 구성\n- 맨 위 금색 카드: 남은 업무 수, 새 업무·진행·오늘 완료 수와 진행 막대\n- 계약 만료 알림: 만료가 3개월 안으로 남은 계약이 있으면 카드가 나타납니다. 누르면 계약 관리로 이동합니다.\n- 업무 카드: 종류(설치·AS·영업·서류·카드), 제목, 거래처, 기한, 상태\n\n■ 업무 처리\n1. 카드를 누르면 상세가 열립니다.\n2. 아래 버튼으로 상태를 바꿉니다: 확인함 → 진행중 → 완료(또는 보류).\n3. '완료'를 누르면 완료 메시지를 적을 수 있어요. 모든 처리 기록은 이력으로 남습니다.\n\n■ 업무 지시하기 (업무 지시 권한이 있는 사람)\n- 오른쪽 아래 + 버튼 → 제목, 종류, 거래처, 전화, 주소, 기한, 메모, 담당 직원 입력 후 '지시하기'.\n- '가맹점 조회'를 누르면 등록된 가맹점을 검색해 선택할 수 있고, 거래처·전화·주소가 자동으로 채워집니다.\n- '전체 업무' 보기 권한이 있으면 위쪽 '내 업무 / 전체 업무' 버튼이 보입니다."},
-            {"프로젝트 탭", "여러 사람이 오래 진행하는 일을 관리합니다.\n\n1. 오른쪽 아래 + 로 프로젝트를 만듭니다 (제목, 기한, 메모, 책임자).\n2. 프로젝트를 누르면 진행률(%) 슬라이더, '점검 필요' 체크, 메모를 수정할 수 있습니다.\n3. 저장할 때마다 진행 기록이 쌓여서 누가 언제 무엇을 바꿨는지 볼 수 있어요."},
+            {"프로젝트 탭", "여러 사람이 오래 진행하는 일을 관리합니다.\n\n1. 오른쪽 아래 + 로 프로젝트를 만듭니다 (제목, 기한, 메모, 책임자).\n2. 프로젝트를 누르면 체크리스트·진행률(%)·'점검 필요' 체크·메모를 수정할 수 있습니다.\n3. 체크리스트(v0.14.1): 프로젝트를 만들 때 한 줄에 항목 하나씩 적거나, 열어서 '+ 항목 추가'(여러 줄 가능)로 필요한 만큼 늘려요. 개수 제한은 없어요. 항목을 체크하면 완료/전체 비율대로 진행률(%)과 막대가 자동으로 계산되고 바로 저장돼요. ✕ 로 항목을 지울 수 있어요. 체크리스트가 없으면 예전처럼 슬라이더로 직접 조절합니다.\n4. 저장할 때마다 진행 기록이 쌓여서 누가 언제 무엇을 바꿨는지 볼 수 있어요."},
             {"채팅 탭", "직원끼리 대화하는 곳이에요. 원하는 만큼 채팅방을 만들 수 있습니다.\n\n■ 새 채팅 만들기 (v0.14.0)\n- 맨 위 '+ 새 채팅방 만들기'를 누르면 두 가지가 나와요.\n  ① 그룹 채팅방: 그룹 이름을 적고 '다음' → 초대할 직원을 체크('전체 선택'도 있어요) → '만들기'. 초대한 사람들끼리만 보이는 방이 열려요.\n  ② 1:1 채팅: 직원 한 명을 고르면 바로 대화창이 열려요. (첫 메시지를 보내야 목록에 생겨요)\n- 방이 하나도 없으면 '기본 채팅방 만들기'로 전체방·서류접수·입금확인·신규계약·AS설치·공지 방을 한 번에 만들 수 있어요.\n\n■ 대화방\n- 방을 누르면 전체 화면 대화방이 열리고, 입력줄은 맨 아래에 고정됩니다. 왼쪽 위 ‹ 또는 폰의 뒤로가기로 목록에 돌아갑니다.\n- 내 말풍선은 금색·오른쪽, 다른 사람은 흰색·왼쪽이고 옆에 이름과 프로필 사진이 나옵니다. 같은 사람이 같은 분에 이어 보내면 사진·이름은 한 번만 나와요.\n- 사람 사진을 누르면 그 직원의 프로필(이름·상태 메시지·전화번호)이 나오고, '전화하기'로 바로 걸 수 있어요.\n\n■ 답장 · 반응 · 삭제 (v0.8.0, 텔레그램처럼)\n- 말풍선을 두 번 빠르게 누르면 ❤️ 좋아요가 붙습니다. 같은 걸 다시 두 번 누르면 취소돼요.\n- 말풍선을 길게 누르면 맨 위에 이모티콘 줄(👍 ❤️ 😂 😮 😢 🙏 🔥 👏)이 뜨고, 그 아래에 답장 / 복사(글만) / 삭제(내 메시지만)가 있어요. 이모티콘을 한 번 누르면 바로 붙습니다.\n- 답장을 고르면 입력줄 위에 '○○에게 답장' 띠가 생기고, 그 상태로 보내면 말풍선 위에 인용이 붙어요. 띠의 ✕ 로 취소합니다.\n- 이미 붙은 이모티콘을 누르면 같은 목록이 떠서 다른 이모티콘으로 바꾸거나, 내 이모티콘을 한 번 더 눌러 지울 수 있어요(텔레그램처럼).\n- 삭제한 내 메시지는 대화에서 사라지고, 서버에는 기록이 보관됩니다.\n\n■ 링크 (v0.9.1)\n- 글에 웹 주소(예: https://… 또는 naver.com)를 적어 보내면 파란 밑줄로 표시되고, 말풍선을 한 번 누르면 브라우저로 열립니다. 주소가 여러 개면 목록에서 고르세요. 길게 누르기·두 번 누르기는 그대로 됩니다.\n\n■ 사진·파일·이모지·스티커\n- 입력줄 왼쪽 '+' → 사진 보내기(앨범) / 사진 찍어 보내기 / 파일 보내기.\n- 사진은 자동으로 줄여서 올라가요. 대화 속 사진을 누르면 크게 보이고, '다른 앱으로 열기·저장'으로 저장할 수 있습니다.\n- 파일은 3MB까지 보낼 수 있어요(문서·엑셀·PDF용). 더 큰 파일은 지금은 보낼 수 없습니다. 파일 말풍선을 누르면 내려받아 열립니다.\n- 입력줄 오른쪽 ☺ 를 누르면 판이 열려요. 맨 위 탭: 이모지(글 사이에 들어감) / 나인이 / 복이 / 호야 / 깍이 / 도리. 스티커는 누르면 바로 전송됩니다.\n- '나인이 프렌즈'는 우리 회사 캐릭터 5마리예요(아홉꼬리 여우 나인이, 복두꺼비 복이, 아기 호랑이 호야, 까치 깍이, 다람쥐 도리). 마리당 16종, 모두 80종으로 신규계약 성공·축하·대단해·빡쳐·정신 차려·힘내와 우리 일(POS 설치, 현장 AS, 랜선 공사, 단말기 수리·도색, 토스 영업, 테이블오더, 회의, 서류, 보고서, 차에서 꿀잠 등)이 들어 있어요.\n- 예전(v0.8.0)에 보낸 나인이 스티커 메시지는 그대로 보입니다.\n\n■ 보내는 중 안내\n- 사진·파일은 인터넷이 연결돼야 올라가요. '보내는 중…'이 뜬 뒤 대화에 나타납니다. 안 나타나면 인터넷을 확인하고 다시 보내 주세요.\n\n■ 방 안 메뉴 · 검색 (v0.14.0)\n- 방 위쪽 이름(또는 사진)을 누르면: 1:1은 상대 프로필, 그룹은 참여자 목록(누르면 프로필)과 '초대하기'·'이름 변경'이 나와요. 나중에 초대한 사람은 들어온 뒤의 대화부터 볼 수 있어요.\n- 오른쪽 위 🔍 는 방 안 대화 검색이에요. 단어(초성도 가능)를 치면 찾은 글이 노랗게 표시되고, ▲ ▼ 로 이전·다음 글로 넘어가요. ✕ 로 닫습니다.\n- 오른쪽 위 ⋮ 는 채팅방 설정이에요: 대화 검색 · 프로필/참여자 · 음소거 · 배경화면 변경 · 이름 변경(그룹) · 대화 내용 비우기 · 대화방 삭제.\n- 음소거는 이 폰에서 그 방 알림만 꺼요. 비우기·삭제는 '내 화면에서만' 적용돼서 다른 사람 대화에는 영향이 없고, 삭제한 방도 새 메시지가 오면 다시 나타나요. 배경화면도 내 폰에서만 바뀌어요.\n- 채팅 탭 위쪽 🔍 검색창(엔터)에 단어를 치면 직원·대화방 이름과 함께 '대화 내용 검색' 결과가 나와요. 누르면 그 방의 그 글로 바로 이동합니다.\n\n■ 1:1 비공개 대화 (v0.12.0)\n- 채팅 탭 맨 위 직원 목록에서 직원을 누르거나, 🔍 검색창에 이름(초성 가능)을 적어 찾은 직원을 누르거나, 채팅에서 직원 사진을 눌러 '1:1 대화'를 누르면 대화창이 열려요.\n- 텔레그램처럼 직원을 눌렀다고 방이 바로 생기지는 않아요. 첫 메시지를 보내야 대화 목록에 나타납니다. 같은 사람과는 항상 같은 방이 열려요.\n- 이 방은 두 사람 사이의 대화라서 다른 직원에게는 내려가지 않아요(최고관리자 포함). 목록에는 상대 이름으로 보여요.\n- 답장·반응·스티커·사진·파일은 일반 방과 같이 쓸 수 있어요. (사진·파일 자체는 보관 주소를 아는 사람만 열 수 있어 사실상 두 사람만 열어요.)\n- 이 방은 이름을 바꿀 수 없고, 업데이트(v0.12.0) 전의 앱에는 보이지 않아요.\n\n※ 1:1 대화와 초대한 그룹방을 뺀 나머지 기본 채팅방(전체방 등)은 모든 직원이 볼 수 있습니다. 민감한 개인 이야기·개인정보 파일은 1:1 대화나 그룹방으로 나누세요."},
             {"일정 탭 (달력)", "한국 달력과 앞으로의 일정을 함께 봅니다.\n\n■ 달력\n- 일요일·공휴일은 빨간색, 토요일은 파란색, 오늘은 금색 원입니다. 공휴일 이름도 표시돼요. (2026~2028년 기준)\n- ‹ › 로 달을 넘기고 '오늘'을 누르면 오늘로 돌아옵니다.\n- 일정이나 업무 기한이 있는 날은 작은 금색 점이 찍혀요.\n- 날짜를 누르면 그날의 일정과 업무가 아래에 나옵니다.\n\n■ 일정 남기기\n1. 오른쪽 아래 + 버튼.\n2. 제목과 날짜를 적고, 시간은 선택입니다.\n3. '가맹점 조회·선택'을 누르면 등록된 가맹점 중에서 찾아 고릅니다 (초성 검색 가능). 고르면 사업자번호·연락처·주소·계약조건·등급이 불러와지고, 장소에는 가맹점 주소가 자동으로 들어갑니다.\n4. '추가'를 누르면 달력에 바로 표시되고, 달력 아래 '다가오는 일정'에도 올라갑니다.\n\n■ 다가오는 일정\n- 오늘부터 앞으로의 일정과 내 업무 기한이 날짜 순으로 나와서, 언제 어디로 가야 하는지 한눈에 확인할 수 있습니다.\n- 가맹점이 연결된 일정을 누르면 가맹점 상세 정보가 열립니다."},
             {"전체 탭", "나머지 모든 기능으로 들어가는 메뉴판입니다.\n\n■ 기능 검색 (v0.8.0)\n- 맨 위 프로필 카드 아래 '🔍 기능 검색' 칸에 단어나 초성을 치면 그 기능이 바로 나옵니다. 예: '재고', 'ㅈㄱ', '문자', '수익', '바코드', '프로필'.\n- 눌러서 바로 이동해요. 지우면 원래 메뉴판으로 돌아갑니다. (업무·채팅·일정 같은 탭도 검색됩니다.)\n\n■ 메뉴\n- 맨 위 내 카드를 누르면 프로필 사진과 상태 메시지를 바꿀 수 있어요.\n- 재고: 장비 재고 관리 (바코드 스캔, 단가)\n- 가맹점: 가맹점 정보 관리\n- 신규 계약 올리기 / 계약 관리: 계약 등록과 설치 완료 처리, 만료 알림\n- 단체 문자 보내기: 가맹점에 안내 문자\n- 내 실적: 나만 보는 월별 실적과 지난달 비교\n- 전체 실적·직원별 순위 / 수익 현황 / 실적 보고서 올리기: (권한이 있는 사람만 보임)\n- 일일보고 쓰기, 일일보고 종합 보기(권한자)\n- 지난 업무 기록: 완료된 업무 검색\n- 사용설명서, 버전·업데이트 내역, 공지사항\n- 직원과 권한: (관리자만) 직원 추가·권한 설정\n- 로그아웃\n\n※ 맨 아래에 현재 앱 버전이 표시됩니다. 문의할 때 이 버전을 알려 주세요."},
@@ -3229,6 +3348,7 @@ public class MainActivity extends Activity {
 
     /** {버전, 날짜, 내용}. 새 버전은 맨 위에 추가. CI 가 현재 versionName 항목이 있는지 검사한다. */
     private static final String[][] CHANGELOG = {
+            {"0.14.1", "2026-10-24", "• 프로젝트 체크리스트: 항목을 개수 제한 없이 만들고(한 줄에 하나, 여러 줄 한꺼번에 가능), 체크하면 완료 비율대로 진행률(%)과 막대가 자동 계산돼요. 프로젝트 목록에는 '체크리스트 3 / 8 완료'가 보여요"},
             {"0.14.0", "2026-10-24", "• 새 채팅방 만들기가 두 갈래로: 그룹 채팅방(이름 → 초대할 직원 체크 → 만들기, 초대한 사람들끼리만 보임) / 1:1 채팅(직원 한 명 고르면 바로 대화)\n• 방 위쪽 이름을 누르면 1:1은 프로필, 그룹은 참여자 목록·초대하기·이름 변경\n• 방 오른쪽 위 🔍 대화 검색(찾은 글 노란색, ▲▼ 이동)과 ⋮ 채팅방 설정(음소거·배경화면·대화 내용 비우기·대화방 삭제)\n• 채팅 목록 검색창에 단어를 치면 모든 대화방의 대화 내용까지 찾아서, 눌러서 그 글로 이동"},
             {"0.13.1", "2026-10-24", "• 채팅 탭에 🔍 검색창: 직원 이름(초성 가능)이나 대화방 이름으로 찾고, 직원을 누르면 대화창이 열려요\n• 텔레그램처럼: 직원을 눌러도 대화방이 바로 만들어지지 않고, 첫 메시지를 보낼 때 비로소 생겨요 (그냥 열었다 닫으면 아무것도 남지 않음)\n• 대화 목록에 1:1 대화는 직원 사진으로, 마지막 메시지와 시간이 함께 보여요"},
             {"0.13.0", "2026-10-24", "• 자료실 게시판: 양식·계약서·안내문 등 파일을 올리고 내려받기 (분류·검색·수정·삭제, 한 글에 파일 5개, 사진은 자동으로 줄임)\n• 채팅에서 자물쇠 표시와 '둘만 보여요' 문구를 없앰 (1:1 대화는 그대로 두 사람 사이에서만 오가요)"},

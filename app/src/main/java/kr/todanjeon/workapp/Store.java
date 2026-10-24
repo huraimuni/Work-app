@@ -638,6 +638,10 @@ final class Store {
     }
 
     void addProject(String title, String due, String memo, int owner, int creator) {
+        addProject(title, due, memo, owner, creator, null);
+    }
+
+    void addProject(String title, String due, String memo, int owner, int creator, List<String> items) {
         try {
             JSONObject p = new JSONObject();
             p.put("id", nextId());
@@ -649,6 +653,11 @@ final class Store {
             p.put("check", false);
             p.put("created", now());
             p.put("notes", new JSONArray());
+            if (items != null && !items.isEmpty()) {
+                JSONArray ia = new JSONArray();
+                for (String t : items) ia.put(new JSONObject().put("t", t).put("done", false));
+                p.put("items", ia);
+            }
             projects().put(p);
             save();
         } catch (JSONException ignored) {
