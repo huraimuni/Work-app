@@ -2666,6 +2666,15 @@ public class MainActivity extends Activity {
                 Ui.toast(this, "시리얼을 적거나 수량을 입력해 주세요.");
                 return;
             }
+            java.util.Set<String> seen = new java.util.HashSet<>();
+            for (String s : ss) {
+                boolean dupe = !seen.add(s.toLowerCase(Locale.ROOT));
+                for (JSONObject x : store.list(store.arr("stock"))) if (x.optString("serial").trim().equalsIgnoreCase(s)) dupe = true;
+                if (dupe) {
+                    Ui.toast(this, "이미 있는 시리얼이에요: " + s);
+                    return;
+                }
+            }
             long by = canPerf() ? parseWon(buy) : 0;
             try {
                 if (ss.isEmpty()) {
@@ -3089,8 +3098,10 @@ public class MainActivity extends Activity {
         memo.setSingleLine(false);
         f.addView(memo, Ui.lp(this, 6));
         final EditText date = Ui.field(this, "계약일 (예: 2026-10-23)", false);
+        datePickField(date, "📅 계약일 (눌러서 달력에서 고르기)");
         date.setText(todayStr());
         final EditText expire = Ui.field(this, "계약 만료일 (필수, 예: 2029-10-23)", false);
+        datePickField(expire, "📅 계약 만료일 (필수 · 달력에서 고르거나 아래 +12개월)");
         f.addView(date, Ui.lp(this, 10));
         f.addView(expire);
         LinearLayout quick = new LinearLayout(this);
@@ -3112,7 +3123,11 @@ public class MainActivity extends Activity {
                 return;
             }
             if (!dt.matches("\\d{4}-\\d{2}-\\d{2}") || !ex.matches("\\d{4}-\\d{2}-\\d{2}")) {
-                Ui.toast(this, "계약일과 만료일을 2026-10-23 형식으로 적어 주세요.");
+                Ui.toast(this, "계약일과 만료일을 달력에서 골라 주세요.");
+                return;
+            }
+            if (ex.compareTo(dt) < 0) {
+                Ui.toast(this, "만료일이 계약일보다 빨라요. 다시 확인해 주세요.");
                 return;
             }
             long amt = 0;
@@ -3991,6 +4006,7 @@ public class MainActivity extends Activity {
 
     /** {버전, 날짜, 내용}. 새 버전은 맨 위에 추가. CI 가 현재 versionName 항목이 있는지 검사한다. */
     private static final String[][] CHANGELOG = {
+            {"0.1.7", "2026-10-24", "• 신규 계약의 계약일·만료일을 달력에서 고르게 바꿨어요 (직접 쓰다 틀리는 일 방지). 만료일이 계약일보다 빠르면 알려줘요\n• 재고 추가 때 이미 있는 시리얼(또는 같이 적은 중복 시리얼)이면 막고 어떤 번호인지 알려줘요"},
             {"0.1.6", "2026-10-24", "• 다른 직원이 자료를 고쳐도 내 화면이 맨 위로 튀지 않고, 쓰던 검색어도 그대로 남아요\n• 글자를 쓰는 팝업은 바깥을 잘못 눌러도 닫히지 않아요. 제목 같은 필수 칸이 비었을 땐 알림만 뜨고 쓴 내용은 그대로 남아요\n• 채팅: 안 읽은 글 수가 방 목록과 아래 '채팅' 탭에 빨간 숫자로 보여요 (음소거한 방은 회색, 탭 숫자에서 제외)\n• 가맹점 상세에 '전화 걸기' 버튼, 응대 기록은 100건씩 보기\n• 로그인: 오류를 한글로 안내, 인증번호 6자리를 넣으면 바로 확인, '인증번호 다시 받기' 추가\n• 업무 화면 위쪽 요약 카드를 작게 줄여 목록 공간을 넓혔어요"},
             {"0.1.5", "2026-10-24", "• 가맹점이 수천 곳이어도 버벅이지 않게: 목록은 50곳씩만 그리고 '더 보기'로 늘려요 (검색은 전체에서 찾음, 전체 곳 수 표시)\n• 저장할 때마다 폰 안 보관본을 통째로 다시 쓰던 것을 모아서 쓰도록 바꿔 반응이 빨라졌어요"},
             {"0.1.4", "2026-10-24", "• 업무 탭: 위쪽 카드와 상태 필터는 고정하고 아래 업무 목록만 위아래로 움직여요\n• 가맹점 응대 기록: AS·전화 응대·방문 내용을 날짜를 골라 남기고, 날짜·종류·단어로 조회해요 (가맹점 정보 창의 '📝 응대 기록', 전체 → 가맹점 응대 기록 조회)"},
