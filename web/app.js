@@ -2,7 +2,7 @@
 /* 나인패밀리 웹앱 — 앱과 같은 Firebase(nine-family)를 쓴다. 문서는 {j: JSON문자열, u: 시각} 형식. */
 const CFG = {apiKey: 'AIzaSyCsA-M6QGGGk0owyDXzziv1X79TqF5NptI', authDomain: 'nine-family.firebaseapp.com', projectId: 'nine-family',
   storageBucket: 'nine-family.firebasestorage.app', messagingSenderId: '48232341344', appId: '1:48232341344:web:19be016c9c1c1de5a34805'};
-const VERSION = '웹 0.0.14';
+const VERSION = '웹 0.0.15';
 const DEMO = location.hash === '#demo';
 const COLLS = ['users', 'tasks', 'notices', 'projects', 'events', 'merchants', 'rooms', 'msgs', 'profiles', 'mlogs', 'config', 'stock', 'contracts', 'deposits', 'costs', 'reports', 'library', 'contacts'];
 const TYPES = ['신규 설치', 'AS', '영업 방문', '서류 접수', '카드사 서류', '기타'];
@@ -388,7 +388,7 @@ ACT.task = id => {
   const ln = (k, v) => v ? '<div class="line"><b>' + k + '</b><div>' + esc(v) + '</div></div>' : '';
   const ph = (t.phone || '').replace(/[^0-9+*#]/g, '');
   modal('<h3>' + esc(t.title) + '</h3><div class="sub" style="font-weight:700">' + esc(t.type) + ' · ' + (ST[t.status] || t.status) + '</div>' +
-    ln('거래처', t.client) + (ph ? '<div class="line"><b>전화</b><a href="tel:' + ph + '">' + esc(t.phone) + '</a></div>' : '') + ln('주소', t.addr) + ln('기한', t.due) + ln('담당', uname(t.assignee)) + ln('지시한 사람', uname(t.creator)) + ln('열어본 시각', t.seenAt) + ln('메모', t.memo) + ln('완료 메시지', t.doneMsg) +
+    ln('거래처', t.client) + (ph ? '<div class="line"><b>전화</b><a href="tel:' + ph + '">' + esc(t.phone) + '</a></div>' : '') + ln('주소', t.addr) + ln('기한', t.due) + ln('담당', uname(t.assignee)) + ln('지시한 사람', uname(t.creator)) + ln('열어본 시각', t.seenAt) + ln('가맹점 요청사항', t.req) + ln('메모', t.memo) + ln(t.req || t.merchant ? '처리결과' : '완료 메시지', t.doneMsg) + (t.mlog && byId('mlogs', t.mlog) ? '<div class="sub" style="color:var(--green)">✔ 가맹점 응대 기록에도 남았어요.</div>' : '') +
     '<h2>처리 이력</h2>' + (t.history || []).map(h => '<div class="hist">' + esc(h.t + '  ' + uname(h.who) + '\n' + h.text) + '</div>').join('') +
     (own && t.status !== '완료' ? '<div class="btns" style="margin-top:12px">' + (t.status !== '진행중' && t.status !== '확인함' ? '<button class="btn tint" data-act="tstatus" data-arg="' + id + '|진행중">진행 시작</button>' : '') + '<button class="btn" data-act="thold" data-arg="' + id + '">보류·연기</button><button class="btn gold" data-act="tdone" data-arg="' + id + '">완료</button></div>' : '') +
     (own && t.status === '완료' ? '<button class="btn full" data-act="tstatus" data-arg="' + id + '|진행중">진행중으로 되돌리기</button>' : '') +
@@ -410,24 +410,42 @@ ACT.tresched = id => formModal('일정 다시 잡기', '<label class="fl" for="f
   const d = $('#f_d').value, tm = $('#f_t').value; if (!d) return warn('날짜를 골라 주세요.');
   const t = byId('tasks', id); const nd = d + (tm ? ' ' + tm : ''); tlog(t, '일정 변경 ' + (t.due || '없음') + ' → ' + nd); t.due = nd; put('tasks', t); render(); toast('일정을 바꿨어요.'); return true;
 }, '변경');
-ACT.tdone = id => formModal('완료 처리', '<div class="sub">처리 결과를 한 줄 남겨 주세요.</div><textarea id="f_m" placeholder="완료 메시지 (필수)"></textarea>', () => {
-  const m = $('#f_m').value.trim(); if (!m) return warn('완료 메시지를 입력해 주세요.');
-  const t = byId('tasks', id); t.status = '완료'; t.doneMsg = m; t.doneAt = nowStr(); tlog(t, '상태 → 완료 : ' + m); put('tasks', t); render(); toast('완료 처리했어요.'); return true;
-}, '완료 처리');
+// 업무 ↔ 응대 기록: 가맹점이 연결된 업무를 완료하면 요청사항·처리결과가 그 가맹점 응대 기록에 남는다(다시 완료하면 같은 기록을 고침)
+const taskMerchant = t => (t.merchant && byId('merchants', t.merchant)) || (t.client ? list('merchants').find(m => (m.name || '').trim() === t.client.trim()) : null);
+const kindOfTask = t => /원격/.test((t.type || '') + (t.title || '')) ? '원격A/S' : /전화/.test(t.title || '') ? '전화응대' : /AS|A\/S|설치|방문/.test(t.type || '') ? '방문A/S' : '기타';
+ACT.tdone = id => {
+  const t0 = byId('tasks', id); const mer = t0 && taskMerchant(t0); const k0 = t0 && t0.mlog && byId('mlogs', t0.mlog) ? logKind(byId('mlogs', t0.mlog).kind) : kindOfTask(t0 || {});
+  formModal('완료 처리', (t0 && t0.req ? '<div class="lb">가맹점 요청사항</div><div class="sub" style="margin-top:0;white-space:pre-wrap">' + esc(t0.req) + '</div>' : '') +
+    '<label class="fl" for="f_m">처리결과 (필수)</label><textarea id="f_m" placeholder="어떻게 처리했는지 (예: 포스 프로그램 재설치, 정상 결제 확인)"></textarea>' +
+    (mer ? '<label class="fl" for="f_k">응대 종류</label><select id="f_k">' + KINDS.map(k => '<option' + (k === k0 ? ' selected' : '') + '>' + k + '</option>').join('') + '</select><div class="sub">‘' + esc(mer.name) + '’ 응대 기록에도 같이 남아요.</div>' : '<div class="sub">가맹점이 연결되지 않은 업무라 응대 기록에는 남지 않아요.</div>'), () => {
+    const m = $('#f_m').value.trim(); if (!m) return warn('처리결과를 입력해 주세요.');
+    const t = byId('tasks', id); t.status = '완료'; t.doneMsg = m; t.doneAt = nowStr(); tlog(t, '상태 → 완료 : ' + m);
+    if (mer) {
+      const req = t.req || t.title; let g = t.mlog && byId('mlogs', t.mlog);
+      if (!g) { g = create('mlogs', {merchant: mer.id, mname: mer.name, who: S.uid, task: t.id}); t.mlog = g.id; t.merchant = mer.id; }
+      else { g.editedBy = S.uid; g.editedAt = nowStr(); g.deleted = false; }
+      Object.assign(g, {date: todayStr(), kind: $('#f_k').value, req, res: m, text: req + '\n→ 처리: ' + m});
+      put('mlogs', g);
+    }
+    put('tasks', t); render(); toast(mer ? '완료 처리하고 응대 기록에도 남겼어요.' : '완료 처리했어요.'); return true;
+  }, '완료 처리');
+};
 ACT.newTask = () => {
   const staff = list('users').filter(u => u.active !== false && (can('task_assign') || u.id === S.uid));
   formModal('업무 지시', '<label class="fl" for="f_t1">업무 제목 (필수)</label><input id="f_t1" placeholder="예: A마트 포스 설치"><label class="fl" for="f_ty">종류</label><select id="f_ty">' + TYPES.map(x => '<option>' + x + '</option>').join('') + '</select>' + MP_FILL +
     '<label class="fl" for="f_c">거래처 (상호)</label><input id="f_c" placeholder="가맹점을 고르면 자동으로 채워져요"><label class="fl" for="f_p">매장 전화</label><input id="f_p" type="tel" placeholder="예: 062-123-4567"><label class="fl" for="f_a">매장 주소</label><input id="f_a" placeholder="예: 광주 동구 …">' +
+    '<label class="fl" for="f_rq">가맹점 요청사항 (선택 — 완료하면 처리결과와 함께 응대 기록에 남아요)</label><textarea id="f_rq" placeholder="예: 카드 결제가 안 된다고 함, 영수증 출력 안 됨"></textarea>' +
     '<label class="fl" for="f_d">기한 날짜 (선택 — 고르면 일정 달력에도 표시돼요)</label><input id="f_d" type="date"><label class="fl" for="f_tm">기한 시간 (선택)</label><input id="f_tm" type="time"><label class="fl" for="f_m">메모</label><textarea id="f_m" placeholder="메모"></textarea><label class="fl" for="f_w">담당 직원</label><select id="f_w">' + staff.map(u => '<option value="' + u.id + '"' + (u.id === S.uid ? ' selected' : '') + '>' + esc(u.name) + '</option>').join('') + '</select>', () => {
     const ti = $('#f_t1').value.trim(); if (!ti) return warn('업무 제목을 입력해 주세요.');
     const d = $('#f_d').value, tm = $('#f_tm').value; const as = Number($('#f_w').value);
-    const t = create('tasks', {title: ti, type: $('#f_ty').value, client: $('#f_c').value.trim(), phone: $('#f_p').value.trim(), addr: $('#f_a').value.trim(), due: d ? d + (tm ? ' ' + tm : '') : '', memo: $('#f_m').value.trim(), assignee: as, creator: S.uid, status: '지시됨', history: []});
+    const t = create('tasks', {title: ti, type: $('#f_ty').value, client: $('#f_c').value.trim(), phone: $('#f_p').value.trim(), addr: $('#f_a').value.trim(), due: d ? d + (tm ? ' ' + tm : '') : '', memo: $('#f_m').value.trim(), req: $('#f_rq').value.trim(), merchant: pickedMer && pickedMer.name === $('#f_c').value.trim() ? pickedMer.id : 0, assignee: as, creator: S.uid, status: '지시됨', history: []});
     tlog(t, '업무 지시 → ' + uname(as)); put('tasks', t);
     if (t.type.includes('서류')) postToRoom('서류접수', '📄 서류 업무 · ' + ti + (t.client ? ' · ' + t.client : '') + '\n담당 ' + uname(as) + ' · 지시 ' + uname(S.uid) + (t.due ? ' · 기한 ' + t.due : '')); // 앱과 같은 자동 알림
     if (d) { const p = d.split('-'); S.calY = +p[0]; S.calM = +p[1]; S.calSel = d; }
     render(); toast(uname(as) + '님에게 업무를 지시했습니다.'); return true;
   }, '지시하기');
-  wireMerchantPicker(m => { const n = mNums(m); $('#f_c').value = m.name || ''; $('#f_p').value = n.phone || n.mobile || ''; $('#f_a').value = m.addr || ''; });
+  let pickedMer = null;
+  wireMerchantPicker(m => { pickedMer = m; const n = mNums(m); $('#f_c').value = m.name || ''; $('#f_p').value = n.phone || n.mobile || ''; $('#f_a').value = m.addr || ''; });
 };
 
 // ---------- 프로젝트 ----------
@@ -737,15 +755,20 @@ ACT.merchant = id => {
   const callBtn = (num, raw, lb) => num ? '<a class="btn tint full" style="display:block;text-align:center;text-decoration:none;margin-top:6px" href="tel:' + num + '">📞 ' + lb + ' ' + esc(raw) + ' 전화 걸기</a>' : '';
   modal('<h3>' + esc(m.name) + '</h3>' + ln('사업자번호', m.bizno) + ln('전화번호', nm.phone) + ln('휴대폰번호', nm.mobile) + ln('이메일', m.email) + ln('주소', m.addr) + ln('VAN사', m.van) + ln('계약조건', termsText(m)) + ln('등급', gradeLabel(m.grade)) + ln('메모', m.memo) +
     callBtn(ph, nm.phone, '전화') + callBtn(mp, nm.mobile, '휴대폰') +
+    openTasksOf(m) +
     '<h2>📝 응대 기록 (' + logs.length + '건)</h2><button class="btn gold full" data-act="newLog" data-arg="' + m.id + '">+ 응대 기록 남기기</button>' +
     '<div class="pills">' + [''].concat(KINDS).map(k => '<button class="pill ' + (S.logKindF === k ? 'on' : '') + '" data-act="logKindF" data-arg="' + m.id + '|' + k + '">' + (k || '전체') + '</button>').join('') + '</div>' +
     '<div class="row" style="gap:8px"><input type="date" id="logDateF" value="' + esc(S.logDateF || '') + '" data-mid="' + m.id + '" aria-label="날짜로 찾기">' + (S.logDateF ? '<button class="btn" style="flex:none" data-act="logDateOff" data-arg="' + m.id + '">날짜 해제</button>' : '') + '</div>' +
     logs.slice(0, S.logLimit).map(g => logCard(g, 'editLog|' + g.id + '|' + m.id)).join('') + (logs.length > S.logLimit ? '<button class="btn full" data-act="logmore" data-arg="' + m.id + '">더 보기 (' + (logs.length - S.logLimit) + '건 남음)</button>' : '') +
     '<div class="btns" style="margin-top:10px">' + (canEditMerchant() ? '<button class="btn" data-act="editMerchant" data-arg="' + m.id + '">정보 수정</button><button class="btn red" data-act="delMerchant" data-arg="' + m.id + '">삭제</button>' : '') + (can('staff_manage') ? '<button class="btn" data-act="mhist" data-arg="' + m.id + '">🕘 변경 이력</button>' : '') + '<button class="btn" data-act="close">닫기</button></div>');
 };
+function openTasksOf(m) { // 이 가맹점에 걸린 아직 안 끝난 업무
+  const ts = list('tasks').filter(t => t.status !== '완료' && (t.merchant === m.id || (!t.merchant && t.client && t.client.trim() === (m.name || '').trim())));
+  return ts.length ? '<h2>📋 진행 중인 업무 (' + ts.length + '건)</h2>' + ts.map(t => '<div class="card" data-act="task" data-arg="' + t.id + '"><div class="t1">[' + esc(t.type) + '] ' + esc(t.title) + '</div><div class="t2">' + esc(uname(t.assignee) + ' · ' + (ST[t.status] || t.status) + (t.due ? ' · ' + t.due : '')) + '</div>' + (t.req ? '<div style="font-size:13px;margin-top:4px">요청: ' + esc(t.req) + '</div>' : '') + '</div>').join('') : '';
+}
 function logCard(g, act) {
   const [a, id, mid] = act.split('|');
-  return '<div class="card" data-act="' + a + '" data-arg="' + id + '|' + mid + '"><span class="chip">' + esc(logKind(g.kind)) + '</span> <b style="font-size:13px">' + esc(g.date) + '</b>' + (logReq(g) ? '<div class="lb">요청사항</div><div style="white-space:pre-wrap">' + esc(logReq(g)) + '</div>' : '') + (logRes(g) ? '<div class="lb g">처리결과</div><div style="white-space:pre-wrap">' + esc(logRes(g)) + '</div>' : '') + '<div class="t2">' + esc(uname(g.who) + (g.editedBy ? ' · 수정 ' + uname(g.editedBy) + ' ' + (g.editedAt || '') : '')) + '</div></div>';
+  return '<div class="card" data-act="' + a + '" data-arg="' + id + '|' + mid + '"><span class="chip">' + esc(logKind(g.kind)) + '</span> <b style="font-size:13px">' + esc(g.date) + '</b>' + (logReq(g) ? '<div class="lb">요청사항</div><div style="white-space:pre-wrap">' + esc(logReq(g)) + '</div>' : '') + (logRes(g) ? '<div class="lb g">처리결과</div><div style="white-space:pre-wrap">' + esc(logRes(g)) + '</div>' : '') + '<div class="t2">' + (g.task ? '📋 업무에서 · ' : '') + esc(uname(g.who) + (g.editedBy ? ' · 수정 ' + uname(g.editedBy) + ' ' + (g.editedAt || '') : '')) + '</div></div>';
 }
 ACT.logKindF = a => { const [mid, k] = a.split('|'); S.logKindF = k; ACT.merchant(mid); };
 ACT.logDateOff = mid => { S.logDateF = ''; ACT.merchant(mid); };
@@ -1875,6 +1898,7 @@ function viewHome() {
 
 // ---------- 사용설명서 · 버전 내역 (웹) ----------
 const WEB_CHANGES = [
+  ['웹 0.0.15', '2026-10-24', ['업무 ↔ 응대 기록 연결: 업무를 올릴 때 가맹점을 고르고 ‘가맹점 요청사항’을 적으면, 완료할 때 적는 ‘처리결과’와 함께 그 가맹점 응대 기록에 자동으로 남아요(다시 완료하면 같은 기록을 고침, 응대 종류 선택)', '가맹점 화면에 그 가맹점의 진행 중인 업무가 보여요', '응대 기록에 ‘📋 업무에서’ 표시']],
   ['웹 0.0.14', '2026-10-24', ['재고: 입고(같은 모델은 수량에 더하기·입고처 메모), 출고(반품·불량·A/S 교체·분실 — 계약 없이), 수량 정정(재고 조사, 시리얼 스캔 확인), 재고 이력(입고·출고·계약 출고·정정, 날짜·직원·메모)', 'PC: ☰ 전체 메뉴 화면 바탕색을 구분하고 묶음별 카드로 정리', '업데이트: 새 버전이 나오면 위쪽에 ‘지금 업데이트’ 띠가 떠요. 새로고침·프로그램 재시작만 해도 새 버전이 바로 적용되고, 전체 → 회사 → 업데이트 확인으로 직접 확인할 수도 있어요']],
   ['웹 0.0.13', '2026-10-24', ['사용설명서 전면 정리: 앱 사용설명서와 같은 순서로 모든 기능 설명, 항목을 눌러 펼치기, 검색(초성 가능), 자주 묻는 질문 추가']],
   ['웹 0.0.12', '2026-10-24', ['로그인: 인증번호 받기를 누른 뒤 기다리는 시간 줄임(사람 확인을 화면이 열릴 때 미리 준비)']],
@@ -1898,7 +1922,7 @@ const WEB_MANUAL = [
   ['처음 시작하기 · 로그인', '1. 관리자가 등록해 둔 내 휴대폰 번호를 넣고 ‘인증번호 받기’를 눌러요.\n2. 문자로 온 인증번호 6자리를 넣으면 로그인돼요. 한 번 로그인하면 계속 유지돼요.\n※ ‘등록되지 않은 번호입니다’가 나오면 관리자에게 번호 등록을 요청하세요.\n※ 아이폰: Safari 로 열고 공유 버튼 → ‘홈 화면에 추가’ 하면 앱처럼 써요.\n※ 로그아웃: 전체(☰) → 계정 → 로그아웃.'],
   ['PC 프로그램 (윈도우)', '전체(☰) → 계정 → ‘PC 프로그램 설치 파일 받기’로 설치 파일을 받아 실행하면 바탕화면·시작 메뉴에 ‘나인패밀리’가 생겨요.\n처음 실행할 때 ‘Windows의 PC 보호’ 창이 뜨면 ‘추가 정보’ → ‘실행’을 눌러 주세요.\n프로그램은 이 웹앱을 창으로 띄우는 방식이라, 업데이트가 나오면 다시 설치하지 않아도 다음에 켤 때(켜 둔 상태면 F5) 바로 바뀌어요.\n크롬·엣지에서 주소창 오른쪽 설치 버튼으로 설치해도 같아요.'],
   ['화면 구성', '휴대폰(아이폰): 안드로이드 앱과 같은 화면이에요. 아래 탭 업무·프로젝트·채팅·일정·전체, 나머지 기능은 전체 탭에 계정 → 회사 → 일 → 관리자 순서로 있어요.\nPC: 위쪽 가로줄이 주 메뉴(업무·프로젝트·채팅·일정·가맹점·응대 기록)예요. 왼쪽 위 ☰ 를 누르면 전체 메뉴가 펼쳐지고, ‘나인패밀리’를 누르면 홈(오늘 현황)으로 가요.\n전체 메뉴 위 기능 검색에 단어나 초성(예: ㅈㄱ)을 치면 기능을 바로 찾아요.\n안드로이드 앱·아이폰·PC 는 같은 서버를 써서, 어디서 고쳐도 다른 기기에 바로 보여요.'],
-  ['업무', '■ 보기: 업무 탭 위에 남은 업무 수, ‘상태별로 보기’(미완료·미확인·진행중·보류·완료)로 걸러 봐요. ‘전체 업무 보기’ 권한이 있으면 ‘내 업무 / 전체 업무’를 바꿔 봐요.\n■ 지시: 오른쪽 아래 + → 제목·종류·거래처·전화·주소·기한·메모·담당 직원. ‘가맹점 조회’로 고르면 거래처·전화·주소가 자동으로 채워져요. 기한을 넣으면 일정 달력에도 표시돼요. ‘다른 직원에게 업무 배정’ 권한이 없으면 나에게만 지시할 수 있어요.\n■ 서류 업무: 종류가 ‘서류 접수’·‘카드사 서류’이면 ‘서류접수’ 채팅방에 자동으로 알림이 올라가요.\n■ 처리: 업무를 눌러 진행 시작 → 보류·연기(다시 할 날짜) → 완료(처리 결과 한 줄). 상태는 담당자 본인과 최고관리자만 바꿔요. 모든 처리는 이력으로 남아요.\n■ 삭제: 업무를 만든 사람과 최고관리자만 해요.\n■ 계약 만료가 3개월 안으로 남은 계약이 있으면 업무 화면 위에 빨간 알림 카드가 떠요.'],
+  ['업무', '■ 보기: 업무 탭 위에 남은 업무 수, ‘상태별로 보기’(미완료·미확인·진행중·보류·완료)로 걸러 봐요. ‘전체 업무 보기’ 권한이 있으면 ‘내 업무 / 전체 업무’를 바꿔 봐요.\n■ 지시: 오른쪽 아래 + → 제목·종류·거래처·전화·주소·기한·메모·담당 직원. ‘가맹점 조회’로 고르면 거래처·전화·주소가 자동으로 채워져요. 기한을 넣으면 일정 달력에도 표시돼요. ‘다른 직원에게 업무 배정’ 권한이 없으면 나에게만 지시할 수 있어요.\n■ 서류 업무: 종류가 ‘서류 접수’·‘카드사 서류’이면 ‘서류접수’ 채팅방에 자동으로 알림이 올라가요.\n■ 처리: 업무를 눌러 진행 시작 → 보류·연기(다시 할 날짜) → 완료(처리 결과 한 줄). 상태는 담당자 본인과 최고관리자만 바꿔요. 모든 처리는 이력으로 남아요.\n■ 삭제: 업무를 만든 사람과 최고관리자만 해요.\n■ 계약 만료가 3개월 안으로 남은 계약이 있으면 업무 화면 위에 빨간 알림 카드가 떠요.\n■ 가맹점 업무와 응대 기록: 업무를 올릴 때 가맹점을 골라 ‘가맹점 요청사항’을 적어 두면, 완료 때 적는 ‘처리결과’와 함께 그 가맹점 응대 기록에 자동으로 남아요(📋 업무에서 표시). 가맹점 화면에는 아직 안 끝난 업무도 보여요.'],
   ['프로젝트', '+ 로 이름·마감일·메모·체크리스트(한 줄에 하나)·담당자를 넣어 만들어요.\n프로젝트를 눌러 항목을 체크하면 진행률이 자동으로 올라가고, ‘항목 추가’로 늘려요. 100%가 되면 ‘완료 되돌리기’로 진행중으로 돌릴 수 있어요.\n목록 위 전체·진행중·완료로 걸러 봐요.'],
   ['채팅', '■ 직원을 눌러 1:1 대화(첫 메시지를 보내야 목록에 생겨요), ‘새 그룹 채팅방’으로 초대한 사람끼리 대화해요.\n■ 말풍선을 한 번 누르면 반응(👍 ❤️ 😂 …)·답장·복사·삭제(내 것), 두 번 빠르게 누르면 ❤️ 가 붙어요. 답장 띠의 ✕ 로 취소해요.\n■ 입력줄 + 로 사진·파일(3MB까지), ☺ 로 이모지와 나인이 프렌즈 스티커 80종을 보내요. 사진을 누르면 크게 보고 저장해요.\n■ 글 속 웹 주소는 눌러서 열려요.\n■ 읽음 표시는 PC와 아이폰 웹앱끼리 맞춰져요(안드로이드 앱과는 아직 따로).\n※ 1:1 대화는 두 사람만 볼 수 있어요. 개인정보는 1:1 이나 그룹방에서 나누세요.'],
   ['일정 (달력)', '■ 일요일·공휴일은 빨간색(공휴일 이름 표시, 2026~2028년), 토요일은 파란색이에요. ‹ › 로 달을 넘기고 ‘오늘’로 돌아와요.\n■ 날짜를 누르면 그날 일정과 기한이 있는 업무가 보이고, 아래 ‘다가오는 일정’에 앞으로의 일정이 날짜 순으로 나와요.\n■ 일정을 누르면 내용이 보이고, 가맹점이 연결된 일정은 ‘가맹점 정보 보기’로 바로 가요.\n■ 일정 추가·삭제는 최고관리자만 해요(+ 버튼). 가맹점을 고르면 장소에 주소가 들어가요. 일반 직원은 업무에 기한을 넣으면 달력에 표시돼요.'],
