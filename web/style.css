@@ -234,3 +234,4 @@ img.stk{display:block;width:120px;height:auto}
 .av .avimg,.av .avtxt{display:flex;margin:0 auto 3px}
 .clamp2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:14px;margin-top:4px}
 a.tel{color:var(--deep);font-weight:700;text-decoration:none;font-size:14px}
+.chk.off{opacity:.5}

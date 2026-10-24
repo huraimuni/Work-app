@@ -2,7 +2,7 @@
 /* 나인패밀리 웹앱 — 앱과 같은 Firebase(nine-family)를 쓴다. 문서는 {j: JSON문자열, u: 시각} 형식. */
 const CFG = {apiKey: 'AIzaSyCsA-M6QGGGk0owyDXzziv1X79TqF5NptI', authDomain: 'nine-family.firebaseapp.com', projectId: 'nine-family',
   storageBucket: 'nine-family.firebasestorage.app', messagingSenderId: '48232341344', appId: '1:48232341344:web:19be016c9c1c1de5a34805'};
-const VERSION = '웹 0.0.9';
+const VERSION = '웹 0.0.10';
 const DEMO = location.hash === '#demo';
 const COLLS = ['users', 'tasks', 'notices', 'projects', 'events', 'merchants', 'rooms', 'msgs', 'profiles', 'mlogs', 'config', 'stock', 'contracts', 'deposits', 'costs', 'reports', 'library', 'contacts'];
 const TYPES = ['신규 설치', 'AS', '영업 방문', '서류 접수', '카드사 서류', '기타'];
@@ -309,6 +309,8 @@ function viewBody(k) {
     case 'perfreport': return viewPerfReport();
     case 'library': return viewLibrary();
     case 'contacts': return viewContacts();
+    case 'staff': return viewStaff();
+    case 'sms': return viewSms();
     case 'manual': return viewManual();
     case 'about': return viewAbout();
     default: return viewTasks();
@@ -316,7 +318,7 @@ function viewBody(k) {
 }
 function fab() {
   const k = S.sub || S.tab;
-  const map = {task: 'newTask', project: 'newProject', merchants: canEditMerchant() ? 'newMerchant' : '', calendar: can('staff_manage') ? 'newEvent' : '', notice: can('notice_write') ? 'newNotice' : '', stock: 'newStock', contracts: 'newContract', deposit: 'newDeposit', library: 'newLib', contacts: 'newContact'};
+  const map = {task: 'newTask', project: 'newProject', merchants: canEditMerchant() ? 'newMerchant' : '', calendar: can('staff_manage') ? 'newEvent' : '', notice: can('notice_write') ? 'newNotice' : '', stock: 'newStock', contracts: 'newContract', deposit: 'newDeposit', library: 'newLib', contacts: 'newContact', staff: can('staff_manage') ? 'newStaff' : ''};
   return map[k] ? '<button class="fab" data-act="' + map[k] + '">+</button>' : '';
 }
 function bind(root) {
@@ -330,7 +332,7 @@ function bind(root) {
   // 한글은 글자를 조합하는 동안 입력칸을 다시 그리면 'ㅌㅗㅅㅡ' 처럼 쪼개진다 → 화면 전체는 조합이 끝난 뒤에만 다시 그린다
   if (root.__bound) return; root.__bound = true; // 이벤트 위임은 한 번만 건다 (render 때마다 다시 걸면 중복됨)
   const keep = t => { if (t && t.dataset && t.dataset.keep) (S.keep = S.keep || {})[t.dataset.keep] = t.value; };
-  root.addEventListener('input', ev => keep(ev.target));
+  root.addEventListener('input', ev => { keep(ev.target); if (ev.target.id === 'f_sms') { const t = ev.target.value, by = smsBytes(t); $('#smscnt').textContent = t.length + '자 · ' + by + '바이트' + (by > 90 ? ' (90바이트를 넘으면 장문 문자로 나가요)' : ''); } });
   const apply = t => { if (t && t.dataset && t.dataset.q) { S[t.dataset.q] = t.value; if (t.dataset.q === 'mq') S.mlimit = 50; refreshResults(); } };
   root.addEventListener('input', ev => apply(ev.target));
   root.addEventListener('compositionstart', () => { S.comp = true; });
@@ -730,7 +732,7 @@ ACT.merchant = id => {
     '<div class="pills">' + [''].concat(KINDS).map(k => '<button class="pill ' + (S.logKindF === k ? 'on' : '') + '" data-act="logKindF" data-arg="' + m.id + '|' + k + '">' + (k || '전체') + '</button>').join('') + '</div>' +
     '<div class="row" style="gap:8px"><input type="date" id="logDateF" value="' + esc(S.logDateF || '') + '" data-mid="' + m.id + '" aria-label="날짜로 찾기">' + (S.logDateF ? '<button class="btn" style="flex:none" data-act="logDateOff" data-arg="' + m.id + '">날짜 해제</button>' : '') + '</div>' +
     logs.slice(0, S.logLimit).map(g => logCard(g, 'editLog|' + g.id + '|' + m.id)).join('') + (logs.length > S.logLimit ? '<button class="btn full" data-act="logmore" data-arg="' + m.id + '">더 보기 (' + (logs.length - S.logLimit) + '건 남음)</button>' : '') +
-    '<div class="btns" style="margin-top:10px">' + (canEditMerchant() ? '<button class="btn" data-act="editMerchant" data-arg="' + m.id + '">정보 수정</button><button class="btn red" data-act="delMerchant" data-arg="' + m.id + '">삭제</button>' : '') + '<button class="btn" data-act="close">닫기</button></div>');
+    '<div class="btns" style="margin-top:10px">' + (canEditMerchant() ? '<button class="btn" data-act="editMerchant" data-arg="' + m.id + '">정보 수정</button><button class="btn red" data-act="delMerchant" data-arg="' + m.id + '">삭제</button>' : '') + (can('staff_manage') ? '<button class="btn" data-act="mhist" data-arg="' + m.id + '">🕘 변경 이력</button>' : '') + '<button class="btn" data-act="close">닫기</button></div>');
 };
 function logCard(g, act) {
   const [a, id, mid] = act.split('|');
@@ -1306,6 +1308,256 @@ ACT.picPick = () => {
   }; f.click();
 };
 
+// ---------- 직원과 권한 (최고관리자) — users 문서 + 로그인용 phones 문서를 같이 맞춘다 (앱 Store.push 와 같음) ----------
+const PERMS = [['task_create', '업무 만들기'], ['task_assign', '다른 직원에게 업무 배정'], ['task_view_all', '전체 업무 보기'], ['history_all', '전체 이력 보기'], ['notice_write', '공지 작성'],
+  ['perf_view', '실적 보기 (본부장·대표님)'], ['report_view', '일일보고·실적보고 종합 보기 (대표님)'], ['merchant_edit', '가맹점 등록·수정 (암호 필요)'], ['staff_manage', '직원 관리 (관리자 전용)']];
+const PRESETS = {'영업직': ['task_create', 'task_assign', 'task_view_all', 'history_all'], '사무직': ['task_create', 'task_assign', 'task_view_all', 'history_all', 'merchant_edit'], '관리자': PERMS.map(x => x[0])};
+const hasP = (u, k) => (u.perms || []).includes(k);
+const adminCount = () => list('users').filter(u => u.active !== false && hasP(u, 'staff_manage')).length;
+function syncPhone(u) { // 로그인 허용 번호와 서버 규칙용 권한 표시
+  if (DEMO || !u.phone) return;
+  fs.collection('phones').doc(u.phone).set({uid: u.id, admin: hasP(u, 'staff_manage'), perf: hasP(u, 'perf_view'), report: hasP(u, 'report_view'), active: u.active !== false, name: u.name})
+    .catch(e => toast('로그인 번호를 저장하지 못했어요: ' + (e.code || e.message)));
+}
+function viewStaff() {
+  if (!can('staff_manage')) return '<h1>직원과 권한</h1><div class="empty">최고관리자만 볼 수 있어요.</div>';
+  const us = [...S.data.users.values()].sort((a, b) => (a.active === false) - (b.active === false) || (a.name || '').localeCompare(b.name || ''));
+  return '<h1>직원과 권한</h1><div class="sub">직원을 눌러 권한을 켜고 끄거나 사용을 멈춰요. 등록된 번호로만 로그인할 수 있어요. 오른쪽 아래 + 로 직원을 추가합니다.</div>' +
+    us.map(u => { const ps = PERMS.filter(x => hasP(u, x[0])).map(x => x[1]); return '<div class="card" data-act="staffEdit" data-arg="' + u.id + '"><div class="row">' + avatarHTML(u.id, 40) + '<div class="grow"><div class="t1" style="' + (u.active === false ? 'color:var(--gray)' : '') + '">' + esc(u.name) + (u.active === false ? ' (사용 중지)' : '') + '</div><div class="t2">' + esc(u.phone || '') + '</div></div></div><div class="sub">' + esc(ps.length ? ps.join(', ') : '기본 권한(내 업무만)') + '</div></div>'; }).join('');
+}
+ACT.newStaff = () => formModal('직원 추가', '<label class="fl" for="f_n">직원 이름</label><input id="f_n" placeholder="예: 김영업"><label class="fl" for="f_p">휴대폰 번호</label><input id="f_p" type="tel" placeholder="예: 01012345678">' +
+  '<label class="fl" for="f_ps">권한 묶음 (추가 후 항목별로 바꿀 수 있어요)</label><select id="f_ps">' + Object.keys(PRESETS).map(k => '<option>' + k + '</option>').join('') + '</select>', () => {
+  const n = $('#f_n').value.trim(), ph = e164($('#f_p').value);
+  if (!n || ph.length < 12) return warn('이름과 휴대폰 번호를 입력해 주세요.');
+  if (list('users').some(u => u.name === n)) return warn('같은 이름의 직원이 있습니다.');
+  if ([...S.data.users.values()].some(u => u.phone === ph)) return warn('이미 등록된 번호입니다.');
+  const u = {id: nextId(), name: n, phone: ph, active: true, perms: PRESETS[$('#f_ps').value].slice()}; put('users', u); syncPhone(u); render(); toast(n + '님을 등록했어요. 이 번호로 로그인할 수 있어요.'); return true;
+}, '추가');
+ACT.staffEdit = id => {
+  const u = byId('users', id); if (!u) return; const active = u.active !== false;
+  formModal(u.name + ' 권한', PERMS.map(([k, lb]) => '<label class="chk"><input type="checkbox" class="pm" value="' + k + '"' + (hasP(u, k) ? ' checked' : '') + '><span>' + lb + '</span></label>').join('') +
+    '<button class="btn ' + (active ? 'red' : 'tint') + ' full" id="f_act">' + (active ? '사용 중지 (퇴사 등)' : '다시 사용') + '</button>', () => {
+    const np = [...document.querySelectorAll('.pm:checked')].map(c => c.value);
+    if (hasP(u, 'staff_manage') && !np.includes('staff_manage') && adminCount() <= 1) return warn('마지막 관리자의 직원 관리 권한은 끌 수 없습니다.');
+    u.perms = np; put('users', u); syncPhone(u); if (u.id === S.uid) refreshMe(); render(); toast('저장했어요.'); return true;
+  }, '저장');
+  $('#f_act').onclick = () => {
+    if (active && hasP(u, 'staff_manage') && adminCount() <= 1) return toast('마지막 관리자는 중지할 수 없습니다.');
+    askConfirm(active ? u.name + '님 사용을 멈출까요?' : u.name + '님을 다시 사용할까요?', active ? '이 번호로 더는 로그인할 수 없어요. 자료는 그대로 남아요.' : '', active ? '사용 중지' : '다시 사용', () => { u.active = !active; put('users', u); syncPhone(u); render(); }, active);
+  };
+};
+
+// ---------- 가맹점 보호·복원 (최고관리자) ----------
+// 되돌리기 기준점: 위험한 작업(가져오기·복원·되돌리기) 직전에 지금 가맹점 전체를 이 기기(IndexedDB)에 저장 — 저장에 실패하면 작업하지 않는다
+async function snapMerchants(why) {
+  if (DEMO) return true;
+  try {
+    const key = 'snap_' + nowStr().replace(/[-: ]/g, '') + '_' + why;
+    await idbDo('readwrite', st => st.put(JSON.stringify({kind: 'merchants-snapshot', why, at: nowStr(), merchants: [...S.data.merchants.values()]}), key));
+    const keys = ((await idbDo('readonly', st => st.getAllKeys())) || []).filter(k => String(k).startsWith('snap_')).sort();
+    if (keys.length > 30) { const old = keys.slice(0, keys.length - 30); await idbDo('readwrite', st => old.forEach(k => st.delete(k))); }
+    return true;
+  } catch (e) { return false; }
+}
+ACT.safety = () => {
+  if (!can('staff_manage')) return toast('최고관리자만 쓸 수 있어요.');
+  const trash = [...S.data.merchants.values()].filter(m => m.deleted).length;
+  modal('<h3>가맹점 보호·복원</h3><div class="sub">가맹점 자료는 서버에서 지울 수 없게 막혀 있고, 삭제는 숨김일 뿐이에요. 복원·되돌리기 직전에는 지금 상태를 이 기기에 자동 저장해요.</div>' +
+    '<button class="mi" data-act="trash"><span>삭제한 가맹점 복원 (' + trash + '곳)</span><em>›</em></button>' +
+    '<button class="mi" data-act="restoreFile"><span>백업 파일(.json)로 복원</span><em>›</em></button>' +
+    '<button class="mi" data-act="pcBackups"><span>이 PC에 보관된 백업·되돌리기 기준점</span><em>›</em></button>' +
+    '<button class="mi" data-act="snapNow"><span>지금 바로 기준점 만들기</span><em>›</em></button>' +
+    '<div class="sub" style="margin-top:8px">가맹점 하나의 변경 이력·되돌리기는 가맹점 정보 창의 ‘🕘 변경 이력’에서 해요.</div><input type="file" id="f_rest" accept=".json,application/json" hidden><button class="btn full" data-act="close">닫기</button>');
+};
+ACT.snapNow = async () => toast(await snapMerchants('수동') ? '기준점을 만들었어요. (이 PC에 보관된 백업에 있어요)' : '만들지 못했어요.');
+ACT.trash = () => {
+  const del = [...S.data.merchants.values()].filter(m => m.deleted).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  modal('<h3>삭제한 가맹점 (' + del.length + '곳)</h3><div class="sub">눌러서 목록에 다시 살려요.</div>' + (del.length ? del.map(m => '<button class="mi" data-act="untrash" data-arg="' + m.id + '"><span>' + esc(m.name) + ' <small style="color:var(--gray)">' + esc(m.bizno || '') + '</small></span><em>복원 ›</em></button>').join('') : '<div class="empty">삭제된 가맹점이 없어요.</div>') + '<button class="btn full" data-act="close">닫기</button>');
+};
+ACT.untrash = id => { const m = S.data.merchants.get(Number(id)); askConfirm('‘' + m.name + '’ 가맹점을 복원할까요?', '', '복원', () => { m.deleted = false; put('merchants', m); render(); ACT.trash(); toast('복원했어요.'); }); };
+function backupMerchants(j) { // 여러 백업 형식에서 가맹점 목록만 꺼낸다 (웹 백업·앱 백업·앱 되돌리기 기준점·매일 자동 백업)
+  if (Array.isArray(j.merchants)) return j.merchants;
+  if (j.collections && Array.isArray(j.collections.merchants)) return j.collections.merchants.map(d => { try { return JSON.parse(d.data.j); } catch (e) { return null; } }).filter(Boolean);
+  return null;
+}
+ACT.restoreFile = () => {
+  const f = $('#f_rest'); f.onchange = async () => {
+    try {
+      const arr = backupMerchants(JSON.parse(await f.files[0].text())); if (!arr) return toast('가맹점 자료가 든 백업 파일이 아니에요.');
+      const ch = arr.filter(o => o && o.id && JSON.stringify(o) !== JSON.stringify(S.data.merchants.get(o.id)));
+      const add = ch.filter(o => !S.data.merchants.has(o.id)).length;
+      askConfirm('이 백업으로 가맹점을 복원할까요?', '파일 속 가맹점 ' + arr.length + '곳 중 지금과 다른 ' + ch.length + '곳(새로 생기는 곳 ' + add + ')을 파일 내용으로 되돌려요. 파일에 없는 가맹점은 그대로 둬요.\n복원 직전 상태는 이 PC에 기준점으로 저장돼요.', '복원', async () => {
+        if (!await snapMerchants('복원전')) return toast('복원 전 기준점을 저장하지 못해서 멈췄어요.');
+        ch.forEach(o => put('merchants', Object.assign({}, o))); render(); toast(ch.length + '곳을 복원했어요.');
+      });
+    } catch (e) { toast('파일을 읽지 못했어요.'); }
+  }; f.click();
+};
+ACT.mhist = id => { // 변경 기록(audit)에서 이 가맹점의 지난 모습을 모아 고른 시점으로 되돌린다
+  if (!can('staff_manage')) return; if (DEMO) return toast('데모에서는 변경 이력이 없어요.');
+  toast('변경 이력을 불러오는 중…');
+  fs.collection('audit').where('c', '==', 'merchants').where('id', '==', Number(id)).get().then(qs => {
+    const vs = qs.docs.map(d => { try { return {u: d.get('u') || 0, by: d.get('by') || 0, o: JSON.parse(d.get('j'))}; } catch (e) { return null; } }).filter(Boolean).sort((a, b) => a.u - b.u);
+    if (!vs.length) return toast('남아 있는 변경 이력이 없어요.');
+    const diff = (a, b) => !a ? '처음 등록' : Object.keys(MF).filter(k => String(a[k] == null ? '' : a[k]) !== String(b[k] == null ? '' : b[k])).map(k => MF[k]).join(', ') || '변경 없음';
+    S.hist = vs;
+    modal('<h3>변경 이력 (' + vs.length + ')</h3><div class="sub">눌러서 그 시점으로 되돌려요.</div>' + vs.map((v, i) => ({v, i})).reverse().map(({v, i}) => '<button class="mi" data-act="mhistGo" data-arg="' + i + '"><span>' + new Date(v.u).toLocaleString('ko-KR', {month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false}) + ' · ' + esc(uname(v.by)) + '<br><small style="color:var(--gray)">' + esc(diff(i ? vs[i - 1].o : null, v.o)) + '</small></span><em>›</em></button>').join('') + '<button class="btn full" data-act="close">닫기</button>');
+  }).catch(e => toast('이력을 불러오지 못했어요. (' + (e.code || e.message) + ')'));
+};
+ACT.mhistGo = i => {
+  const ver = S.hist[Number(i)].o;
+  askConfirm('이 시점으로 되돌릴까요?', [ver.name, ver.bizno, mNums(ver).phone, mNums(ver).mobile, ver.addr, termsText(ver), gradeLabel(ver.grade)].filter(Boolean).join('\n') + (ver.deleted ? '\n(이 시점엔 삭제된 상태였어요)' : ''), '되돌리기', async () => {
+    if (!await snapMerchants('이력되돌리기전')) return toast('되돌리기 전 기준점을 저장하지 못해서 멈췄어요.');
+    put('merchants', Object.assign({}, ver)); render(); toast('되돌렸어요.');
+  });
+};
+
+// ---------- 가맹점 일괄 가져오기 (엑셀 .xlsx · CSV — 앱의 MerchantImport 와 같은 규칙) ----------
+async function unzip(buf) { // .xlsx 는 zip — 필요한 xml 만 꺼낸다 (압축 해제는 브라우저 기본 기능)
+  const v = new DataView(buf), u8 = new Uint8Array(buf); let e = buf.byteLength - 22;
+  while (e >= 0 && v.getUint32(e, true) !== 0x06054b50) e--; if (e < 0) throw new Error('zip');
+  const cnt = v.getUint16(e + 10, true); let p = v.getUint32(e + 16, true); const out = {};
+  for (let i = 0; i < cnt; i++) {
+    const method = v.getUint16(p + 10, true), csize = v.getUint32(p + 20, true), nl = v.getUint16(p + 28, true), xl = v.getUint16(p + 30, true), cl = v.getUint16(p + 32, true), lo = v.getUint32(p + 42, true);
+    const name = new TextDecoder().decode(u8.subarray(p + 46, p + 46 + nl)); p += 46 + nl + xl + cl;
+    if (!(name === 'xl/sharedStrings.xml' || /^xl\/worksheets\/sheet\d+\.xml$/.test(name))) continue;
+    const ds = lo + 30 + v.getUint16(lo + 26, true) + v.getUint16(lo + 28, true), data = u8.subarray(ds, ds + csize);
+    out[name] = method === 0 ? new TextDecoder().decode(data) : await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text();
+  }
+  return out;
+}
+function readCsv(s) {
+  const first = s.slice(0, 2000), sep = (first.split('\t').length > first.split(',').length) ? '\t' : ',';
+  const rows = []; let row = [], cur = '', q = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (q) { if (c === '"') { if (s[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
+    else if (c === '"') q = true; else if (c === sep) { row.push(cur); cur = ''; }
+    else if (c === '\n' || c === '\r') { if (c === '\r' && s[i + 1] === '\n') i++; row.push(cur); cur = ''; rows.push(row); row = []; } else cur += c;
+  }
+  if (cur || row.length) { row.push(cur); rows.push(row); }
+  return rows;
+}
+async function readTable(file) {
+  const buf = await file.arrayBuffer(), b = new Uint8Array(buf);
+  if (b[0] === 0x50 && b[1] === 0x4B) {
+    const z = await unzip(buf); const xml = t => new DOMParser().parseFromString(t, 'application/xml');
+    const ss = z['xl/sharedStrings.xml'] ? [...xml(z['xl/sharedStrings.xml']).getElementsByTagName('si')].map(si => [...si.getElementsByTagName('t')].map(t => t.textContent).join('')) : [];
+    let best = [];
+    Object.keys(z).filter(n => n.startsWith('xl/worksheets/')).sort().forEach(n => {
+      const rows = [...xml(z[n]).getElementsByTagName('row')].map(r => { const out = [];
+        [...r.getElementsByTagName('c')].forEach(c => { const ref = c.getAttribute('r') || ''; let col = 0; for (const ch of ref) { if (ch >= 'A' && ch <= 'Z') col = col * 26 + ch.charCodeAt(0) - 64; else break; } col = col ? col - 1 : out.length;
+          const t = c.getAttribute('t') || ''; let val = t === 'inlineStr' ? [...c.getElementsByTagName('t')].map(x => x.textContent).join('') : ((c.getElementsByTagName('v')[0] || {}).textContent || '');
+          if (t === 's') val = ss[Number(val)] || ''; else if (!t || t === 'n') { if (/e/i.test(val) && !isNaN(Number(val))) val = BigInt(Math.round(Number(val))).toString(); else if (val.endsWith('.0')) val = val.slice(0, -2); }
+          while (out.length < col) out.push(''); out[col] = val; });
+        return out; });
+      if (rows.length > best.length) best = rows;
+    });
+    if (!best.length) throw new Error('엑셀 안에서 시트를 찾지 못했어요.');
+    return best;
+  }
+  if (b[0] === 0xD0 && b[1] === 0xCF) throw new Error('옛 엑셀(.xls) 형식이에요. 엑셀에서 ‘다른 이름으로 저장 → Excel 통합 문서(.xlsx)’ 또는 CSV 로 저장해서 올려 주세요.');
+  let text; try { text = new TextDecoder('utf-8', {fatal: true}).decode(b); } catch (e) { text = new TextDecoder('euc-kr').decode(b); }
+  return readCsv(text.replace(/^﻿/, ''));
+}
+const normH = s => String(s || '').replace(/[\s *()[\]·._/-]/g, '').toLowerCase();
+function fieldOf(h) {
+  h = normH(h); if (!h) return null;
+  if (h.includes('사업자') || h === '등록번호' || h.includes('bizno')) return 'bizno';
+  if (h.includes('거래처코드') || h === '코드' || h.includes('고객코드')) return 'ecode';
+  if (h.includes('거래처명') || h.includes('상호') || h.includes('가맹점명') || h.includes('가맹점') || h.includes('업체명') || h.includes('회사명') || h === '거래처' || h === '이름' || h === '고객명') return 'name';
+  if (h.includes('대표')) return 'owner';
+  if (h.includes('핸드폰') || h.includes('휴대') || h.includes('모바일') || h.includes('mobile') || h === 'hp') return 'mobile';
+  if (h.includes('전화') || h.includes('연락처') || h === 'tel') return 'phone';
+  if (h.includes('주소')) return 'addr'; if (h.includes('등급')) return 'grade'; if (h.includes('업태')) return 'biztype'; if (h.includes('종목')) return 'bizitem';
+  if (h.includes('메모') || h.includes('비고')) return 'memo';
+  return null;
+}
+function findHeader(rows) { for (let i = 0; i < Math.min(rows.length, 15); i++) { const m = {}; rows[i].forEach((c, j) => { const f = fieldOf(c); if (f && !(f in m)) m[f] = j; }); if ('name' in m && Object.keys(m).length >= 2) return [i, m]; } return null; }
+const cellOf = (r, m, f) => (m[f] == null || m[f] >= r.length) ? '' : String(r[m[f]] || '').trim();
+const bizFmt = raw => { const d = raw.replace(/\D/g, ''); return d.length === 10 ? d.slice(0, 3) + '-' + d.slice(3, 5) + '-' + d.slice(5) : raw.trim(); };
+function gradeOf(g) {
+  g = g.trim().toUpperCase(); if (!g) return -1;
+  if (g.startsWith('S')) return 0; if (g.startsWith('A')) return 1; if (g.startsWith('B')) return 2; if (g.startsWith('C')) return 3;
+  if (g.includes('해지')) return 4; if (g.includes('신규')) return 5; if (g.includes('협력')) return 7;
+  const d = g.replace(/\D/g, ''); if (d) { const n = Number(d[0]); if (n >= 0 && n <= 7 && n !== 6) return n; } return -1;
+}
+function findMerchant(ec, bd, nm) {
+  const all = [...S.data.merchants.values()];
+  return (ec && all.find(m => m.ecode === ec)) || (bd.length === 10 && all.find(m => (m.bizno || '').replace(/\D/g, '') === bd)) || (nm && all.find(m => (m.name || '').trim() === nm)) || null;
+}
+ACT.importM = () => {
+  if (!canEditMerchant()) return toast('가맹점 등록·수정 권한이 있어야 가져올 수 있어요.');
+  needLock(() => {
+    modal('<h3>가맹점 일괄 가져오기</h3><div class="sub">이카운트 등에서 거래처 목록을 엑셀(.xlsx) 또는 CSV로 내려받아 골라 주세요. 첫 줄(머리글)에 ‘거래처명’(또는 상호·가맹점명)이 있어야 해요. 사업자등록번호, 거래처코드, 대표자, 전화, 핸드폰, 주소, 등급, 업태, 종목, 메모 열이 있으면 함께 가져와요.</div><button class="btn gold full" id="f_pick">파일 고르기</button><input type="file" id="f_imp" accept=".xlsx,.csv,.txt" hidden><button class="btn full" data-act="close">닫기</button>');
+    $('#f_pick').onclick = () => $('#f_imp').click();
+    $('#f_imp').onchange = async () => {
+      let rows; try { rows = await readTable($('#f_imp').files[0]); } catch (e) { return toast(e.message && e.message !== 'zip' ? e.message : '파일을 읽지 못했어요.'); }
+      const hd = findHeader(rows); if (!hd) return toast('머리글에서 ‘거래처명’(상호) 열을 찾지 못했어요.');
+      const [hr, map] = hd; const data = rows.slice(hr + 1); let add = 0, upd = 0, skip = 0;
+      data.forEach(r => { const nm = cellOf(r, map, 'name'); if (!nm) { skip++; return; } findMerchant(cellOf(r, map, 'ecode'), cellOf(r, map, 'bizno').replace(/\D/g, ''), nm) ? upd++ : add++; });
+      askConfirm('가져오기 미리보기', '새로 등록 ' + add + '곳\n기존 가맹점 갱신 ' + upd + '곳\n건너뜀(상호 없음) ' + skip + '곳\n\n[읽은 열]\n' + Object.entries(map).map(([f, c]) => f + ' ← ' + rows[hr][c]).join('\n') + '\n\n※ 같은 거래처코드·사업자번호·상호가 있으면 새로 만들지 않고, 파일에 값이 있는 칸만 덮어써요(빈 칸은 그대로).\n※ 가져오기 직전 상태는 이 PC에 기준점으로 저장돼요.', '가져오기', async () => {
+        if (!await snapMerchants('가져오기전')) return toast('가져오기 전 기준점을 저장하지 못해서 멈췄어요.');
+        data.forEach(r => {
+          const nm = cellOf(r, map, 'name'); if (!nm) return; const biz = cellOf(r, map, 'bizno'), ec = cellOf(r, map, 'ecode');
+          let m = findMerchant(ec, biz.replace(/\D/g, ''), nm); const isNew = !m; m = isNew ? create('merchants', {deleted: false}) : Object.assign({}, m);
+          const set = (k, v) => { if (v) m[k] = v; };
+          set('name', nm); if (biz) m.bizno = bizFmt(biz); set('ecode', ec); set('owner', cellOf(r, map, 'owner')); set('phone', cellOf(r, map, 'phone')); set('mobile', cellOf(r, map, 'mobile'));
+          if (!m.phone && m.mobile) m.phone = m.mobile; set('addr', cellOf(r, map, 'addr'));
+          const g = gradeOf(cellOf(r, map, 'grade')); if (g >= 0) m.grade = g; else if (isNew) m.grade = 5;
+          const memo = cellOf(r, map, 'memo'), bt = (cellOf(r, map, 'biztype') + ' ' + cellOf(r, map, 'bizitem')).trim();
+          if (isNew) m.memo = ((memo ? memo + ' · ' : '') + (bt ? '업태/종목 ' + bt : '')).trim(); else if (memo) m.memo = memo;
+          put('merchants', m);
+        });
+        render(); toast('가맹점 ' + add + '곳 등록, ' + upd + '곳 갱신했어요. 잘못되면 관리자 → 가맹점 보호·복원에서 되돌릴 수 있어요.');
+      });
+    };
+  });
+};
+
+// ---------- 단체 문자 (휴대폰 문자 앱으로 한 곳씩 — 나중에 알리고 연동으로 PC·앱에서 바로 발송 예정) ----------
+const mobileOf = m => { let d = (m.phone || '').replace(/\D/g, ''); if (d.startsWith('01') && d.length >= 10 && d.length <= 11) return d; d = (m.mobile || '').replace(/\D/g, ''); return d.startsWith('01') && d.length >= 10 && d.length <= 11 ? d : ''; };
+const isIOS = () => /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const smsBytes = t => [...t].reduce((s, c) => s + (c.charCodeAt(0) > 127 ? 2 : 1), 0);
+function viewSms() {
+  S.smsSel = S.smsSel || new Set();
+  if (S.smsQ) return viewSmsSend();
+  const t = keepVal('sms', ''), by = smsBytes(t);
+  return '<h1>단체 문자 보내기</h1><div class="sub">고른 가맹점에 한 곳씩 휴대폰의 문자 앱을 열어 드려요. 받는 분들끼리 번호가 보이지 않고, 문자 요금은 그 휴대폰 요금제로 나가요.' + (isWide() ? ' <b>PC에서는 문자 앱이 없어서 보낼 수 없어요 — 휴대폰(아이폰 웹앱·안드로이드 앱)에서 보내 주세요.</b> 알리고 연동 후에는 PC에서도 바로 보낼 수 있게 할게요.' : '') + '</div>' +
+    '<label class="fl" for="f_sms">보낼 내용 ({상호} 는 가맹점 이름으로 바뀌어요)</label><textarea id="f_sms" data-keep="sms" placeholder="예: {상호} 사장님, 안녕하세요. 나인페이먼츠입니다.">' + esc(t) + '</textarea><div class="sub" id="smscnt">' + t.length + '자 · ' + by + '바이트' + (by > 90 ? ' (90바이트를 넘으면 장문 문자로 나가요)' : '') + '</div>' +
+    '<h2>받는 가맹점</h2><div class="pills">' + GRADES.map((g, i) => g ? '<button class="pill" data-act="smsGrade" data-arg="' + i + '">' + g.split(' ')[0] + ' 등급</button>' : '').join('') + '<button class="pill" data-act="smsAll">보이는 전체 선택</button><button class="pill" data-act="smsNone">선택 해제</button></div>' +
+    '<input id="smsq" data-q="smsq" placeholder="🔍 상호·초성·번호" value="' + esc(S.smsq || '') + '"><div class="qres" data-for="smsq">' + smsList() + '</div>' +
+    '<button class="btn gold full" data-act="smsStart">문자 보내기 시작 (' + S.smsSel.size + '곳)</button>';
+}
+function smsVisible() { return list('merchants').filter(m => kmatch(mHay(m), S.smsq || '')).sort((a, b) => (a.name || '').localeCompare(b.name || '')); }
+function smsList() {
+  const vs = smsVisible();
+  return '<div class="sub" style="font-weight:700">선택 ' + S.smsSel.size + '곳 · 보이는 가맹점 ' + vs.length + '곳 (유선 번호만 있는 곳은 고를 수 없어요)</div>' + vs.slice(0, 300).map(m => { const mo = mobileOf(m);
+    return '<label class="chk' + (mo ? '' : ' off') + '"><input type="checkbox" data-act="smsTog" data-arg="' + m.id + '"' + (S.smsSel.has(m.id) ? ' checked' : '') + (mo ? '' : ' disabled') + '><span class="grow">' + esc(m.name) + ' <small style="color:var(--gray)">' + esc(mo || '휴대폰 번호 없음') + (gradeLabel(m.grade) ? ' · ' + gradeLabel(m.grade) : '') + '</small></span></label>'; }).join('');
+}
+ACT.smsTog = (id, el) => { id = Number(id); if (el.checked) S.smsSel.add(id); else S.smsSel.delete(id); refreshSmsCount(); };
+function refreshSmsCount() { const b = document.querySelector('[data-act=smsStart]'); if (b) b.textContent = '문자 보내기 시작 (' + S.smsSel.size + '곳)'; refreshResults(); }
+ACT.smsGrade = g => { list('merchants').forEach(m => { if (Number(m.grade) === Number(g) && mobileOf(m)) S.smsSel.add(m.id); }); render(); };
+ACT.smsAll = () => { smsVisible().forEach(m => { if (mobileOf(m)) S.smsSel.add(m.id); }); render(); };
+ACT.smsNone = () => { S.smsSel.clear(); render(); };
+ACT.smsStart = () => {
+  const t = keepVal('sms', '').trim(); if (!t) return toast('보낼 내용을 적어 주세요.'); if (!S.smsSel.size) return toast('받을 가맹점을 골라 주세요.');
+  S.smsQ = [...S.smsSel].filter(id => byId('merchants', id) && mobileOf(byId('merchants', id))); S.smsPos = 0; S.smsText = t; render();
+};
+function viewSmsSend() {
+  if (S.smsPos >= S.smsQ.length) return '<h1>단체 문자</h1><div class="hero"><div>다 보냈어요</div><div class="n">' + S.smsQ.length + '곳</div><div style="font-size:13px">문자 앱의 보낸 기록에서 실제로 보내졌는지 확인해 주세요.</div></div><button class="btn full" data-act="smsStop">처음으로</button>';
+  const m = byId('merchants', S.smsQ[S.smsPos]), num = mobileOf(m), body = S.smsText.replace(/\{상호\}/g, m.name || '');
+  const href = 'sms:' + num + (isIOS() ? '&' : '?') + 'body=' + encodeURIComponent(body);
+  return '<h1>단체 문자 (' + (S.smsPos + 1) + ' / ' + S.smsQ.length + ')</h1><div class="card flat"><div class="t1">' + esc(m.name) + '</div><div class="t2">' + esc(num) + '</div><div class="mtext" style="margin-top:8px">' + esc(body) + '</div></div>' +
+    (isWide() ? '<div class="sub">PC에서는 문자 앱을 열 수 없어요. 휴대폰에서 이어서 보내 주세요. (알리고 연동 후 PC 바로 발송 예정)</div><button class="btn tint full" data-act="smsCopy">남은 번호 모두 복사</button>'
+      : '<a class="btn gold full" style="display:block;text-align:center;text-decoration:none" href="' + esc(href) + '" data-act="smsNext">문자 앱 열기 → 보내고 돌아오면 다음 가맹점</a>') +
+    '<div class="btns"><button class="btn" data-act="smsSkip">건너뛰기</button><button class="btn red" data-act="smsStop">중단</button></div>';
+}
+ACT.smsNext = () => { setTimeout(() => { S.smsPos++; render(); }, 600); };
+ACT.smsSkip = () => { S.smsPos++; render(); };
+ACT.smsStop = () => { S.smsQ = null; render(); };
+ACT.smsCopy = () => { const nums = S.smsQ.slice(S.smsPos).map(id => mobileOf(byId('merchants', id))).join(', '); try { navigator.clipboard.writeText(nums); toast('번호를 복사했어요.'); } catch (e) { toast('복사하지 못했어요.'); } };
+
 // ---------- 입금 확인 ----------
 const DEP_KINDS = ['판매대금', '미납금', '정보변경수수료', '기타'];
 function postToRoom(name, text) { // 이름이 맞는 채팅방에 알림 글을 올린다 (없으면 만든다) — 앱과 같다
@@ -1383,14 +1635,14 @@ async function autoBackup() {
     if (prev > n || (prev === n && Date.now() - last < 3 * 3600 * 1000)) return; // 오늘 더 많은 자료로 저장했으면 덮지 않는다
     const b = await buildBackup(); await idbDo('readwrite', st => st.put(JSON.stringify(b), day));
     LS('bkcnt_' + day, String(n)); LS('bkt_' + day, String(Date.now()));
-    const keys = await idbDo('readonly', st => st.getAllKeys()); const old = (keys || []).sort().slice(0, -14); if (old.length) await idbDo('readwrite', st => old.forEach(k => st.delete(k)));
+    const keys = await idbDo('readonly', st => st.getAllKeys()); const old = (keys || []).filter(k => !String(k).startsWith('snap_')).sort().slice(0, -14); if (old.length) await idbDo('readwrite', st => old.forEach(k => st.delete(k)));
   } catch (e) {}
 }
 ACT.pcBackups = async () => {
   if (!can('staff_manage')) return;
   let keys = []; try { keys = (await idbDo('readonly', st => st.getAllKeys())) || []; } catch (e) {}
   modal('<h3>이 PC에 보관된 자동 백업</h3><div class="sub">관리자가 웹앱을 열면 하루 한 번 이 PC 안에 저절로 보관돼요(14일치). 눌러서 파일로 내려받아요.</div>' +
-    (keys.length ? keys.sort().reverse().map(k => '<button class="mi" data-act="pcBackupGet" data-arg="' + k + '"><span>' + k.replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3') + '</span><em>내려받기 ›</em></button>').join('') : '<div class="empty">아직 보관된 백업이 없어요.</div>') +
+    (keys.length ? keys.sort().reverse().map(k => '<button class="mi" data-act="pcBackupGet" data-arg="' + k + '"><span>' + (String(k).startsWith('snap_') ? '되돌리기 기준점 · ' + String(k).slice(5).replace(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})_/, '$1-$2-$3 $4:$5 · ') : '자동 백업 · ' + k.replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3')) + '</span><em>내려받기 ›</em></button>').join('') : '<div class="empty">아직 보관된 백업이 없어요.</div>') +
     '<button class="btn full" data-act="close">닫기</button>');
 };
 ACT.pcBackupGet = async k => { try { const t = await idbDo('readonly', st => st.get(k)); if (t) saveFile('ninefamily_autobackup_' + k + '.json', t); } catch (e) { toast('꺼내지 못했어요.'); } };
@@ -1422,10 +1674,10 @@ function menuItems() {
   add('일', '재고', '재고 장비 바코드 시리얼 단가 입고 출고 스캔', 'nav:all:stock');
   add('일', '가맹점', '가맹점 거래처 상호 사업자 삭제', 'nav:all:merchants');
   add('일', '가맹점 응대 기록 조회', '응대 기록 AS 전화 응대 방문 메모 이력 날짜 가맹점', 'nav:all:logs');
-  add('일', '가맹점 일괄 가져오기 (엑셀·이카운트)', '가맹점 일괄 가져오기 업로드 엑셀 csv 이카운트');
+  add('일', '가맹점 일괄 가져오기 (엑셀·이카운트)', '가맹점 일괄 가져오기 업로드 엑셀 csv 이카운트', 'act:importM');
   const ex = expiringContracts().length;
   add('일', '계약 관리 (설치 완료·만료 알림)', '계약 설치 완료 만료 알림 장비', 'nav:all:contracts', ex ? '만료 ' + ex : ''); add('일', '신규 계약 올리기', '신규 계약 올리기 CMS 판매 렌탈', 'act:newContract');
-  add('일', '입금 확인 (입금 내역 올리기)', '입금 확인 입금 내역 미납금 판매대금 정보변경수수료', 'nav:all:deposit'); add('일', '단체 문자 보내기 (가맹점)', '단체 문자 sms 발송 가맹점 문자 안내');
+  add('일', '입금 확인 (입금 내역 올리기)', '입금 확인 입금 내역 미납금 판매대금 정보변경수수료', 'nav:all:deposit'); add('일', '단체 문자 보내기 (가맹점)', '단체 문자 sms 발송 가맹점 문자 안내', 'nav:all:sms');
   add('일', '내 실적', '내 실적 월별 성장률 계약', 'nav:all:myperf');
   if (P) { add('일', '전체 실적·직원별 순위', '전체 실적 직원별 순위 성장률', 'nav:all:perf'); add('일', '수익 현황 (입고·출고 단가)', '수익 현황 입고 출고 단가 매출 매입', 'nav:all:profit'); add('일', '실적 보고서 올리기 (대표님께)', '실적 보고서 올리기 대표님 본부장', 'nav:all:perfreport'); }
   add('일', '일일보고 쓰기', '일일보고 보고 오늘 한 일', 'nav:all:daily');
@@ -1435,10 +1687,10 @@ function menuItems() {
   add('회사', '사용설명서', '사용설명서 매뉴얼 도움말 사용법 설치', 'nav:all:manual'); add('회사', '버전·업데이트 내역', '버전 업데이트 내역 변경 이력', 'nav:all:about');
   add('회사', '공지사항', '공지사항 공지 알림', 'nav:all:notice', nu ? String(nu) : '');
   if (A) {
-    add('관리자', '데이터 백업 내려받기', '데이터 백업 내려받기 저장 내보내기 json', 'act:backupDownload'); add('관리자', 'PC에 보관된 자동 백업', '자동 백업 보관 PC 복원', 'act:pcBackups'); add('관리자', '가맹점 보호·복원', '가맹점 보호 복원 되돌리기 삭제 복구 휴지통');
+    add('관리자', '데이터 백업 내려받기', '데이터 백업 내려받기 저장 내보내기 json', 'act:backupDownload'); add('관리자', 'PC에 보관된 자동 백업', '자동 백업 보관 PC 복원', 'act:pcBackups'); add('관리자', '가맹점 보호·복원', '가맹점 보호 복원 되돌리기 삭제 복구 휴지통', 'act:safety');
     add('관리자', '가맹점 수정 암호', '가맹점 수정 암호 잠금 비밀번호 설정 변경', 'act:mlockSet', lk ? '설정됨' : '아직 없음');
     if (lk) add('관리자', '가맹점 수정 암호 끄기', '가맹점 수정 암호 끄기 잠금 해제', 'act:mlockOff');
-    add('관리자', '직원과 권한', '직원 권한 등록 사용 중지 관리자');
+    add('관리자', '직원과 권한', '직원 권한 등록 사용 중지 관리자', 'nav:all:staff');
   }
   add('계정', '내 프로필 (사진·상태 메시지)', '프로필 사진 상태 메시지 내 정보', 'act:myProfile');
   const np = 'Notification' in window ? Notification.permission : 'none';
@@ -1495,6 +1747,7 @@ function viewHome() {
 
 // ---------- 사용설명서 · 버전 내역 (웹) ----------
 const WEB_CHANGES = [
+  ['웹 0.0.10', '2026-10-24', ['직원과 권한(최고관리자): 직원 추가(권한 묶음), 항목별 권한 켜고 끄기, 사용 중지·다시 사용 — 로그인 번호와 서버 권한도 같이 맞춰요', '가맹점 보호·복원(최고관리자): 삭제한 가맹점 복원, 가맹점별 변경 이력과 그 시점으로 되돌리기, 백업 파일로 복원, 되돌리기 기준점(위험한 작업 직전에 자동 저장)', '가맹점 일괄 가져오기: 엑셀(.xlsx)·CSV, 미리보기 후 등록·갱신(거래처코드·사업자번호·상호로 같은 곳 찾기)', '단체 문자: 내용({상호} 자동 바꿈)·등급별·검색으로 가맹점 고르기, 휴대폰에서 한 곳씩 문자 앱 열기 (PC는 알리고 연동 후 바로 발송 예정)', '이제 안드로이드 앱의 전체 메뉴 기능이 웹에도 모두 들어왔어요']],
   ['웹 0.0.9', '2026-10-24', ['일일보고 쓰기: 날짜별로 쓰고 제출(완료 업무·올린 계약 자동 집계), 내가 낸 보고', '일일보고 종합 보기(보고 열람 권한자): 직원별 제출·미제출', '실적 보고서: 실적 권한자는 이달 실적 자동 집계를 고쳐서 대표님께 보고, 보고 열람 권한자는 올라온 보고서 보기', '자료실: 분류·검색, 자료 올리기(파일 5개·3MB, 사진은 자동으로 줄여서), 받기, 수정·삭제(올린 사람·관리자)', '비상연락망: 구분별 목록, 눌러서 전화, 추가·수정·삭제', '내 프로필: 사진 변경·상태 메시지, 다른 직원 프로필에서 1:1 대화·전화, 채팅 직원 줄에 프로필 사진']],
   ['웹 0.0.8', '2026-10-24', ['내 실적: 이번 달 신규 계약·판매금액, 지난달과 비교(성장률), 최근 6개월, 올린 계약', '전체 실적·직원별 순위(실적 권한자): 직원별 대수·판매·CMS·렌탈·판매금액 순위, 직원별 지난달→이번 달 막대', '수익 현황(실적 권한자): 총 수익·월 수익·최근 6개월·직원별 수익, 단가 안 적은 출고 장비 바로 입력', '지난 업무 기록: 완료된 업무 검색(전체 이력 권한이 있으면 모두, 없으면 내 것)']],
   ['웹 0.0.7', '2026-10-24', ['안드로이드 앱과 맞춤: 업무 상태 변경은 담당자·최고관리자, 업무 삭제는 만든 사람·최고관리자', '서류 업무(서류 접수·카드사 서류)를 지시하면 ‘서류접수’ 채팅방에 자동으로 알림', '계약 만료 3개월 이내 계약이 있으면 업무 화면 위에 알림 카드', '일정: 다가오는 일정 목록, 일정을 누르면 내용·가맹점 정보 보기, 관리자는 일정 삭제', '가맹점 등급 코드(0~7) 입력·표시', '공지: 작성 권한자·관리자는 읽은 사람 목록', '채팅: 나인이 프렌즈 스티커 80종·이모지, 말풍선 누르면 반응·답장·복사·내 메시지 삭제, 두 번 누르면 ❤️, 글 속 웹 주소 누르면 열림', '가맹점 응대 기록: 종류·날짜로 걸러 보기']],
@@ -1527,7 +1780,9 @@ const WEB_MANUAL = [
   ['저장 상태', '저장하면 화면 위에 ‘저장 중’이 잠깐 보였다가 사라져요. 인터넷이 끊기면 ‘저장 대기’로 바뀌고, 다시 연결되면 저절로 서버에 저장돼요. 이 띠가 남아 있는 동안에는 웹앱을 닫지 마세요.\n가맹점 수정 창을 연 사이 다른 직원이 같은 가맹점을 고치면, 저장할 때 바뀐 항목을 알려 주고 덮어쓸지 한 번 더 물어요.'],
   ['실적 · 수익', '전체 → 내 실적: 계약일 기준으로 이번 달 내 신규 계약과 지난달 비교를 봐요. ‹ › 로 달을 바꿔요.\n전체 실적·직원별 순위, 수익 현황은 실적 보기 권한이 있는 사람만 보여요. 수익은 출고된 장비의 출고 단가 − 입고 단가로 계산하고, 단가를 안 적은 장비는 아래 목록에서 눌러 적으면 바로 반영돼요.\n지난 업무 기록: 완료된 업무를 제목·거래처·담당자·완료 메시지로 찾아요.'],
   ['보고 · 자료실 · 연락망 · 프로필', '일일보고 쓰기: ‹ › 로 날짜를 고르고 오늘 한 일을 적어 제출해요. 같은 날 다시 내면 수정본으로 바뀌어요. 보고 열람 권한이 있으면 일일보고 종합에서 직원별 제출 여부를 봐요.\n실적 보고서: 실적 권한이 있으면 자동 집계된 내용을 고쳐 대표님께 올려요.\n자료실: + 로 제목·설명·분류와 파일(5개, 3MB까지)을 올려요. 올린 사람과 관리자만 고치고 지워요.\n비상연락망: 번호를 누르면 전화가 걸려요. + 로 추가, 수정 버튼으로 고쳐요.\n내 프로필: 전체 탭 맨 위 내 카드를 눌러 사진과 상태 메시지를 바꿔요.'],
-  ['아직 앱에서만 되는 기능', '단체 문자, 자료실, 비상연락망, 직원과 권한, 백업, 가맹점 일괄 가져오기 등은 전체 메뉴 맨 아래 ‘아직 안드로이드 앱에서만 되는 기능’에 접혀 있어요. 웹에도 차례로 넣고 있어요.']
+  ['직원 · 보호 · 가져오기 · 문자', '직원과 권한(최고관리자): + 로 이름·번호·권한 묶음을 넣어 등록해요. 직원을 눌러 권한을 바꾸거나 사용 중지해요. 마지막 관리자는 끌 수 없어요.\n가맹점 보호·복원(최고관리자): 삭제한 가맹점 복원, 백업 파일로 복원, 기준점 만들기. 가맹점 하나의 변경 이력은 가맹점 정보 창의 ‘🕘 변경 이력’에서 보고 되돌려요. 복원·되돌리기·가져오기 직전 상태는 이 PC에 자동 저장돼요.\n가맹점 일괄 가져오기: 이카운트 등에서 받은 .xlsx 또는 CSV를 고르면 미리보기를 보여 주고 등록·갱신해요.\n단체 문자: 휴대폰에서 내용을 쓰고 가맹점을 고른 뒤 한 곳씩 문자 앱을 열어 보내요. PC는 알리고 연동 후에 바로 보낼 수 있어요.'],
+  ['남은 차이', '채팅 방 이름 변경·초대·음소거·방 안 검색, 프로젝트 항목 삭제·진행 기록, 시리얼 사진 인식 등 세부 기능은 계속 맞춰 갈게요.'],
+  ['예전 안내', '단체 문자, 자료실, 비상연락망, 직원과 권한, 백업, 가맹점 일괄 가져오기 등은 전체 메뉴 맨 아래 ‘아직 안드로이드 앱에서만 되는 기능’에 접혀 있어요. 웹에도 차례로 넣고 있어요.']
 ];
 function viewManual() { return '<h1>사용설명서</h1><div class="sub">나인패밀리 ' + VERSION + ' 기준</div>' + WEB_MANUAL.map(([t, b]) => '<div class="card flat"><div class="t1">' + esc(t) + '</div><div class="mtext">' + esc(b) + '</div></div>').join(''); }
 
