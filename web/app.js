@@ -2,7 +2,7 @@
 /* 나인패밀리 웹앱 — 앱과 같은 Firebase(nine-family)를 쓴다. 문서는 {j: JSON문자열, u: 시각} 형식. */
 const CFG = {apiKey: 'AIzaSyCsA-M6QGGGk0owyDXzziv1X79TqF5NptI', authDomain: 'nine-family.firebaseapp.com', projectId: 'nine-family',
   storageBucket: 'nine-family.firebasestorage.app', messagingSenderId: '48232341344', appId: '1:48232341344:web:19be016c9c1c1de5a34805'};
-const VERSION = '웹 0.0.10';
+const VERSION = '웹 0.0.11';
 const DEMO = location.hash === '#demo';
 const COLLS = ['users', 'tasks', 'notices', 'projects', 'events', 'merchants', 'rooms', 'msgs', 'profiles', 'mlogs', 'config', 'stock', 'contracts', 'deposits', 'costs', 'reports', 'library', 'contacts'];
 const TYPES = ['신규 설치', 'AS', '영업 방문', '서류 접수', '카드사 서류', '기타'];
@@ -1696,6 +1696,7 @@ function menuItems() {
   const np = 'Notification' in window ? Notification.permission : 'none';
   add('계정', '알림 받기 (이 기기)', '알림 푸시 소리 새 업무 채팅', 'act:notifyOn', np === 'granted' ? '켜짐' : np === 'none' ? '소리만' : '꺼짐');
   add('계정', '알림 소리', '알림 소리 진동 끄기 켜기', 'act:soundToggle', soundOn() ? '켜짐' : '꺼짐');
+  if (!/Electron/.test(navigator.userAgent)) add('계정', 'PC 프로그램 설치 파일 받기 (윈도우)', 'PC 설치 파일 다운로드 윈도우 exe 프로그램', 'act:pcSetup');
   add('계정', '로그아웃', '로그아웃 나가기', 'act:logout');
   return it;
 }
@@ -1721,6 +1722,8 @@ function viewMenu(wide) {
   return '<h1>전체</h1><div class="card row prof" data-act="myProfile">' + avatarHTML(S.uid, 48) + '<div class="grow"><div class="t1">' + esc(S.me.name) + '</div><div class="t2">' + (can('staff_manage') ? '관리자' : '직원') + '</div><div class="t2" style="font-size:11px">눌러서 프로필 사진·상태 메시지 바꾸기</div></div></div>' +
     search + '<div class="qres" data-for="allQ">' + (html || '<div class="empty">찾는 기능이 없어요.</div>') + '</div>' + note;
 }
+const PC_SETUP = 'https://github.com/ninepayments/Work-app/releases/latest/download/NineFamily-Setup.exe';
+ACT.pcSetup = () => askConfirm('PC 프로그램 설치 파일 받기', '윈도우 PC용 나인패밀리 설치 파일(.exe)을 받아요. 받은 파일을 실행하면 바탕화면과 시작 메뉴에 ‘나인패밀리’가 생겨요.\n처음 실행할 때 ‘Windows의 PC 보호’ 창이 뜨면 ‘추가 정보’ → ‘실행’을 눌러 주세요.\n화면과 기능은 웹앱과 같고, 웹이 바뀌면 다시 설치하지 않아도 바로 바뀌어요.', '받기', () => { location.href = PC_SETUP; });
 ACT.appOnly = lb => toast('‘' + lb + '’은(는) 아직 안드로이드 앱에서만 쓸 수 있어요. 웹에도 차례로 넣고 있어요.');
 ACT.back = () => { S.sub = ''; render(); };
 ACT.menu = () => { S.menu = !S.menu; render(); };
@@ -1747,6 +1750,7 @@ function viewHome() {
 
 // ---------- 사용설명서 · 버전 내역 (웹) ----------
 const WEB_CHANGES = [
+  ['웹 0.0.11', '2026-10-24', ['윈도우 PC용 설치 프로그램(나인패밀리 설치 .exe) — 전체 → 계정 → PC 프로그램 설치 파일 받기. 토스포스처럼 설치해서 쓰고, 화면·기능은 웹앱과 같아요']],
   ['웹 0.0.10', '2026-10-24', ['직원과 권한(최고관리자): 직원 추가(권한 묶음), 항목별 권한 켜고 끄기, 사용 중지·다시 사용 — 로그인 번호와 서버 권한도 같이 맞춰요', '가맹점 보호·복원(최고관리자): 삭제한 가맹점 복원, 가맹점별 변경 이력과 그 시점으로 되돌리기, 백업 파일로 복원, 되돌리기 기준점(위험한 작업 직전에 자동 저장)', '가맹점 일괄 가져오기: 엑셀(.xlsx)·CSV, 미리보기 후 등록·갱신(거래처코드·사업자번호·상호로 같은 곳 찾기)', '단체 문자: 내용({상호} 자동 바꿈)·등급별·검색으로 가맹점 고르기, 휴대폰에서 한 곳씩 문자 앱 열기 (PC는 알리고 연동 후 바로 발송 예정)', '이제 안드로이드 앱의 전체 메뉴 기능이 웹에도 모두 들어왔어요']],
   ['웹 0.0.9', '2026-10-24', ['일일보고 쓰기: 날짜별로 쓰고 제출(완료 업무·올린 계약 자동 집계), 내가 낸 보고', '일일보고 종합 보기(보고 열람 권한자): 직원별 제출·미제출', '실적 보고서: 실적 권한자는 이달 실적 자동 집계를 고쳐서 대표님께 보고, 보고 열람 권한자는 올라온 보고서 보기', '자료실: 분류·검색, 자료 올리기(파일 5개·3MB, 사진은 자동으로 줄여서), 받기, 수정·삭제(올린 사람·관리자)', '비상연락망: 구분별 목록, 눌러서 전화, 추가·수정·삭제', '내 프로필: 사진 변경·상태 메시지, 다른 직원 프로필에서 1:1 대화·전화, 채팅 직원 줄에 프로필 사진']],
   ['웹 0.0.8', '2026-10-24', ['내 실적: 이번 달 신규 계약·판매금액, 지난달과 비교(성장률), 최근 6개월, 올린 계약', '전체 실적·직원별 순위(실적 권한자): 직원별 대수·판매·CMS·렌탈·판매금액 순위, 직원별 지난달→이번 달 막대', '수익 현황(실적 권한자): 총 수익·월 수익·최근 6개월·직원별 수익, 단가 안 적은 출고 장비 바로 입력', '지난 업무 기록: 완료된 업무 검색(전체 이력 권한이 있으면 모두, 없으면 내 것)']],
@@ -1764,6 +1768,7 @@ function viewAbout() {
 }
 const WEB_MANUAL = [
   ['처음 시작하기', '등록된 휴대폰 번호로 문자 인증을 하면 로그인돼요. 한 번 로그인하면 계속 유지돼요.\n아이폰: Safari 로 열고 공유 버튼 → ‘홈 화면에 추가’ 하면 앱처럼 써요.\nPC: 크롬·엣지 주소창 오른쪽의 설치 버튼(또는 전체 메뉴 → PC에 설치하기).'],
+  ['PC 프로그램', '전체(☰) → 계정 → ‘PC 프로그램 설치 파일 받기’로 윈도우용 설치 파일을 받아 실행하면 바탕화면·시작 메뉴에 ‘나인패밀리’가 생겨요. 처음 실행할 때 ‘Windows의 PC 보호’ 창이 뜨면 ‘추가 정보’ → ‘실행’을 눌러 주세요.\n프로그램은 이 웹앱을 창으로 띄우는 방식이라, 웹이 바뀌면 다시 설치하지 않아도 바로 바뀌어요. 로그인은 웹과 같은 휴대폰 번호 인증이에요.'],
   ['화면 구성', '휴대폰: 안드로이드 앱과 같아요. 아래 탭 업무·프로젝트·채팅·일정·전체, 나머지 기능은 전체 탭에 있어요.\nPC: 위쪽 가로줄이 주 메뉴(업무·채팅·일정·가맹점·응대 기록)예요. 왼쪽 위 ☰ 를 누르면 계정·회사·일·관리자로 묶인 전체 메뉴가 펼쳐지고, ‘나인패밀리’를 누르면 홈(오늘 현황)으로 가요.\n안드로이드 앱·아이폰·PC 는 같은 서버를 써서 바로 서로 반영돼요.'],
   ['업무', '오른쪽 아래 + 로 업무를 지시해요. 업무를 눌러 진행 시작·보류·완료를 바꾸고, 완료할 때는 처리 결과를 한 줄 남겨요.'],
   ['프로젝트', '+ 로 만들고 체크리스트를 채우면 진행률이 자동으로 올라가요.'],

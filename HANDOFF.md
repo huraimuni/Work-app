@@ -7,6 +7,7 @@
 - 웹앱(PWA): `web/` (바닐라 JS, Firebase compat SDK). PC 설치형 + 아이폰 홈 화면 추가. GitHub Pages 배포(`.github/workflows/web.yml`). 웹 버전은 `web/app.js` 의 `VERSION`, 웹 변경 내역·사용설명서는 같은 파일의 `WEB_CHANGES`·`WEB_MANUAL`.
 - 웹 화면 구성(웹 0.0.3~): 폭 900px 미만(아이폰)은 안드로이드 앱과 같은 화면(아래 탭 업무·프로젝트·채팅·일정·전체, 나머지는 전체 탭). 900px 이상(PC)은 토스포스 방식(위쪽 가로줄 주 메뉴 업무·채팅·일정·가맹점·응대 기록, 왼쪽 위 ☰ = 계정·회사·일·관리자 전체 메뉴, 로고 = 홈 '오늘 현황'). 시안: claude.ai 아티팩트 '나인패밀리 웹앱 화면 시안'.
 - 서버: Firebase 프로젝트 `nine-family` (Spark 요금제). Firestore + 전화번호 인증. 보안 규칙은 `firestore.rules` (콘솔에서 사용자가 게시).
+- PC 프로그램: `pc/` (Electron 33, 웹앱 주소를 창으로 띄움). `.github/workflows/pc.yml` 이 windows-latest 에서 NSIS 설치 파일을 만들어 `pc-v버전` 릴리스(최신)로 올림. 받기 주소 `https://github.com/ninepayments/Work-app/releases/latest/download/NineFamily-Setup.exe` (APK 릴리스는 prerelease 라 latest 가 아님). 서명 인증서가 없어 첫 실행 때 SmartScreen 경고. 프로그램 자체를 바꿀 때만 `pc/package.json` version 을 올림.
 - 빌드: `.github/workflows/build.yml` 이 main 푸시 때 APK 빌드 후 `vX-test` 시험판 릴리스에 올림 (웹 변경만이면 건너뜀).
 - 저장소: `ninepayments/Work-app` (2026-10-24 huraimuni 에서 이전). 웹앱 주소 `https://ninepayments.github.io/Work-app/` (Pages Source = GitHub Actions). Firebase 로그인 허용 도메인에 `ninepayments.github.io` 추가됨.
 
