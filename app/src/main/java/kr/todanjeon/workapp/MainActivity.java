@@ -92,8 +92,71 @@ public class MainActivity extends Activity {
             me = store.sessionUser();
             if (me != null) buildMain();
         } else if (nav != null) {
-            if (inRoom) fillMsgs();
-            else render();
+            if (inRoom) {
+                fillMsgs();
+            } else { // 연달아 오는 갱신은 한 번으로 묶고, 보던 위치·검색어는 그대로 둔다
+                uiHandler.removeCallbacks(refreshTask);
+                uiHandler.postDelayed(refreshTask, 250);
+            }
+        }
+    }
+
+    private final android.os.Handler uiHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable refreshTask = this::renderKeepState;
+
+    private static void collectEdits(View v, List<EditText> out) {
+        if (v instanceof EditText) out.add((EditText) v);
+        else if (v instanceof ViewGroup) {
+            ViewGroup g = (ViewGroup) v;
+            for (int i = 0; i < g.getChildCount(); i++) collectEdits(g.getChildAt(i), out);
+        }
+    }
+
+    /** 화면을 다시 그리되 스크롤 위치·입력 중인 검색어·커서를 되살린다. */
+    private void renderKeepState() {
+        if (me == null || nav == null || inRoom) return;
+        final int sy = scroll == null ? 0 : scroll.getScrollY();
+        List<EditText> before = new ArrayList<>();
+        if (fixedTop != null) collectEdits(fixedTop, before);
+        collectEdits(content, before);
+        List<String> txt = new ArrayList<>();
+        int focus = -1, sel = 0;
+        for (int i = 0; i < before.size(); i++) {
+            txt.add(before.get(i).getText().toString());
+            if (before.get(i).hasFocus()) {
+                focus = i;
+                sel = before.get(i).getSelectionStart();
+            }
+        }
+        render();
+        List<EditText> after = new ArrayList<>();
+        if (fixedTop != null) collectEdits(fixedTop, after);
+        collectEdits(content, after);
+        if (after.size() == txt.size()) {
+            for (int i = 0; i < after.size(); i++) {
+                EditText e = after.get(i);
+                if (!e.isFocusable() || e.getText().toString().equals(txt.get(i))) continue; // 날짜·시간 칸은 건드리지 않음
+                e.setText(txt.get(i));
+            }
+            if (focus >= 0) {
+                EditText e = after.get(focus);
+                e.requestFocus();
+                try {
+                    e.setSelection(Math.min(sel, e.getText().length()));
+                } catch (Exception ignored) {
+                }
+            }
+        }
+        if (scroll != null && sy > 0) {
+            final View sv = scroll;
+            sv.getViewTreeObserver().addOnPreDrawListener(new android.view.ViewTreeObserver.OnPreDrawListener() {
+                @Override
+                public boolean onPreDraw() {
+                    sv.getViewTreeObserver().removeOnPreDrawListener(this);
+                    scroll.scrollTo(0, sy);
+                    return true;
+                }
+            });
         }
     }
 
@@ -259,7 +322,23 @@ public class MainActivity extends Activity {
         setContentView(authScreen("오늘도 반갑습니다.", "등록된 휴대폰 번호로 문자 인증을 해 주세요.\n(한 번 로그인하면 계속 유지됩니다)\n\n나인패밀리 " + appVersion(), card));
     }
 
+    /** 인증 오류를 사람이 알아볼 말로. */
+    private String authErrorText(Exception e) {
+        String s = String.valueOf(e.getMessage()).toLowerCase(Locale.ROOT);
+        if (e instanceof com.google.firebase.FirebaseTooManyRequestsException || s.contains("too many") || s.contains("blocked") || s.contains("quota"))
+            return "인증 요청이 너무 많아 잠시 막혔어요. 30분쯤 뒤에 다시 시도해 주세요.";
+        if (e instanceof com.google.firebase.auth.FirebaseAuthInvalidCredentialsException && s.contains("phone"))
+            return "휴대폰 번호 형식이 맞지 않아요. 010 으로 시작하는 번호를 다시 확인해 주세요.";
+        if (s.contains("network") || s.contains("timeout") || s.contains("unreachable"))
+            return "인터넷 연결이 불안정해요. Wi-Fi나 데이터를 확인하고 다시 시도해 주세요.";
+        return "문자 인증을 시작하지 못했어요. 잠시 뒤 다시 시도해 주세요.\n(" + e.getMessage() + ")";
+    }
+
     private void sendCode(final String e164, final Button go) {
+        sendCode(e164, go, false);
+    }
+
+    private void sendCode(final String e164, final Button go, boolean resend) {
         com.google.firebase.auth.PhoneAuthOptions.Builder ob = com.google.firebase.auth.PhoneAuthOptions.newBuilder(Cloud.auth())
                 .setPhoneNumber(e164)
                 .setTimeout(60L, java.util.concurrent.TimeUnit.SECONDS)
@@ -273,8 +352,8 @@ public class MainActivity extends Activity {
                     @Override
                     public void onVerificationFailed(com.google.firebase.FirebaseException e) {
                         showLogin();
-                        new AlertDialog.Builder(MainActivity.this).setTitle("문자 인증을 시작하지 못했습니다")
-                                .setMessage(String.valueOf(e.getMessage())).setPositiveButton("확인", null).show();
+                        new Dlg(MainActivity.this).setTitle("문자 인증을 시작하지 못했습니다")
+                                .setMessage(authErrorText(e)).setPositiveButton("확인", null).show();
                     }
 
                     @Override
@@ -282,8 +361,10 @@ public class MainActivity extends Activity {
                         verificationId = id;
                         resendToken = t;
                         showCode(e164);
+                        if (resend) Ui.toast(MainActivity.this, "인증번호를 다시 보냈어요.");
                     }
                 });
+        if (resend && resendToken != null) ob.setForceResendingToken(resendToken);
         com.google.firebase.auth.PhoneAuthProvider.verifyPhoneNumber(ob.build());
     }
 
@@ -294,16 +375,52 @@ public class MainActivity extends Activity {
         final EditText code = Ui.field(this, "문자로 받은 인증번호 6자리", false);
         code.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
         card.addView(code);
-        Button go = Ui.button(this, "확인", Ui.GOLD, Ui.DARK);
+        final Button go = Ui.button(this, "확인", Ui.GOLD, Ui.DARK);
         go.setOnClickListener(v -> {
             String c = code.getText().toString().trim();
             if (c.length() < 6 || verificationId == null) {
                 Ui.toast(this, "인증번호 6자리를 입력해 주세요.");
                 return;
             }
+            go.setEnabled(false);
+            go.setText("확인하는 중…");
+            hideKeyboard(code);
             signIn(com.google.firebase.auth.PhoneAuthProvider.getCredential(verificationId, c), e164);
         });
+        code.addTextChangedListener(new TextWatcher() { // 6자리가 다 들어오면 바로 확인
+            public void beforeTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            public void onTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            public void afterTextChanged(Editable s) {
+                if (s.length() == 6 && go.isEnabled()) go.performClick();
+            }
+        });
+        code.requestFocus();
         card.addView(go, Ui.lp(this, 16));
+        final Button again = Ui.button(this, "인증번호 다시 받기", Ui.FIELD, Ui.INK);
+        again.setEnabled(false);
+        again.setText("인증번호 다시 받기 (60초 뒤)");
+        final android.os.CountDownTimer cd = new android.os.CountDownTimer(60000, 1000) {
+            public void onTick(long ms) {
+                again.setText("인증번호 다시 받기 (" + (ms / 1000) + "초 뒤)");
+            }
+
+            public void onFinish() {
+                again.setEnabled(true);
+                again.setText("인증번호 다시 받기");
+            }
+        };
+        cd.start();
+        again.setOnClickListener(v -> {
+            cd.cancel();
+            again.setEnabled(false);
+            again.setText("문자 보내는 중…");
+            sendCode(e164, again, true);
+        });
+        card.addView(again, Ui.lp(this, 8));
         Button back = Ui.button(this, "번호 다시 입력", Ui.FIELD, Ui.INK);
         back.setOnClickListener(v -> showLogin());
         card.addView(back, Ui.lp(this, 8));
@@ -338,7 +455,8 @@ public class MainActivity extends Activity {
                     showLogin();
                 })
         ).addOnFailureListener(e -> {
-            Ui.toast(this, "인증번호가 맞지 않습니다.");
+            boolean wrong = e instanceof com.google.firebase.auth.FirebaseAuthInvalidCredentialsException;
+            Ui.toast(this, wrong ? "인증번호가 맞지 않아요. 다시 확인해 주세요." : authErrorText(e));
             showCode(e164);
         });
     }
@@ -502,7 +620,7 @@ public class MainActivity extends Activity {
         while (nav.getChildCount() > keep) nav.removeViewAt(nav.getChildCount() - 1);
         addNav("task", "업무", newCount());
         addNav("project", "프로젝트", 0);
-        addNav("chat", "채팅", 0);
+        addNav("chat", "채팅", unreadChatTotal());
         addNav("calendar", "일정", 0);
         addNav("all", "전체", unreadNotices());
         content.removeAllViews();
@@ -691,13 +809,13 @@ public class MainActivity extends Activity {
         LinearLayout hero = new LinearLayout(this);
         hero.setOrientation(LinearLayout.VERTICAL);
         hero.setBackground(Ui.round(Ui.GOLD, 24, this));
-        hero.setPadding(Ui.dp(this, 20), Ui.dp(this, 20), Ui.dp(this, 20), Ui.dp(this, 20));
+        hero.setPadding(Ui.dp(this, 18), Ui.dp(this, 12), Ui.dp(this, 18), Ui.dp(this, 14));
         LinearLayout hr = new LinearLayout(this);
         hr.setGravity(Gravity.BOTTOM);
         LinearLayout hl = new LinearLayout(this);
         hl.setOrientation(LinearLayout.VERTICAL);
         hl.addView(Ui.text(this, "남은 업무", 14, Color.argb(200, 31, 27, 18), false));
-        hl.addView(Ui.text(this, open + "건", 34, Ui.DARK, true));
+        hl.addView(Ui.text(this, open + "건", 28, Ui.DARK, true));
         hr.addView(hl, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         TextView hs = Ui.text(this, "미확인 " + fresh + " · 진행 " + doing + " · 보류 " + held + "\n오늘 완료 " + done, 12, Color.argb(200, 31, 27, 18), false);
         hs.setGravity(Gravity.END);
@@ -719,7 +837,7 @@ public class MainActivity extends Activity {
             lp2.width = Math.round(trackF.getWidth() * ratio);
             fillF.setLayoutParams(lp2);
         });
-        hero.addView(track, Ui.lp(this, 16));
+        hero.addView(track, Ui.lp(this, 8));
         fixedTop.addView(hero);
         List<JSONObject> expList = expiringContracts();
         if (!expList.isEmpty()) {
@@ -733,7 +851,7 @@ public class MainActivity extends Activity {
                 sub = "contracts";
                 render();
             });
-            fixedTop.addView(al, Ui.lp(this, 12));
+            fixedTop.addView(al, Ui.lp(this, 8));
         }
 
         if (can(Perm.TASK_VIEW_ALL)) {
@@ -746,7 +864,7 @@ public class MainActivity extends Activity {
                 showAll = true;
                 render();
             }));
-            fixedTop.addView(row, Ui.lp(this, 16));
+            fixedTop.addView(row, Ui.lp(this, 10));
         }
         final String[] FILT = {"미완료", "미확인", "진행중", "보류", "완료"};
         final String[] FST = {"", "지시됨", "진행중", "보류", "완료"};
@@ -760,7 +878,7 @@ public class MainActivity extends Activity {
             for (int i = 1; i < FST.length; i++) if (FST[i].equals(st)) fc[i]++;
             if (!"완료".equals(st)) fc[0]++;
         }
-        fixedTop.addView(Ui.text(this, "상태별로 보기", 12, Ui.GRAY, true), Ui.lp(this, 14));
+        fixedTop.addView(Ui.text(this, "상태별로 보기", 12, Ui.GRAY, true), Ui.lp(this, 8));
         LinearLayout seg = new LinearLayout(this);
         seg.setBackground(Ui.round(Ui.FIELD, 16, this));
         seg.setPadding(Ui.dp(this, 3), Ui.dp(this, 3), Ui.dp(this, 3), Ui.dp(this, 3));
@@ -877,12 +995,12 @@ public class MainActivity extends Activity {
         f.addView(who);
         ScrollView sv = new ScrollView(this);
         sv.addView(f);
-        new AlertDialog.Builder(this).setTitle("업무 지시").setView(sv)
+        new Dlg(this).setTitle("업무 지시").setView(sv)
                 .setNegativeButton("취소", null)
                 .setPositiveButton("지시하기", (d, w) -> {
                     String ti = title.getText().toString().trim();
                     if (ti.isEmpty() || staff.isEmpty()) {
-                        Ui.toast(this, "업무 제목을 입력해 주세요.");
+                        Ui.warn(this, "업무 제목을 입력해 주세요.");
                         return;
                     }
                     int assignee = staff.get(who.getSelectedItemPosition()).optInt("id");
@@ -928,7 +1046,7 @@ public class MainActivity extends Activity {
             JSONObject e = h.optJSONObject(i);
             l.addView(Ui.text(this, e.optString("t") + "  " + store.userName(e.optInt("who")) + "\n" + e.optString("text"), 12, Ui.GRAY, false), Ui.lp(this, 4));
         }
-        final AlertDialog.Builder b = new AlertDialog.Builder(this).setTitle(t.optString("title"));
+        final AlertDialog.Builder b = new Dlg(this).setTitle(t.optString("title"));
         final AlertDialog[] dlg = new AlertDialog[1];
         final String phone = t.optString("phone");
         final String addr = t.optString("addr");
@@ -960,7 +1078,7 @@ public class MainActivity extends Activity {
                     if (dlg[0] != null) dlg[0].dismiss();
                     render();
                     if ("보류".equals(s)) {
-                        new AlertDialog.Builder(this).setTitle("보류했어요").setMessage("새 일정을 지금 다시 잡을까요? 일정 달력도 같이 바뀌어요.")
+                        new Dlg(this).setTitle("보류했어요").setMessage("새 일정을 지금 다시 잡을까요? 일정 달력도 같이 바뀌어요.")
                                 .setNegativeButton("나중에", (d2, w2) -> showTask(id)).setPositiveButton("일정 잡기", (d2, w2) -> showReschedule(t)).show();
                     } else {
                         showTask(id);
@@ -986,7 +1104,7 @@ public class MainActivity extends Activity {
         sv.addView(l);
         b.setView(sv).setPositiveButton("닫기", null);
         if (t.optInt("creator") == myId() || can(Perm.STAFF_MANAGE)) {
-            b.setNeutralButton("삭제", (d, w) -> new AlertDialog.Builder(this).setTitle("업무를 삭제할까요?")
+            b.setNeutralButton("삭제", (d, w) -> new Dlg(this).setTitle("업무를 삭제할까요?")
                     .setMessage(t.optString("title") + "\n목록과 달력에서 사라집니다.")
                     .setNegativeButton("취소", null).setPositiveButton("삭제", (d2, w2) -> {
                         try {
@@ -1023,12 +1141,11 @@ public class MainActivity extends Activity {
         f.addView(Ui.text(this, "지금 일정: " + (cur.isEmpty() ? "없음" : cur), 13, Ui.GRAY, false));
         f.addView(d, Ui.lp(this, 8));
         f.addView(tm);
-        new AlertDialog.Builder(this).setTitle("일정 다시 잡기").setView(f).setNegativeButton("취소", (x, w) -> showTask(t.optInt("id")))
+        new Dlg(this).setTitle("일정 다시 잡기").setView(f).setNegativeButton("취소", (x, w) -> showTask(t.optInt("id")))
                 .setPositiveButton("변경", (x, w) -> {
                     String dd = d.getText().toString().trim();
                     if (!dd.matches("\\d{4}-\\d{2}-\\d{2}")) {
-                        Ui.toast(this, "날짜를 골라 주세요.");
-                        showReschedule(t);
+                        Ui.warn(this, "날짜를 골라 주세요.");
                         return;
                     }
                     String tt = tm.getText().toString().trim();
@@ -1046,12 +1163,12 @@ public class MainActivity extends Activity {
         final EditText msg = Ui.field(this, "처리 완료 메시지 (필수)", false);
         msg.setSingleLine(false);
         FrameLayoutWrap w = new FrameLayoutWrap(this, msg);
-        new AlertDialog.Builder(this).setTitle("처리 완료").setView(w)
+        new Dlg(this).setTitle("처리 완료").setView(w)
                 .setNegativeButton("취소", null)
                 .setPositiveButton("완료 처리", (d, x) -> {
                     String m = msg.getText().toString().trim();
                     if (m.isEmpty()) {
-                        Ui.toast(this, "완료 메시지를 입력해 주세요.");
+                        Ui.warn(this, "완료 메시지를 입력해 주세요.");
                         return;
                     }
                     store.setStatus(t, myId(), "완료", m);
@@ -1112,7 +1229,7 @@ public class MainActivity extends Activity {
             sb.append("\n\n읽은 사람 ").append(r == null ? 0 : r.length()).append("명: ");
             for (int i = 0; r != null && i < r.length(); i++) sb.append(i > 0 ? ", " : "").append(store.userName(r.optInt(i)));
         }
-        new AlertDialog.Builder(this).setTitle(n.optString("title")).setMessage(sb.toString())
+        new Dlg(this).setTitle(n.optString("title")).setMessage(sb.toString())
                 .setPositiveButton("닫기", null).show();
         render();
     }
@@ -1130,11 +1247,11 @@ public class MainActivity extends Activity {
         f.addView(title);
         f.addView(body);
         f.addView(pin);
-        new AlertDialog.Builder(this).setTitle("공지 작성").setView(f)
+        new Dlg(this).setTitle("공지 작성").setView(f)
                 .setNegativeButton("취소", null)
                 .setPositiveButton("등록", (d, w) -> {
                     if (title.getText().toString().trim().isEmpty()) {
-                        Ui.toast(this, "제목을 입력해 주세요.");
+                        Ui.warn(this, "제목을 입력해 주세요.");
                         return;
                     }
                     store.addNotice(title.getText().toString().trim(), body.getText().toString().trim(), pin.isChecked(), myId());
@@ -1218,7 +1335,7 @@ public class MainActivity extends Activity {
         f.addView(pin);
         f.addView(Ui.text(this, "권한 묶음 (추가 후 항목별로 바꿀 수 있습니다)", 13, Ui.GRAY, false), Ui.lp(this, 8));
         f.addView(preset);
-        new AlertDialog.Builder(this).setTitle("직원 추가").setView(f)
+        new Dlg(this).setTitle("직원 추가").setView(f)
                 .setNegativeButton("취소", null)
                 .setPositiveButton("추가", (d, w) -> {
                     String n = name.getText().toString().trim();
@@ -1250,7 +1367,7 @@ public class MainActivity extends Activity {
         final boolean active = u.optBoolean("active", true);
         ScrollView sv = new ScrollView(this);
         sv.addView(f);
-        new AlertDialog.Builder(this).setTitle(u.optString("name") + " 권한").setView(sv)
+        new Dlg(this).setTitle(u.optString("name") + " 권한").setView(sv)
                 .setNegativeButton("닫기", null)
                 .setNeutralButton(active ? "사용 중지" : "다시 사용", (d, w) -> {
                     boolean isAdmin = Store.has(u, Perm.STAFF_MANAGE);
@@ -1271,7 +1388,7 @@ public class MainActivity extends Activity {
                     boolean wasAdmin = Store.has(u, Perm.STAFF_MANAGE);
                     boolean willAdmin = boxes[Perm.KEYS.length - 1].isChecked();
                     if (wasAdmin && !willAdmin && store.adminCount() <= 1) {
-                        Ui.toast(this, "마지막 관리자의 직원 관리 권한은 끌 수 없습니다.");
+                        Ui.warn(this, "마지막 관리자의 직원 관리 권한은 끌 수 없습니다.");
                         return;
                     }
                     try {
@@ -1396,11 +1513,11 @@ public class MainActivity extends Activity {
         f.addView(who);
         ScrollView asv = new ScrollView(this);
         asv.addView(f);
-        new AlertDialog.Builder(this).setTitle("새 프로젝트").setView(asv)
+        new Dlg(this).setTitle("새 프로젝트").setView(asv)
                 .setNegativeButton("취소", null)
                 .setPositiveButton("만들기", (d, w) -> {
                     if (ti.getText().toString().trim().isEmpty() || staff.isEmpty()) {
-                        Ui.toast(this, "프로젝트 이름을 입력해 주세요.");
+                        Ui.warn(this, "프로젝트 이름을 입력해 주세요.");
                         return;
                     }
                     List<String> its = new ArrayList<>();
@@ -1525,7 +1642,7 @@ public class MainActivity extends Activity {
                 row.addView(cb, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
                 TextView x = Ui.text(this, "✕", 16, Ui.GRAY, true);
                 x.setPadding(Ui.dp(this, 12), Ui.dp(this, 8), Ui.dp(this, 6), Ui.dp(this, 8));
-                x.setOnClickListener(v -> new AlertDialog.Builder(this).setTitle("항목을 지울까요?").setMessage(it.optString("t"))
+                x.setOnClickListener(v -> new Dlg(this).setTitle("항목을 지울까요?").setMessage(it.optString("t"))
                         .setNegativeButton("취소", null).setPositiveButton("지우기", (d, w) -> {
                             try {
                                 JSONArray na = new JSONArray();
@@ -1586,7 +1703,7 @@ public class MainActivity extends Activity {
         refresh[0].run();
         ScrollView sv = new ScrollView(this);
         sv.addView(f);
-        new AlertDialog.Builder(this).setTitle(p.optString("title")).setView(sv)
+        new Dlg(this).setTitle(p.optString("title")).setView(sv)
                 .setNegativeButton("닫기", (d, w) -> render())
                 .setOnCancelListener(d -> render())
                 .setPositiveButton("저장", (d, w) -> {
@@ -1685,7 +1802,7 @@ public class MainActivity extends Activity {
         if (can(Perm.STAFF_MANAGE)) e.add(new Entry("관리자", "가맹점 보호·복원", "가맹점 보호 복원 백업 되돌리기 삭제 복구 휴지통", () -> showSafetyMenu()));
         if (can(Perm.STAFF_MANAGE)) e.add(new Entry("관리자", "직원과 권한", "직원 권한 등록 사용 중지 관리자", () -> goSub("staff")));
         e.add(new Entry("계정", "내 프로필 (사진·상태 메시지)", "프로필 사진 상태 메시지 내 정보", () -> showProfile(myId())));
-        e.add(new Entry("계정", "로그아웃", "로그아웃 나가기", () -> new AlertDialog.Builder(this).setTitle("로그아웃")
+        e.add(new Entry("계정", "로그아웃", "로그아웃 나가기", () -> new Dlg(this).setTitle("로그아웃")
                 .setMessage("로그아웃 할까요?").setNegativeButton("취소", null)
                 .setPositiveButton("로그아웃", (d, w) -> doLogout()).show()));
         return e;
@@ -2007,7 +2124,7 @@ public class MainActivity extends Activity {
         box.addView(list);
         ScrollView sv = new ScrollView(this);
         sv.addView(box);
-        final AlertDialog dlg = new AlertDialog.Builder(this).setTitle("가맹점 조회").setView(sv)
+        final AlertDialog dlg = new Dlg(this).setTitle("가맹점 조회").setView(sv)
                 .setNegativeButton("닫기", null)
                 .setNeutralButton("새 가맹점 등록", (d, w) -> showEditMerchant(null, cb)).create();
         final Runnable fill = () -> {
@@ -2082,7 +2199,7 @@ public class MainActivity extends Activity {
         f.addView(memo);
         ScrollView sv = new ScrollView(this);
         sv.addView(f);
-        AlertDialog.Builder mb = new AlertDialog.Builder(this).setTitle(existing == null ? "가맹점 등록" : "가맹점 정보 수정").setView(sv)
+        AlertDialog.Builder mb = new Dlg(this).setTitle(existing == null ? "가맹점 등록" : "가맹점 정보 수정").setView(sv)
                 .setNegativeButton("취소", null).setPositiveButton("저장", null);
         if (existing != null && can(Perm.STAFF_MANAGE)) mb.setNeutralButton("삭제", (d, w) -> confirmDeleteMerchant(existing, cb != null ? cb : x -> render()));
         final AlertDialog dlg = mb.create();
@@ -2124,6 +2241,12 @@ public class MainActivity extends Activity {
             ln++;
             if (g.optString("date").compareTo(lastLog) > 0) lastLog = g.optString("date");
         }
+        final String mph = m.optString("phone").replaceAll("[^0-9+*#]", "");
+        if (!mph.isEmpty()) {
+            Button callB = Ui.button(this, "📞  " + m.optString("phone") + " 전화 걸기", Ui.TINT, Ui.DEEP);
+            callB.setOnClickListener(v -> openIntent(new Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + mph))));
+            l.addView(callB, Ui.lp(this, 12));
+        }
         TextView lg = Ui.text(this, "📝 응대 기록 (" + ln + "건)" + (lastLog.isEmpty() ? "" : " · 마지막 " + lastLog) + "  — 날짜별 조회·기록 추가", 14, Ui.DEEP, true);
         lg.setPadding(0, Ui.dp(this, 14), 0, Ui.dp(this, 4));
         lg.setOnClickListener(v -> showMerchantLogs(m));
@@ -2134,7 +2257,7 @@ public class MainActivity extends Activity {
             hs.setOnClickListener(v -> showMerchantHistory(m));
             l.addView(hs);
         }
-        AlertDialog.Builder b = new AlertDialog.Builder(this).setTitle("가맹점 정보").setView(l)
+        AlertDialog.Builder b = new Dlg(this).setTitle("가맹점 정보").setView(l)
                 .setNegativeButton("닫기", null)
                 .setPositiveButton("수정", (d, w) -> showEditMerchant(m, x -> render()));
         if (can(Perm.STAFF_MANAGE)) b.setNeutralButton("삭제", (d, w) -> confirmDeleteMerchant(m, x -> render()));
@@ -2163,6 +2286,7 @@ public class MainActivity extends Activity {
         final SimpleDateFormat wk = new SimpleDateFormat("yyyy-MM-dd (E)", Locale.KOREA);
         final SimpleDateFormat pd = new SimpleDateFormat("yyyy-MM-dd", Locale.KOREA);
         final Runnable[] fill = new Runnable[1];
+        final int[] cap = {100};
         fill[0] = () -> {
             list.removeAllViews();
             List<JSONObject> ls = new ArrayList<>();
@@ -2181,7 +2305,17 @@ public class MainActivity extends Activity {
             sum.setText("기록 " + ls.size() + "건");
             if (ls.isEmpty()) list.addView(Ui.text(this, "기록이 없어요.", 14, Ui.GRAY, false), Ui.lp(this, 10));
             String lastDay = "";
+            int shownN = 0;
             for (final JSONObject g : ls) {
+                if (shownN++ >= cap[0]) {
+                    Button more = Ui.button(this, "더 보기 (" + (ls.size() - cap[0]) + "건 남음)", Ui.FIELD, Ui.INK);
+                    more.setOnClickListener(v -> {
+                        cap[0] += 100;
+                        fill[0].run();
+                    });
+                    list.addView(more, Ui.lp(this, 10));
+                    break;
+                }
                 if (!g.optString("date").equals(lastDay)) {
                     lastDay = g.optString("date");
                     String lab = lastDay;
@@ -2245,7 +2379,7 @@ public class MainActivity extends Activity {
         fill[0].run();
         ScrollView sv = new ScrollView(this);
         sv.addView(root);
-        new AlertDialog.Builder(this).setTitle(m == null ? "응대 기록 조회" : m.optString("name") + " · 응대 기록").setView(sv)
+        new Dlg(this).setTitle(m == null ? "응대 기록 조회" : m.optString("name") + " · 응대 기록").setView(sv)
                 .setPositiveButton("닫기", (d, w) -> render()).setOnCancelListener(d -> render()).show();
     }
 
@@ -2276,13 +2410,13 @@ public class MainActivity extends Activity {
         }
         ScrollView sv = new ScrollView(this);
         sv.addView(f);
-        AlertDialog.Builder b = new AlertDialog.Builder(this).setTitle(isNew ? "응대 기록 남기기" : "응대 기록").setView(sv).setNegativeButton("닫기", null);
+        AlertDialog.Builder b = new Dlg(this).setTitle(isNew ? "응대 기록 남기기" : "응대 기록").setView(sv).setNegativeButton("닫기", null);
         if (canEdit) {
             b.setPositiveButton("저장", (x, w) -> {
                 String dd = d.getText().toString().trim();
                 String t = tx.getText().toString().trim();
                 if (!dd.matches("\\d{4}-\\d{2}-\\d{2}") || t.isEmpty()) {
-                    Ui.toast(this, "날짜와 내용을 확인해 주세요.");
+                    Ui.warn(this, "날짜와 내용을 확인해 주세요.");
                     return;
                 }
                 try {
@@ -2301,7 +2435,7 @@ public class MainActivity extends Activity {
                 Ui.toast(this, "기록했어요.");
                 after.run();
             });
-            if (!isNew) b.setNeutralButton("삭제", (x, w) -> new AlertDialog.Builder(this).setTitle("이 기록을 지울까요?")
+            if (!isNew) b.setNeutralButton("삭제", (x, w) -> new Dlg(this).setTitle("이 기록을 지울까요?")
                     .setNegativeButton("취소", null).setPositiveButton("지우기", (x2, w2) -> {
                         try {
                             g.put("deleted", true);
@@ -2323,7 +2457,7 @@ public class MainActivity extends Activity {
         int cn = 0, en = 0;
         for (JSONObject c : store.list(store.contracts())) if (c.optInt("merchant") == m.optInt("id")) cn++;
         for (JSONObject e : store.list(store.arr("events"))) if (e.optInt("merchant") == m.optInt("id")) en++;
-        new AlertDialog.Builder(this).setTitle("'" + m.optString("name") + "' 삭제할까요?")
+        new Dlg(this).setTitle("'" + m.optString("name") + "' 삭제할까요?")
                 .setMessage("가맹점 목록에서 지워집니다.\n연결된 계약 " + cn + "건·일정 " + en + "건의 기록은 그대로 남고, 서버에도 기록이 보관돼요.")
                 .setNegativeButton("취소", null).setPositiveButton("삭제", (d, w) -> {
                     try {
@@ -2397,7 +2531,10 @@ public class MainActivity extends Activity {
 
             public void afterTextChanged(Editable s) {
                 limit[0] = 50;
-                fill.run();
+                if (store.arr("merchants").length() > 300) { // 많을 땐 타자를 멈춘 뒤에 찾는다
+                    uiHandler.removeCallbacks(fill);
+                    uiHandler.postDelayed(fill, 220);
+                } else fill.run();
             }
         });
         fill.run();
@@ -2505,7 +2642,7 @@ public class MainActivity extends Activity {
         if (canPerf()) f.addView(buy);
         ScrollView sv = new ScrollView(this);
         sv.addView(f);
-        final AlertDialog dlg = new AlertDialog.Builder(this).setTitle("재고 추가").setView(sv)
+        final AlertDialog dlg = new Dlg(this).setTitle("재고 추가").setView(sv)
                 .setNegativeButton("취소", null).setPositiveButton("추가", null).create();
         dlg.show();
         dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
@@ -2589,9 +2726,9 @@ public class MainActivity extends Activity {
             JSONObject mer = store.byId("merchants", r.optInt("merchant"));
             f.addView(Ui.text(this, "출고중 · " + (mer == null ? "" : mer.optString("name")), 13, Ui.GRAY, false), Ui.lp(this, 8));
         }
-        new AlertDialog.Builder(this).setTitle("재고 수정").setView(f)
+        new Dlg(this).setTitle("재고 수정").setView(f)
                 .setNegativeButton("닫기", null)
-                .setNeutralButton("삭제", (d, w) -> new AlertDialog.Builder(this).setTitle("삭제할까요?")
+                .setNeutralButton("삭제", (d, w) -> new Dlg(this).setTitle("삭제할까요?")
                         .setMessage(r.optString("model") + " " + r.optString("serial") + "\n목록에서 지워집니다.")
                         .setNegativeButton("취소", null).setPositiveButton("삭제", (d2, w2) -> {
                             try {
@@ -2634,11 +2771,11 @@ public class MainActivity extends Activity {
         f.addView(model);
         f.addView(serial);
         f.addView(scanButtons(serial, false));
-        new AlertDialog.Builder(this).setTitle("장비 직접 입력").setView(f)
+        new Dlg(this).setTitle("장비 직접 입력").setView(f)
                 .setNegativeButton("취소", null)
                 .setPositiveButton("추가", (d2, w2) -> {
                     if (model.getText().toString().trim().isEmpty()) {
-                        Ui.toast(this, "모델명을 입력해 주세요.");
+                        Ui.warn(this, "모델명을 입력해 주세요.");
                         return;
                     }
                     JSONObject e = new JSONObject();
@@ -2729,7 +2866,7 @@ public class MainActivity extends Activity {
             }
         });
         fill.run();
-        dref[0] = new AlertDialog.Builder(this).setTitle("장비 선택 (재고)").setView(sv)
+        dref[0] = new Dlg(this).setTitle("장비 선택 (재고)").setView(sv)
                 .setNegativeButton("닫기", null)
                 .setNeutralButton("직접 입력", (d, w) -> showDirectEquip("", cb))
                 .setPositiveButton("선택 완료", (d, w) -> {
@@ -2824,14 +2961,14 @@ public class MainActivity extends Activity {
         addLine(l, "장비 메모", c.optString("memo"));
         ScrollView sv = new ScrollView(this);
         sv.addView(l);
-        AlertDialog.Builder b = new AlertDialog.Builder(this).setTitle("계약 정보").setView(sv)
+        AlertDialog.Builder b = new Dlg(this).setTitle("계약 정보").setView(sv)
                 .setNegativeButton("닫기", null)
                 .setNeutralButton("장비 추가", (d, w) -> pickStock(list -> {
                     addEquipToContract(c, list);
                     showContract(id);
                 }));
         if (!c.optBoolean("installed")) {
-            b.setPositiveButton("설치 완료", (d, w) -> new AlertDialog.Builder(this).setTitle("설치 완료 처리")
+            b.setPositiveButton("설치 완료", (d, w) -> new Dlg(this).setTitle("설치 완료 처리")
                     .setMessage("나간 장비가 재고에서 빠집니다. 설치를 마쳤나요?")
                     .setNegativeButton("아니요", null).setPositiveButton("설치 완료", (d2, w2) -> {
                         markInstalled(c);
@@ -2964,7 +3101,7 @@ public class MainActivity extends Activity {
         f.addView(quick, Ui.lp(this, 8));
         ScrollView sv = new ScrollView(this);
         sv.addView(f);
-        final AlertDialog dlg = new AlertDialog.Builder(this).setTitle("신규 계약 올리기").setView(sv)
+        final AlertDialog dlg = new Dlg(this).setTitle("신규 계약 올리기").setView(sv)
                 .setNegativeButton("취소", null).setPositiveButton("올리기", null).create();
         dlg.show();
         dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
@@ -3117,6 +3254,7 @@ public class MainActivity extends Activity {
             return x == y ? a.optString("created").compareTo(b.optString("created")) : (y > x ? 1 : -1);
         });
         int shown = 0;
+        final java.util.Map<Integer, Integer> unread = unreadByRoom();
         for (final JSONObject r : rooms) {
             String ttl = roomTitle(r);
             if (roomHidden(r.optInt("id")) && last.get(r.optInt("id")) == 0) continue; // 내가 지운 방은 새 글이 올 때까지 숨김
@@ -3143,7 +3281,16 @@ public class MainActivity extends Activity {
             mid.addView(Ui.text(this, prev.isEmpty() ? "아직 대화가 없어요" : prev, 13, Ui.GRAY, false), Ui.lp(this, 2));
             ((TextView) mid.getChildAt(1)).setSingleLine(true);
             row.addView(mid, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-            if (lt > 0) row.addView(Ui.text(this, new SimpleDateFormat("M/d HH:mm", Locale.KOREA).format(new Date(lt)), 11, Ui.GRAY, false));
+            LinearLayout rt = new LinearLayout(this);
+            rt.setOrientation(LinearLayout.VERTICAL);
+            rt.setGravity(Gravity.END);
+            if (lt > 0) rt.addView(Ui.text(this, new SimpleDateFormat("M/d HH:mm", Locale.KOREA).format(new Date(lt)), 11, Ui.GRAY, false));
+            Integer uc = unread.get(r.optInt("id"));
+            if (uc != null && uc > 0) {
+                TextView bd = Ui.chip(this, uc > 99 ? "99+" : String.valueOf(uc), muted(r.optInt("id")) ? Ui.GRAY : Ui.RED, Color.WHITE);
+                rt.addView(bd, Ui.lp(this, 4));
+            }
+            row.addView(rt);
             row.setOnClickListener(v -> {
                 chatRoom = r.optInt("id");
                 draft = "";
@@ -3261,6 +3408,48 @@ public class MainActivity extends Activity {
         return cprefs().getBoolean(ck("mute", room), false);
     }
 
+    /** 이 방에서 내가 마지막으로 읽은 시각. 처음 쓰는 폰은 지금부터 센다(옛 글이 모두 안 읽음으로 뜨지 않게). */
+    private long readAt(int room) {
+        android.content.SharedPreferences p = cprefs();
+        String k = ck("rd", room);
+        if (p.contains(k)) return p.getLong(k, 0);
+        String ik = "rdinit_" + myId();
+        long init = p.getLong(ik, 0);
+        if (init == 0) {
+            init = System.currentTimeMillis();
+            p.edit().putLong(ik, init).apply();
+        }
+        return init;
+    }
+
+    /** 방을 열어 보고 있거나 나올 때: 지금까지의 글을 읽은 것으로 한다. */
+    private void markRead(int room) {
+        if (room == 0 || me == null) return;
+        long mx = readAt(room);
+        for (JSONObject m : store.list(store.arr("msgs"))) if (m.optInt("room") == room && m.optLong("ts") > mx) mx = m.optLong("ts");
+        if (mx != readAt(room)) cprefs().edit().putLong(ck("rd", room), mx).apply();
+    }
+
+    /** 방별 안 읽은 글 수(내가 쓴 글·지운 글 제외). */
+    private java.util.Map<Integer, Integer> unreadByRoom() {
+        java.util.Map<Integer, Integer> out = new java.util.HashMap<>();
+        java.util.Map<Integer, Long> since = new java.util.HashMap<>();
+        for (JSONObject r : store.list(store.arr("rooms"))) since.put(r.optInt("id"), Math.max(readAt(r.optInt("id")), clearedAt(r.optInt("id"))));
+        for (JSONObject m : store.list(store.arr("msgs"))) {
+            Long s = since.get(m.optInt("room"));
+            if (s == null || m.optLong("ts") <= s || m.optInt("who") == myId()) continue;
+            Integer c = out.get(m.optInt("room"));
+            out.put(m.optInt("room"), c == null ? 1 : c + 1);
+        }
+        return out;
+    }
+
+    private int unreadChatTotal() {
+        int n = 0;
+        for (java.util.Map.Entry<Integer, Integer> e : unreadByRoom().entrySet()) if (!muted(e.getKey())) n += e.getValue();
+        return n;
+    }
+
     private long clearedAt(int room) {
         return cprefs().getLong(ck("clr", room), 0);
     }
@@ -3297,7 +3486,7 @@ public class MainActivity extends Activity {
     /** 새 채팅: 그룹 채팅방 만들기 / 1:1 채팅 */
     private void showAddRoom() {
         final String[] items = {"👥   그룹 채팅방 만들기", "💬   1:1 채팅"};
-        new AlertDialog.Builder(this).setTitle("새 채팅").setItems(items, (d, w) -> {
+        new Dlg(this).setTitle("새 채팅").setItems(items, (d, w) -> {
             if (w == 0) askGroupName();
             else pickOneOnOne();
         }).setNegativeButton("취소", null).show();
@@ -3311,7 +3500,7 @@ public class MainActivity extends Activity {
         }
         String[] names = new String[us.size()];
         for (int i = 0; i < names.length; i++) names[i] = us.get(i).optString("name");
-        new AlertDialog.Builder(this).setTitle("누구와 대화할까요?").setItems(names, (d, w) -> startDm(us.get(w).optInt("id")))
+        new Dlg(this).setTitle("누구와 대화할까요?").setItems(names, (d, w) -> startDm(us.get(w).optInt("id")))
                 .setNegativeButton("취소", null).show();
     }
 
@@ -3319,11 +3508,11 @@ public class MainActivity extends Activity {
         LinearLayout f = form();
         final EditText name = Ui.field(this, "그룹 이름 (예: 광주 영업팀, 설치 현장)", false);
         f.addView(name);
-        new AlertDialog.Builder(this).setTitle("그룹 이름").setView(f).setNegativeButton("취소", null)
+        new Dlg(this).setTitle("그룹 이름").setView(f).setNegativeButton("취소", null)
                 .setPositiveButton("다음", (d, w) -> {
                     String n = name.getText().toString().trim();
                     if (n.isEmpty()) {
-                        Ui.toast(this, "그룹 이름을 입력해 주세요.");
+                        Ui.warn(this, "그룹 이름을 입력해 주세요.");
                         return;
                     }
                     pickGroupMembers(n);
@@ -3339,7 +3528,7 @@ public class MainActivity extends Activity {
         String[] names = new String[us.size()];
         for (int i = 0; i < names.length; i++) names[i] = us.get(i).optString("name");
         final boolean[] on = new boolean[names.length];
-        final AlertDialog dlg = new AlertDialog.Builder(this).setTitle("'" + name + "'에 누구를 초대할까요?")
+        final AlertDialog dlg = new Dlg(this).setTitle("'" + name + "'에 누구를 초대할까요?")
                 .setMultiChoiceItems(names, on, (d, w, c) -> on[w] = c)
                 .setNegativeButton("취소", null).setNeutralButton("전체 선택", null).setPositiveButton("만들기", null).create();
         dlg.show();
@@ -3521,7 +3710,7 @@ public class MainActivity extends Activity {
             Ui.toast(this, muted(rid) ? "이 방 알림을 껐어요." : "이 방 알림을 켰어요.");
         });
         labels.add("🖼   배경화면 변경");
-        acts.add(() -> new AlertDialog.Builder(this).setTitle("배경화면").setItems(BG_NAMES, (d, w) -> {
+        acts.add(() -> new Dlg(this).setTitle("배경화면").setItems(BG_NAMES, (d, w) -> {
             cprefs().edit().putInt(ck("bg", rid), w).apply();
             showRoom();
         }).setNegativeButton("취소", null).show());
@@ -3530,7 +3719,7 @@ public class MainActivity extends Activity {
             acts.add(() -> renameRoom(room));
         }
         labels.add("🧹   대화 내용 비우기");
-        acts.add(() -> new AlertDialog.Builder(this).setTitle("대화 내용을 비울까요?")
+        acts.add(() -> new Dlg(this).setTitle("대화 내용을 비울까요?")
                 .setMessage("내 화면에서만 지워져요. 다른 사람의 대화는 그대로 남아 있어요.")
                 .setNegativeButton("취소", null).setPositiveButton("비우기", (d, w) -> {
                     cprefs().edit().putLong(ck("clr", rid), System.currentTimeMillis()).apply();
@@ -3538,13 +3727,13 @@ public class MainActivity extends Activity {
                     showRoom();
                 }).show());
         labels.add("🗑   대화방 삭제");
-        acts.add(() -> new AlertDialog.Builder(this).setTitle("대화방을 삭제할까요?")
+        acts.add(() -> new Dlg(this).setTitle("대화방을 삭제할까요?")
                 .setMessage("내 목록에서만 사라져요. 다른 사람에게는 그대로 있고, 새 메시지가 오면 다시 나타나요.")
                 .setNegativeButton("취소", null).setPositiveButton("삭제", (d, w) -> {
                     cprefs().edit().putLong(ck("clr", rid), System.currentTimeMillis()).putBoolean(ck("hid", rid), true).apply();
                     leaveRoom();
                 }).show());
-        new AlertDialog.Builder(this).setTitle("채팅방 설정").setItems(labels.toArray(new String[0]), (d, w) -> acts.get(w).run())
+        new Dlg(this).setTitle("채팅방 설정").setItems(labels.toArray(new String[0]), (d, w) -> acts.get(w).run())
                 .setNegativeButton("닫기", null).show();
     }
 
@@ -3553,9 +3742,12 @@ public class MainActivity extends Activity {
         final EditText name = Ui.field(this, "채팅방 이름", false);
         name.setText(room.optString("name"));
         f.addView(name);
-        new AlertDialog.Builder(this).setTitle("이름 변경").setView(f).setNegativeButton("취소", null)
+        new Dlg(this).setTitle("이름 변경").setView(f).setNegativeButton("취소", null)
                 .setPositiveButton("저장", (d, w) -> {
-                    if (name.getText().toString().trim().isEmpty()) return;
+                    if (name.getText().toString().trim().isEmpty()) {
+                        Ui.warn(this, "방 이름을 입력해 주세요.");
+                        return;
+                    }
                     try {
                         room.put("name", name.getText().toString().trim());
                     } catch (Exception ignored) {
@@ -3592,7 +3784,7 @@ public class MainActivity extends Activity {
         }
         ScrollView sv = new ScrollView(this);
         sv.addView(f);
-        AlertDialog.Builder b = new AlertDialog.Builder(this).setView(sv).setNegativeButton("닫기", null)
+        AlertDialog.Builder b = new Dlg(this).setView(sv).setNegativeButton("닫기", null)
                 .setNeutralButton("이름 변경", (d, w) -> renameRoom(room));
         if (grp) b.setPositiveButton("초대하기", (d, w) -> inviteMore(room));
         b.show();
@@ -3613,7 +3805,7 @@ public class MainActivity extends Activity {
         String[] names = new String[cand.size()];
         for (int i = 0; i < names.length; i++) names[i] = cand.get(i).optString("name");
         final boolean[] on = new boolean[names.length];
-        new AlertDialog.Builder(this).setTitle("누구를 더 초대할까요?").setMultiChoiceItems(names, on, (d, w, c) -> on[w] = c)
+        new Dlg(this).setTitle("누구를 더 초대할까요?").setMultiChoiceItems(names, on, (d, w, c) -> on[w] = c)
                 .setNegativeButton("취소", null).setPositiveButton("초대", (d, w) -> {
                     int n = 0;
                     for (int i = 0; i < on.length; i++) if (on[i] && store.invite(room, cand.get(i).optInt("id"), cand.get(i).optString("phone"))) n++;
@@ -3651,7 +3843,7 @@ public class MainActivity extends Activity {
         f.addView(place);
         ScrollView sv = new ScrollView(this);
         sv.addView(f);
-        final AlertDialog dlg = new AlertDialog.Builder(this).setTitle("일정 추가").setView(sv)
+        final AlertDialog dlg = new Dlg(this).setTitle("일정 추가").setView(sv)
                 .setNegativeButton("취소", null).setPositiveButton("추가", null).create();
         dlg.show();
         dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
@@ -3747,7 +3939,7 @@ public class MainActivity extends Activity {
             {"처음 시작하기 · 로그인", "1. 앱을 켜면 잠깐 시작 화면이 나오고, 처음에는 로그인 화면이 나옵니다.\n2. 관리자가 등록해 둔 내 휴대폰 번호(예: 01012345678)를 입력하고 '인증번호 받기'를 누릅니다.\n3. 문자로 온 인증번호 6자리를 입력하고 '확인'을 누릅니다.\n4. 한 번 로그인하면 계속 유지됩니다. 다시 묻지 않아요.\n\n※ '등록되지 않은 번호입니다'가 나오면 관리자에게 내 번호 등록을 요청하세요.\n※ 로그아웃은 맨 아래 탭 '전체' → 맨 아래 '로그아웃'입니다. 폰을 바꾸면 같은 번호로 다시 인증하면 됩니다."},
             {"업무 탭", "내게 지시된 업무를 확인하고 처리하는 곳입니다.\n\n■ 화면 구성\n- 맨 위 금색 카드와 상태 필터는 위에 고정되어 있고, 그 아래 업무 목록만 위아래로 움직여요. 카드: 남은 업무 수, 미확인·진행·보류·오늘 완료 수와 진행 막대\n- 계약 만료 알림: 만료가 3개월 안으로 남은 계약이 있으면 카드가 나타납니다. 누르면 계약 관리로 이동합니다.\n- 업무 카드: 종류(설치·AS·영업·서류·카드), 제목, 거래처, 기한, 상태\n\n■ 업무 처리\n1. 카드를 누르면 상세가 열립니다.\n2. 아래 버튼으로 상태를 바꿉니다: 진행중 / 보류, 끝나면 '처리 완료'.\n3. '완료'를 누르면 완료 메시지를 적을 수 있어요. 모든 처리 기록은 이력으로 남습니다.\n\n■ 업무 지시하기 (업무 지시 권한이 있는 사람)\n- 오른쪽 아래 + 버튼 → 제목, 종류, 거래처, 전화, 주소, 기한, 메모, 담당 직원 입력 후 '지시하기'.\n- 기한 날짜 칸을 누르면 달력이, 시간 칸을 누르면 시계가 떠서 고를 수 있어요(시간은 선택, 길게 누르면 지워져요). 고른 업무는 일정 탭 달력(점·그날 목록·다가오는 일정)에 자동으로 나타나고, 시간이 있으면 같이 보여요. 일정 추가·프로젝트 마감일도 같은 방식으로 고릅니다.\n- '가맹점 조회'를 누르면 등록된 가맹점을 검색해 선택할 수 있고, 거래처·전화·주소가 자동으로 채워집니다.\n- '전체 업무' 보기 권한이 있으면 위쪽 '내 업무 / 전체 업무' 버튼이 보입니다.\n\n■ 필터 · 일정 다시 잡기\n- 업무 상태는 미확인 → 진행중 → 완료(또는 보류) 순서예요. 지시된 업무는 '미확인'이고, 담당자가 '진행중'을 누르면 확인한 것으로 봅니다. (담당자가 업무를 처음 열어본 시각은 상세에 '열어본 시각'으로 남아요.) 예전의 '확인함'은 '진행중'으로 합쳐졌어요.\n- 업무 목록 위 '상태별로 보기' 줄에서 미완료(완료 빼고 전부) / 미확인 / 진행중 / 보류 / 완료를 눌러 골라 볼 수 있어요. 칸마다 건수가 크게 보이고, 고른 칸은 금색이에요. 내 업무·전체 업무 모두 적용됩니다. (미확인+진행중+보류 = 미완료)\n- 업무를 열면 지금 상태 버튼에 ✔ 가 붙어 어디까지 왔는지 알 수 있어요.\n- 업무를 '보류'하면 새 일정을 지금 잡을지 물어요. 업무를 열어 '📅 일정 다시 잡기'를 눌러도 되고, 날짜(달력)·시간(시계)을 고르면 기한이 바뀌면서 일정 탭 달력(점·그날 목록·다가오는 일정)도 같이 바뀝니다. 바뀐 내용은 처리 이력에 남아요."},
             {"프로젝트 탭", "여러 사람이 오래 진행하는 일을 관리합니다.\n\n1. 오른쪽 아래 + 로 프로젝트를 만듭니다 (제목, 기한, 메모, 책임자).\n2. 프로젝트를 누르면 체크리스트·진행률(%)·'점검 필요' 체크·메모를 수정할 수 있습니다.\n3. 체크리스트: 프로젝트를 만들 때 한 줄에 항목 하나씩 적거나, 열어서 '+ 항목 추가'(여러 줄 가능)로 필요한 만큼 늘려요. 개수 제한은 없어요. 항목을 체크하면 완료/전체 비율대로 진행률(%)과 막대가 자동으로 계산되고 바로 저장돼요. ✕ 로 항목을 지울 수 있어요. 체크리스트가 없으면 예전처럼 슬라이더로 직접 조절합니다.\n4. 프로젝트 목록 위 버튼으로 전체 / 진행중 / 완료(100%)를 나눠 볼 수 있어요. 100%가 된 프로젝트는 열어서 '↩ 완료 되돌리기'를 누르면 진행중으로 돌아가요(체크리스트면 마지막으로 체크한 항목이 풀리고, 직접 조절형이면 90%가 돼요). 항목 체크를 직접 풀어도 됩니다.\n5. 저장할 때마다 진행 기록이 쌓여서 누가 언제 무엇을 바꿨는지 볼 수 있어요."},
-            {"채팅 탭", "직원끼리 대화하는 곳이에요. 원하는 만큼 채팅방을 만들 수 있습니다.\n\n■ 새 채팅 만들기\n- 채팅 탭 직원 줄에는 '직원 총 N명'이 보이고, 직원이 많으면 좌우로 밀어서 화면 밖 직원도 볼 수 있어요.\n- 맨 위 '+ 새 채팅방 만들기'를 누르면 두 가지가 나와요.\n  ① 그룹 채팅방: 그룹 이름을 적고 '다음' → 초대할 직원을 체크('전체 선택'도 있어요) → '만들기'. 초대한 사람들끼리만 보이는 방이 열려요.\n  ② 1:1 채팅: 직원 한 명을 고르면 바로 대화창이 열려요. (첫 메시지를 보내야 목록에 생겨요)\n- 방이 하나도 없으면 '기본 채팅방 만들기'로 전체방·서류접수·입금확인·신규계약·AS설치·공지 방을 한 번에 만들 수 있어요.\n\n■ 대화방\n- 방을 누르면 전체 화면 대화방이 열리고, 입력줄은 맨 아래에 고정됩니다. 왼쪽 위 ‹ 또는 폰의 뒤로가기로 목록에 돌아갑니다.\n- 내 말풍선은 금색·오른쪽, 다른 사람은 흰색·왼쪽이고 옆에 이름과 프로필 사진이 나옵니다. 같은 사람이 같은 분에 이어 보내면 사진·이름은 한 번만 나와요.\n- 사람 사진을 누르면 그 직원의 프로필(이름·상태 메시지·전화번호)이 나오고, '전화하기'로 바로 걸 수 있어요.\n\n■ 답장 · 반응 · 삭제 (텔레그램처럼)\n- 말풍선을 두 번 빠르게 누르면 ❤️ 좋아요가 붙습니다. 같은 걸 다시 두 번 누르면 취소돼요.\n- 말풍선을 길게 누르면 맨 위에 이모티콘 줄(👍 ❤️ 😂 😮 😢 🙏 🔥 👏)이 뜨고, 그 아래에 답장 / 복사(글만) / 삭제(내 메시지만)가 있어요. 이모티콘을 한 번 누르면 바로 붙습니다.\n- 답장을 고르면 입력줄 위에 '○○에게 답장' 띠가 생기고, 그 상태로 보내면 말풍선 위에 인용이 붙어요. 띠의 ✕ 로 취소합니다.\n- 이미 붙은 이모티콘을 누르면 같은 목록이 떠서 다른 이모티콘으로 바꾸거나, 내 이모티콘을 한 번 더 눌러 지울 수 있어요(텔레그램처럼).\n- 삭제한 내 메시지는 대화에서 사라지고, 서버에는 기록이 보관됩니다.\n\n■ 링크\n- 글에 웹 주소(예: https://… 또는 naver.com)를 적어 보내면 파란 밑줄로 표시되고, 말풍선을 한 번 누르면 브라우저로 열립니다. 주소가 여러 개면 목록에서 고르세요. 길게 누르기·두 번 누르기는 그대로 됩니다.\n\n■ 사진·파일·이모지·스티커\n- 입력줄 왼쪽 '+' → 사진 보내기(앨범) / 사진 찍어 보내기 / 파일 보내기.\n- 사진은 자동으로 줄여서 올라가요. 대화 속 사진을 누르면 크게 보이고, '다른 앱으로 열기·저장'으로 저장할 수 있습니다.\n- 파일은 3MB까지 보낼 수 있어요(문서·엑셀·PDF용). 더 큰 파일은 지금은 보낼 수 없습니다. 파일 말풍선을 누르면 내려받아 열립니다.\n- 입력줄 오른쪽 ☺ 를 누르면 판이 열려요. 맨 위 탭: 이모지(글 사이에 들어감) / 나인이 / 복이 / 호야 / 깍이 / 도리. 스티커는 누르면 바로 전송됩니다.\n- '나인이 프렌즈'는 우리 회사 캐릭터 5마리예요(아홉꼬리 여우 나인이, 복두꺼비 복이, 아기 호랑이 호야, 까치 깍이, 다람쥐 도리). 마리당 16종, 모두 80종으로 신규계약 성공·축하·대단해·빡쳐·정신 차려·힘내와 우리 일(POS 설치, 현장 AS, 랜선 공사, 단말기 수리·도색, 토스 영업, 테이블오더, 회의, 서류, 보고서, 차에서 꿀잠 등)이 들어 있어요.\n- 예전에 보낸 나인이 스티커 메시지는 그대로 보입니다.\n\n■ 보내는 중 안내\n- 사진·파일은 인터넷이 연결돼야 올라가요. '보내는 중…'이 뜬 뒤 대화에 나타납니다. 안 나타나면 인터넷을 확인하고 다시 보내 주세요.\n\n■ 방 안 메뉴 · 검색\n- 방 위쪽 이름(또는 사진)을 누르면: 1:1은 상대 프로필, 그룹은 참여자 목록(누르면 프로필)과 '초대하기'·'이름 변경'이 나와요. 나중에 초대한 사람은 들어온 뒤의 대화부터 볼 수 있어요.\n- 오른쪽 위 🔍 는 방 안 대화 검색이에요. 단어(초성도 가능)를 치면 찾은 글이 노랗게 표시되고, ▲ ▼ 로 이전·다음 글로 넘어가요. ✕ 로 닫습니다.\n- 오른쪽 위 ⋮ 는 채팅방 설정이에요: 대화 검색 · 프로필/참여자 · 음소거 · 배경화면 변경 · 이름 변경(그룹) · 대화 내용 비우기 · 대화방 삭제.\n- 음소거는 이 폰에서 그 방 알림만 꺼요. 비우기·삭제는 '내 화면에서만' 적용돼서 다른 사람 대화에는 영향이 없고, 삭제한 방도 새 메시지가 오면 다시 나타나요. 배경화면도 내 폰에서만 바뀌어요.\n- 채팅 탭 위쪽 🔍 검색창(엔터)에 단어를 치면 직원·대화방 이름과 함께 '대화 내용 검색' 결과가 나와요. 누르면 그 방의 그 글로 바로 이동합니다.\n\n■ 1:1 비공개 대화\n- 채팅 탭 맨 위 직원 목록에서 직원을 누르거나, 🔍 검색창에 이름(초성 가능)을 적어 찾은 직원을 누르거나, 채팅에서 직원 사진을 눌러 '1:1 대화'를 누르면 대화창이 열려요.\n- 텔레그램처럼 직원을 눌렀다고 방이 바로 생기지는 않아요. 첫 메시지를 보내야 대화 목록에 나타납니다. 같은 사람과는 항상 같은 방이 열려요.\n- 이 방은 두 사람 사이의 대화라서 다른 직원에게는 내려가지 않아요(최고관리자 포함). 목록에는 상대 이름으로 보여요.\n- 답장·반응·스티커·사진·파일은 일반 방과 같이 쓸 수 있어요. (사진·파일 자체는 보관 주소를 아는 사람만 열 수 있어 사실상 두 사람만 열어요.)\n- 이 방은 이름을 바꿀 수 없고, 업데이트 전의 앱에는 보이지 않아요.\n\n※ 1:1 대화와 초대한 그룹방을 뺀 나머지 기본 채팅방(전체방 등)은 모든 직원이 볼 수 있습니다. 민감한 개인 이야기·개인정보 파일은 1:1 대화나 그룹방으로 나누세요."},
+            {"채팅 탭", "직원끼리 대화하는 곳이에요. 원하는 만큼 채팅방을 만들 수 있습니다.\n\n■ 새 채팅 만들기\n- 채팅 탭 직원 줄에는 '직원 총 N명'이 보이고, 직원이 많으면 좌우로 밀어서 화면 밖 직원도 볼 수 있어요.\n- 맨 위 '+ 새 채팅방 만들기'를 누르면 두 가지가 나와요.\n  ① 그룹 채팅방: 그룹 이름을 적고 '다음' → 초대할 직원을 체크('전체 선택'도 있어요) → '만들기'. 초대한 사람들끼리만 보이는 방이 열려요.\n  ② 1:1 채팅: 직원 한 명을 고르면 바로 대화창이 열려요. (첫 메시지를 보내야 목록에 생겨요)\n- 방이 하나도 없으면 '기본 채팅방 만들기'로 전체방·서류접수·입금확인·신규계약·AS설치·공지 방을 한 번에 만들 수 있어요.\n\n■ 대화방\n- 방을 누르면 전체 화면 대화방이 열리고, 입력줄은 맨 아래에 고정됩니다. 왼쪽 위 ‹ 또는 폰의 뒤로가기로 목록에 돌아갑니다.\n- 내 말풍선은 금색·오른쪽, 다른 사람은 흰색·왼쪽이고 옆에 이름과 프로필 사진이 나옵니다. 같은 사람이 같은 분에 이어 보내면 사진·이름은 한 번만 나와요.\n- 사람 사진을 누르면 그 직원의 프로필(이름·상태 메시지·전화번호)이 나오고, '전화하기'로 바로 걸 수 있어요.\n\n■ 답장 · 반응 · 삭제 (텔레그램처럼)\n- 말풍선을 두 번 빠르게 누르면 ❤️ 좋아요가 붙습니다. 같은 걸 다시 두 번 누르면 취소돼요.\n- 말풍선을 길게 누르면 맨 위에 이모티콘 줄(👍 ❤️ 😂 😮 😢 🙏 🔥 👏)이 뜨고, 그 아래에 답장 / 복사(글만) / 삭제(내 메시지만)가 있어요. 이모티콘을 한 번 누르면 바로 붙습니다.\n- 답장을 고르면 입력줄 위에 '○○에게 답장' 띠가 생기고, 그 상태로 보내면 말풍선 위에 인용이 붙어요. 띠의 ✕ 로 취소합니다.\n- 이미 붙은 이모티콘을 누르면 같은 목록이 떠서 다른 이모티콘으로 바꾸거나, 내 이모티콘을 한 번 더 눌러 지울 수 있어요(텔레그램처럼).\n- 삭제한 내 메시지는 대화에서 사라지고, 서버에는 기록이 보관됩니다.\n\n■ 링크\n- 글에 웹 주소(예: https://… 또는 naver.com)를 적어 보내면 파란 밑줄로 표시되고, 말풍선을 한 번 누르면 브라우저로 열립니다. 주소가 여러 개면 목록에서 고르세요. 길게 누르기·두 번 누르기는 그대로 됩니다.\n\n■ 사진·파일·이모지·스티커\n- 입력줄 왼쪽 '+' → 사진 보내기(앨범) / 사진 찍어 보내기 / 파일 보내기.\n- 사진은 자동으로 줄여서 올라가요. 대화 속 사진을 누르면 크게 보이고, '다른 앱으로 열기·저장'으로 저장할 수 있습니다.\n- 파일은 3MB까지 보낼 수 있어요(문서·엑셀·PDF용). 더 큰 파일은 지금은 보낼 수 없습니다. 파일 말풍선을 누르면 내려받아 열립니다.\n- 입력줄 오른쪽 ☺ 를 누르면 판이 열려요. 맨 위 탭: 이모지(글 사이에 들어감) / 나인이 / 복이 / 호야 / 깍이 / 도리. 스티커는 누르면 바로 전송됩니다.\n- '나인이 프렌즈'는 우리 회사 캐릭터 5마리예요(아홉꼬리 여우 나인이, 복두꺼비 복이, 아기 호랑이 호야, 까치 깍이, 다람쥐 도리). 마리당 16종, 모두 80종으로 신규계약 성공·축하·대단해·빡쳐·정신 차려·힘내와 우리 일(POS 설치, 현장 AS, 랜선 공사, 단말기 수리·도색, 토스 영업, 테이블오더, 회의, 서류, 보고서, 차에서 꿀잠 등)이 들어 있어요.\n- 예전에 보낸 나인이 스티커 메시지는 그대로 보입니다.\n\n■ 보내는 중 안내\n- 사진·파일은 인터넷이 연결돼야 올라가요. '보내는 중…'이 뜬 뒤 대화에 나타납니다. 안 나타나면 인터넷을 확인하고 다시 보내 주세요.\n\n■ 방 안 메뉴 · 검색\n- 방 위쪽 이름(또는 사진)을 누르면: 1:1은 상대 프로필, 그룹은 참여자 목록(누르면 프로필)과 '초대하기'·'이름 변경'이 나와요. 나중에 초대한 사람은 들어온 뒤의 대화부터 볼 수 있어요.\n- 오른쪽 위 🔍 는 방 안 대화 검색이에요. 단어(초성도 가능)를 치면 찾은 글이 노랗게 표시되고, ▲ ▼ 로 이전·다음 글로 넘어가요. ✕ 로 닫습니다.\n- 오른쪽 위 ⋮ 는 채팅방 설정이에요: 대화 검색 · 프로필/참여자 · 음소거 · 배경화면 변경 · 이름 변경(그룹) · 대화 내용 비우기 · 대화방 삭제.\n- 음소거는 이 폰에서 그 방 알림만 꺼요. 비우기·삭제는 '내 화면에서만' 적용돼서 다른 사람 대화에는 영향이 없고, 삭제한 방도 새 메시지가 오면 다시 나타나요. 배경화면도 내 폰에서만 바뀌어요.\n- 채팅 탭 위쪽 🔍 검색창(엔터)에 단어를 치면 직원·대화방 이름과 함께 '대화 내용 검색' 결과가 나와요. 누르면 그 방의 그 글로 바로 이동합니다.\n\n■ 안 읽은 글 표시\n- 방 목록 오른쪽에 안 읽은 글 수가 빨간 숫자로 나오고, 아래 '채팅' 탭에도 전체 합계가 나와요. 방을 열면 읽은 것으로 바뀝니다. 음소거한 방은 회색 숫자이고 탭 합계에는 넣지 않아요. 이 표시는 내 폰에서만 계산돼요.\n\n■ 1:1 비공개 대화\n- 채팅 탭 맨 위 직원 목록에서 직원을 누르거나, 🔍 검색창에 이름(초성 가능)을 적어 찾은 직원을 누르거나, 채팅에서 직원 사진을 눌러 '1:1 대화'를 누르면 대화창이 열려요.\n- 텔레그램처럼 직원을 눌렀다고 방이 바로 생기지는 않아요. 첫 메시지를 보내야 대화 목록에 나타납니다. 같은 사람과는 항상 같은 방이 열려요.\n- 이 방은 두 사람 사이의 대화라서 다른 직원에게는 내려가지 않아요(최고관리자 포함). 목록에는 상대 이름으로 보여요.\n- 답장·반응·스티커·사진·파일은 일반 방과 같이 쓸 수 있어요. (사진·파일 자체는 보관 주소를 아는 사람만 열 수 있어 사실상 두 사람만 열어요.)\n- 이 방은 이름을 바꿀 수 없고, 업데이트 전의 앱에는 보이지 않아요.\n\n※ 1:1 대화와 초대한 그룹방을 뺀 나머지 기본 채팅방(전체방 등)은 모든 직원이 볼 수 있습니다. 민감한 개인 이야기·개인정보 파일은 1:1 대화나 그룹방으로 나누세요."},
             {"일정 탭 (달력)", "한국 달력과 앞으로의 일정을 함께 봅니다.\n\n■ 달력\n- 일요일·공휴일은 빨간색, 토요일은 파란색, 오늘은 금색 원입니다. 공휴일 이름도 표시돼요. (2026~2028년 기준)\n- ‹ › 로 달을 넘기고 '오늘'을 누르면 오늘로 돌아옵니다.\n- 일정이나 업무 기한이 있는 날은 작은 금색 점이 찍혀요.\n- 날짜를 누르면 그날의 일정과 업무가 아래에 나옵니다.\n\n■ 일정 남기기\n1. 오른쪽 아래 + 버튼.\n2. 제목과 날짜를 적고, 시간은 선택입니다.\n3. '가맹점 조회·선택'을 누르면 등록된 가맹점 중에서 찾아 고릅니다 (초성 검색 가능). 고르면 사업자번호·연락처·주소·계약조건·등급이 불러와지고, 장소에는 가맹점 주소가 자동으로 들어갑니다.\n4. '추가'를 누르면 달력에 바로 표시되고, 달력 아래 '다가오는 일정'에도 올라갑니다.\n\n■ 다가오는 일정\n- 오늘부터 앞으로의 일정과 내 업무 기한이 날짜 순으로 나와서, 언제 어디로 가야 하는지 한눈에 확인할 수 있습니다.\n- 가맹점이 연결된 일정을 누르면 가맹점 상세 정보가 열립니다."},
             {"전체 탭", "나머지 모든 기능으로 들어가는 메뉴판입니다.\n\n■ 기능 검색\n- 맨 위 프로필 카드 아래 '🔍 기능 검색' 칸에 단어나 초성을 치면 그 기능이 바로 나옵니다. 예: '재고', 'ㅈㄱ', '문자', '수익', '바코드', '프로필'.\n- 눌러서 바로 이동해요. 지우면 원래 메뉴판으로 돌아갑니다. (업무·채팅·일정 같은 탭도 검색됩니다.)\n\n■ 메뉴\n- 맨 위 내 카드를 누르면 프로필 사진과 상태 메시지를 바꿀 수 있어요.\n- 재고: 장비 재고 관리 (바코드 스캔, 단가)\n- 가맹점: 가맹점 정보 관리\n- 신규 계약 올리기 / 계약 관리: 계약 등록과 설치 완료 처리, 만료 알림\n- 단체 문자 보내기: 가맹점에 안내 문자\n- 내 실적: 나만 보는 월별 실적과 지난달 비교\n- 전체 실적·직원별 순위 / 수익 현황 / 실적 보고서 올리기: (권한이 있는 사람만 보임)\n- 일일보고 쓰기, 일일보고 종합 보기(권한자)\n- 지난 업무 기록: 완료된 업무 검색\n- 사용설명서, 버전·업데이트 내역, 공지사항\n- 직원과 권한: (관리자만) 직원 추가·권한 설정\n- 로그아웃\n\n※ 맨 아래에 현재 앱 버전이 표시됩니다. 문의할 때 이 버전을 알려 주세요."},
             {"재고", "장비를 우리가 직접 입력해서 관리합니다. (전체 → 재고)\n\n■ 재고 추가\n1. 오른쪽 아래 + 버튼.\n2. 모델명을 적고, 시리얼은 한 줄에 하나씩 적습니다. 여러 줄을 붙여 넣으면 장비가 한꺼번에 등록돼요.\n3. 시리얼이 없는 소모품(롤지 등)은 시리얼 대신 '수량'만 적습니다.\n4. 안전재고: 이 수 아래로 내려가면 빨간색으로 '부족해요!'가 표시됩니다.\n5. 입고 단가: 실적 권한자에게만 보이는 칸입니다. 1대당 산 값을 적으면 시리얼 전체에 같이 적용돼요.\n\n■ 바코드 스캔\n- '바코드 스캔'을 누르면 카메라가 열리고, 읽으면 번호가 시리얼 칸에 한 줄 들어갑니다. 한 번 누르면 한 번만 읽어요. 다음 장비는 버튼을 다시 눌러 주세요. 같은 번호는 두 번 들어가지 않아요.\n- 재고 목록 위 '바코드로 찾기'를 누르면 바코드를 읽어 그 시리얼을 바로 검색합니다.\n- 계약에서 '+ 장비 추가'를 누르고 '바코드 스캔(한 번에 한 대)'을 누르면, 읽은 번호가 재고에 있을 때 그 장비가 바로 추가돼요. 다음 장비는 다시 '+ 장비 추가'를 눌러 같은 방식으로 넣습니다. 재고에 없는 번호면 모델명만 적어 직접 입력하게 열려요.\n\n■ 시리얼 촬영 인식\n- '시리얼 촬영'을 누르고 장비 뒷면의 S/N 라벨을 가까이서 찍으면 글자를 읽어 줍니다.\n- 시리얼처럼 보이는 글자 후보가 목록으로 나오고, 맞는 것을 체크해서 '넣기'를 누르세요. 0(영)과 O(오), 1과 I처럼 헷갈리기 쉬운 글자는 꼭 눈으로 확인해 주세요.\n- 바코드가 같이 있으면 바코드 스캔이 더 정확합니다.\n- 스캔과 촬영은 구글 서비스가 있는 폰에서 동작합니다.\n\n■ 보기·검색\n- 모델별로 묶여서 '재고 n대'가 보이고, 그 아래에 시리얼이 나열됩니다.\n- 검색창에 모델명·시리얼을 치면 찾아줘요. 'ㅌㅅㅍㅅ' 같은 초성도 됩니다.\n\n■ 수정·삭제\n- 시리얼 줄을 누르면 수정창이 열립니다. 시리얼 칸에도 스캔·촬영 버튼이 있어요. '삭제'를 누르면 목록에서 지워져요 (기록은 서버에 남아 복구 가능).\n\n■ 단가와 수익 (실적 권한자 전용)\n- 재고 줄을 누르면 입고 단가(산 값)와 출고 단가(판 값)를 적을 수 있어요.\n- 재고 화면 맨 위에 보유 재고 자산(입고 단가 합계)이 나오고, '수익 현황 보기'로 이동합니다.\n- 단가는 서버에서도 실적 권한자만 읽을 수 있게 따로 보관됩니다. 권한이 없는 직원에게는 칸 자체가 보이지 않아요.\n\n■ 상태가 바뀌는 순서\n재고 → (계약에서 선택하면) 출고중 → (설치 완료 처리하면) 재고 목록에서 사라짐"},
@@ -3779,7 +3971,7 @@ public class MainActivity extends Activity {
                 t.setPadding(Ui.dp(this, 20), Ui.dp(this, 8), Ui.dp(this, 20), Ui.dp(this, 8));
                 ScrollView sv = new ScrollView(this);
                 sv.addView(t);
-                new AlertDialog.Builder(this).setTitle(m[0]).setView(sv).setPositiveButton("닫기", null).show();
+                new Dlg(this).setTitle(m[0]).setView(sv).setPositiveButton("닫기", null).show();
             });
             content.addView(row, Ui.lp(this, 8));
         }
@@ -3799,6 +3991,7 @@ public class MainActivity extends Activity {
 
     /** {버전, 날짜, 내용}. 새 버전은 맨 위에 추가. CI 가 현재 versionName 항목이 있는지 검사한다. */
     private static final String[][] CHANGELOG = {
+            {"0.1.6", "2026-10-24", "• 다른 직원이 자료를 고쳐도 내 화면이 맨 위로 튀지 않고, 쓰던 검색어도 그대로 남아요\n• 글자를 쓰는 팝업은 바깥을 잘못 눌러도 닫히지 않아요. 제목 같은 필수 칸이 비었을 땐 알림만 뜨고 쓴 내용은 그대로 남아요\n• 채팅: 안 읽은 글 수가 방 목록과 아래 '채팅' 탭에 빨간 숫자로 보여요 (음소거한 방은 회색, 탭 숫자에서 제외)\n• 가맹점 상세에 '전화 걸기' 버튼, 응대 기록은 100건씩 보기\n• 로그인: 오류를 한글로 안내, 인증번호 6자리를 넣으면 바로 확인, '인증번호 다시 받기' 추가\n• 업무 화면 위쪽 요약 카드를 작게 줄여 목록 공간을 넓혔어요"},
             {"0.1.5", "2026-10-24", "• 가맹점이 수천 곳이어도 버벅이지 않게: 목록은 50곳씩만 그리고 '더 보기'로 늘려요 (검색은 전체에서 찾음, 전체 곳 수 표시)\n• 저장할 때마다 폰 안 보관본을 통째로 다시 쓰던 것을 모아서 쓰도록 바꿔 반응이 빨라졌어요"},
             {"0.1.4", "2026-10-24", "• 업무 탭: 위쪽 카드와 상태 필터는 고정하고 아래 업무 목록만 위아래로 움직여요\n• 가맹점 응대 기록: AS·전화 응대·방문 내용을 날짜를 골라 남기고, 날짜·종류·단어로 조회해요 (가맹점 정보 창의 '📝 응대 기록', 전체 → 가맹점 응대 기록 조회)"},
             {"0.1.3", "2026-10-24", "• '확인함' 상태를 없앴어요. 미확인 → 진행중 → 완료(또는 보류)로 단순해졌고, 진행중을 누르면 확인한 걸로 봐요. 예전 '확인함' 업무는 진행중으로 합쳐졌어요\n• 담당자가 업무를 열어본 시각은 상세에 '열어본 시각'으로 남아요 (지시한 사람이 읽었는지 알 수 있어요)"},
@@ -3835,6 +4028,7 @@ public class MainActivity extends Activity {
     private static final String[] EMOJIS = ("😀 😃 😄 😁 😆 😅 😂 🤣 😊 😇 🙂 😉 😍 🥰 😘 😋 😎 🤩 🥳 😏 😌 😴 🤔 🤗 🙄 😬 😢 😭 😤 😡 🥺 😱 😳 🤝 👍 👎 👏 🙌 🙏 💪 👌 ✌️ 🤞 👋 ✅ ❌ ⭕ ❗ ❓ 💯 🔥 ⭐ ✨ 🎉 🎊 💰 💳 🧾 📞 📱 💻 🖨️ 📦 🚚 🛠️ 🔧 📝 📎 📅 ⏰ 🏪 🍚 ☕ 🍺 ❤️ 💛 💙 💜 🖤 🤍 😷 🤒 🥱 😅 🫡 🫶").split(" ");
 
     private void leaveRoom() {
+        markRead(chatRoom);
         inRoom = false;
         chatRoom = 0;
         dmDraft = null;
@@ -4181,7 +4375,7 @@ public class MainActivity extends Activity {
 
     private void showAttachMenu() {
         final String[] items = {"사진 보내기 (앨범)", "사진 찍어 보내기", "파일 보내기 (3MB까지)"};
-        new AlertDialog.Builder(this).setTitle("보내기").setItems(items, (d, w) -> {
+        new Dlg(this).setTitle("보내기").setItems(items, (d, w) -> {
             try {
                 if (w == 0) {
                     Intent i = new Intent(Intent.ACTION_GET_CONTENT);
@@ -4343,7 +4537,7 @@ public class MainActivity extends Activity {
                 final String nm = Media.name(cr, u);
                 final String mime = cr.getType(u) == null ? "application/octet-stream" : cr.getType(u);
                 runOnUiThread(() -> {
-                    if (b == null) new AlertDialog.Builder(this).setTitle("파일이 너무 커요")
+                    if (b == null) new Dlg(this).setTitle("파일이 너무 커요")
                             .setMessage("지금은 3MB 이하의 파일만 보낼 수 있어요. 사진은 자동으로 줄여서 보내니 사진으로 보내 주세요.").setPositiveButton("확인", null).show();
                     else sendBlob("file", b, mime, nm);
                 });
@@ -4464,7 +4658,7 @@ public class MainActivity extends Activity {
             iv.setPadding(Ui.dp(this, 8), Ui.dp(this, 8), Ui.dp(this, 8), Ui.dp(this, 8));
             ScrollView sv = new ScrollView(this);
             sv.addView(iv);
-            new AlertDialog.Builder(this).setView(sv).setNegativeButton("닫기", null)
+            new Dlg(this).setView(sv).setNegativeButton("닫기", null)
                     .setPositiveButton("다른 앱으로 열기·저장", (d, w) -> openBlob(id, chunks, fname, true)).show();
         });
     }
@@ -4475,6 +4669,7 @@ public class MainActivity extends Activity {
 
     private void fillMsgs() {
         if (msgBox == null || roomScroll == null) return;
+        markRead(chatRoom);
         boolean atBottom = lastMsgCount < 0 || roomScroll.getChildAt(0).getBottom() - (roomScroll.getHeight() + roomScroll.getScrollY()) < Ui.dp(this, 120);
         msgBox.removeAllViews();
         List<JSONObject> ms = new ArrayList<>();
@@ -4595,7 +4790,7 @@ public class MainActivity extends Activity {
             openUrl(urls.get(0));
             return;
         }
-        new AlertDialog.Builder(this).setTitle("링크 열기")
+        new Dlg(this).setTitle("링크 열기")
                 .setItems(urls.toArray(new String[0]), (d, w) -> openUrl(urls.get(w))).show();
     }
 
@@ -4656,7 +4851,7 @@ public class MainActivity extends Activity {
         StringBuilder sb = new StringBuilder();
         sb.append(d.optString("kind")).append(" ").append(won(d.optLong("amount"))).append("\n가맹점: ").append(d.optString("mname").isEmpty() ? "-" : d.optString("mname"))
                 .append("\n메모: ").append(d.optString("memo").isEmpty() ? "-" : d.optString("memo")).append("\n올린 사람: ").append(store.userName(d.optInt("by"))).append(" · ").append(d.optString("t"));
-        AlertDialog.Builder b = new AlertDialog.Builder(this).setTitle("입금 내역").setMessage(sb.toString()).setNegativeButton("닫기", null);
+        AlertDialog.Builder b = new Dlg(this).setTitle("입금 내역").setMessage(sb.toString()).setNegativeButton("닫기", null);
         if (!d.optBoolean("ok")) {
             b.setPositiveButton("확인 처리", (x, w) -> {
                 try {
@@ -4693,11 +4888,11 @@ public class MainActivity extends Activity {
         f.addView(memo);
         ScrollView sv = new ScrollView(this);
         sv.addView(f);
-        new AlertDialog.Builder(this).setTitle("입금 올리기").setView(sv).setNegativeButton("취소", null)
+        new Dlg(this).setTitle("입금 올리기").setView(sv).setNegativeButton("취소", null)
                 .setPositiveButton("올리기", (x, w) -> {
                     long a = parseWon(amt);
                     if (a <= 0) {
-                        Ui.toast(this, "금액을 입력해 주세요.");
+                        Ui.warn(this, "금액을 입력해 주세요.");
                         return;
                     }
                     String k = DEP_KINDS[kind.getSelectedItemPosition()];
@@ -4784,10 +4979,10 @@ public class MainActivity extends Activity {
         f.addView(memo);
         ScrollView sv = new ScrollView(this);
         sv.addView(f);
-        AlertDialog.Builder b = new AlertDialog.Builder(this).setTitle(c == null ? "연락처 추가" : "연락처 수정").setView(sv).setNegativeButton("취소", null)
+        AlertDialog.Builder b = new Dlg(this).setTitle(c == null ? "연락처 추가" : "연락처 수정").setView(sv).setNegativeButton("취소", null)
                 .setPositiveButton("저장", (x, w) -> {
                     if (name.getText().toString().trim().isEmpty() || ph.getText().toString().trim().isEmpty()) {
-                        Ui.toast(this, "이름과 전화번호를 입력해 주세요.");
+                        Ui.warn(this, "이름과 전화번호를 입력해 주세요.");
                         return;
                     }
                     JSONObject o = c != null ? c : store.create("contacts");
@@ -4802,7 +4997,7 @@ public class MainActivity extends Activity {
                     render();
                 });
         if (c != null) {
-            b.setNeutralButton("삭제", (x, w) -> new AlertDialog.Builder(this).setTitle("삭제할까요?").setMessage(c.optString("name"))
+            b.setNeutralButton("삭제", (x, w) -> new Dlg(this).setTitle("삭제할까요?").setMessage(c.optString("name"))
                     .setNegativeButton("취소", null).setPositiveButton("삭제", (y, z) -> {
                         try {
                             c.put("deleted", true);
@@ -4897,12 +5092,12 @@ public class MainActivity extends Activity {
         try {
             rows = MerchantImport.read(raw, fname);
         } catch (Exception e) {
-            new AlertDialog.Builder(this).setTitle("읽을 수 없어요").setMessage(e.getMessage() == null ? "파일 형식을 확인해 주세요." : e.getMessage()).setPositiveButton("확인", null).show();
+            new Dlg(this).setTitle("읽을 수 없어요").setMessage(e.getMessage() == null ? "파일 형식을 확인해 주세요." : e.getMessage()).setPositiveButton("확인", null).show();
             return;
         }
         Object[] h = MerchantImport.findHeader(rows);
         if (h == null) {
-            new AlertDialog.Builder(this).setTitle("머리글을 못 찾았어요").setMessage("첫 줄(머리글)에 '거래처명' 또는 '상호'가 있어야 해요. 사업자등록번호·대표자·전화·핸드폰·주소 열도 있으면 함께 가져옵니다.").setPositiveButton("확인", null).show();
+            new Dlg(this).setTitle("머리글을 못 찾았어요").setMessage("첫 줄(머리글)에 '거래처명' 또는 '상호'가 있어야 해요. 사업자등록번호·대표자·전화·핸드폰·주소 열도 있으면 함께 가져옵니다.").setPositiveButton("확인", null).show();
             return;
         }
         final int hr = (Integer) h[0];
@@ -4924,7 +5119,7 @@ public class MainActivity extends Activity {
         StringBuilder found = new StringBuilder();
         for (java.util.Map.Entry<String, Integer> en : map.entrySet()) found.append(en.getKey()).append(" ← ").append(rows.get(hr).get(en.getValue())).append("\n");
         final int fa = add, fu = upd;
-        new AlertDialog.Builder(this).setTitle("가져오기 미리보기")
+        new Dlg(this).setTitle("가져오기 미리보기")
                 .setMessage("새로 등록 " + add + "곳\n기존 가맹점 갱신 " + upd + "곳\n건너뜀(상호 없음) " + skip + "곳\n\n[읽은 열]\n" + found
                         + "\n※ 같은 거래처코드·사업자번호·상호가 있으면 새로 만들지 않고, 파일에 값이 있는 칸만 덮어씁니다(빈 칸은 그대로 둠).\n※ 가져오기 직전 상태를 자동 저장해 두므로 언제든 되돌릴 수 있어요.")
                 .setNegativeButton("취소", null)
@@ -4933,7 +5128,7 @@ public class MainActivity extends Activity {
 
     private void applyImport(List<List<String>> data, java.util.Map<String, Integer> map, int add, int upd) {
         if (snapshotMerchants("가져오기전") == null) { // 되돌릴 기준점을 못 만들면 시작하지 않는다
-            new AlertDialog.Builder(this).setTitle("가져오기를 멈췄어요").setMessage("되돌리기용 백업을 만들지 못했어요. 폰 저장 공간을 확인한 뒤 다시 시도해 주세요.").setPositiveButton("확인", null).show();
+            new Dlg(this).setTitle("가져오기를 멈췄어요").setMessage("되돌리기용 백업을 만들지 못했어요. 폰 저장 공간을 확인한 뒤 다시 시도해 주세요.").setPositiveButton("확인", null).show();
             return;
         }
         for (List<String> r : data) {
@@ -5071,10 +5266,10 @@ public class MainActivity extends Activity {
         }
         ScrollView sv = new ScrollView(this);
         sv.addView(l);
-        AlertDialog.Builder b = new AlertDialog.Builder(this).setView(sv).setNegativeButton("닫기", null);
+        AlertDialog.Builder b = new Dlg(this).setView(sv).setNegativeButton("닫기", null);
         if (p.optInt("who") == myId() || can(Perm.STAFF_MANAGE)) {
             b.setPositiveButton("수정", (d, w) -> showEditLibrary(p));
-            b.setNeutralButton("삭제", (d, w) -> new AlertDialog.Builder(this).setTitle("'" + p.optString("title") + "' 삭제할까요?")
+            b.setNeutralButton("삭제", (d, w) -> new Dlg(this).setTitle("'" + p.optString("title") + "' 삭제할까요?")
                     .setMessage("자료실 목록에서 사라져요. 서버에는 기록이 보관됩니다.").setNegativeButton("취소", null)
                     .setPositiveButton("삭제", (d2, w2) -> {
                         try {
@@ -5129,7 +5324,7 @@ public class MainActivity extends Activity {
         }
         ScrollView sv = new ScrollView(this);
         sv.addView(f);
-        final AlertDialog dlg = new AlertDialog.Builder(this).setTitle(p == null ? "자료 올리기" : "자료 수정").setView(sv)
+        final AlertDialog dlg = new Dlg(this).setTitle(p == null ? "자료 올리기" : "자료 수정").setView(sv)
                 .setNegativeButton("취소", (d, w) -> libFilesTv = null).setPositiveButton(p == null ? "올리기" : "저장", null).create();
         dlg.show();
         dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
@@ -5282,7 +5477,7 @@ public class MainActivity extends Activity {
         List<File> autos = Backups.list(this, "auto_");
         String last = autos.isEmpty() ? "아직 없음" : backupLabel(autos.get(0)).replace("자동백업 · ", "");
         final String[] items = {"삭제한 가맹점 복원 (" + trash + "곳)", "백업·되돌리기 목록에서 복원", "백업 파일을 직접 골라 복원", "지금 바로 백업 만들기"};
-        new AlertDialog.Builder(this).setTitle("가맹점 보호·복원\n(최근 자동백업 " + last + ")").setItems(items, (d, w) -> {
+        new Dlg(this).setTitle("가맹점 보호·복원\n(최근 자동백업 " + last + ")").setItems(items, (d, w) -> {
             if (w == 0) showMerchantTrash();
             else if (w == 1) showBackupList();
             else if (w == 2) {
@@ -5313,9 +5508,9 @@ public class MainActivity extends Activity {
         Collections.sort(del, (x, y) -> x.optString("name").compareTo(y.optString("name")));
         String[] names = new String[del.size()];
         for (int i = 0; i < names.length; i++) names[i] = del.get(i).optString("name") + (del.get(i).optString("addr").isEmpty() ? "" : "  ·  " + del.get(i).optString("addr"));
-        new AlertDialog.Builder(this).setTitle("삭제한 가맹점 (눌러서 복원)").setItems(names, (d, w) -> {
+        new Dlg(this).setTitle("삭제한 가맹점 (눌러서 복원)").setItems(names, (d, w) -> {
             final JSONObject m = del.get(w);
-            new AlertDialog.Builder(this).setTitle("'" + m.optString("name") + "' 복원할까요?").setMessage(merchantInfo(m))
+            new Dlg(this).setTitle("'" + m.optString("name") + "' 복원할까요?").setMessage(merchantInfo(m))
                     .setNegativeButton("취소", null).setPositiveButton("복원", (d2, w2) -> {
                         try {
                             m.put("deleted", false);
@@ -5352,7 +5547,7 @@ public class MainActivity extends Activity {
         }
         String[] labels = new String[files.size()];
         for (int i = 0; i < labels.length; i++) labels[i] = backupLabel(files.get(i));
-        new AlertDialog.Builder(this).setTitle("복원할 백업 고르기").setItems(labels, (d, w) -> {
+        new Dlg(this).setTitle("복원할 백업 고르기").setItems(labels, (d, w) -> {
             final File f = files.get(w);
             final String label = backupLabel(f);
             new Thread(() -> {
@@ -5392,10 +5587,10 @@ public class MainActivity extends Activity {
         String msg = label + "\n백업에 든 가맹점 " + backup.length() + "곳\n\n• 지금과 같음 " + same + "곳\n• 내용이 달라서 백업 내용으로 바꿈 " + diff + "곳\n• 지금 없는데 되살림 " + missing + "곳"
                 + (exact ? "\n• 그 뒤 새로 생겨서 목록에서 숨김 " + extra + "곳" : "")
                 + "\n\n복원 직전 상태는 자동으로 저장돼서, 마음에 안 들면 다시 되돌릴 수 있어요.";
-        new AlertDialog.Builder(this).setTitle("복원 미리보기").setMessage(msg).setNegativeButton("취소", null)
+        new Dlg(this).setTitle("복원 미리보기").setMessage(msg).setNegativeButton("취소", null)
                 .setPositiveButton("복원", (d, w) -> {
                     if (snapshotMerchants("복원전") == null) {
-                        Ui.toast(this, "복원 전 백업을 만들지 못해서 멈췄어요. 저장 공간을 확인해 주세요.");
+                        Ui.warn(this, "복원 전 백업을 만들지 못해서 멈췄어요. 저장 공간을 확인해 주세요.");
                         return;
                     }
                     int[] r = store.restoreMerchants(backup, exact);
@@ -5443,12 +5638,12 @@ public class MainActivity extends Activity {
             }
             final List<Object[]> newestFirst = new ArrayList<>(vs);
             Collections.reverse(newestFirst);
-            new AlertDialog.Builder(this).setTitle("'" + m.optString("name") + "' 변경 이력 (눌러서 그 시점으로)").setItems(labels, (d, w) -> {
+            new Dlg(this).setTitle("'" + m.optString("name") + "' 변경 이력 (눌러서 그 시점으로)").setItems(labels, (d, w) -> {
                 final JSONObject ver = (JSONObject) newestFirst.get(w)[2];
-                new AlertDialog.Builder(this).setTitle("이 시점으로 되돌릴까요?").setMessage(merchantInfo(ver) + (ver.optBoolean("deleted") ? "\n\n(이 시점엔 삭제된 상태였어요)" : ""))
+                new Dlg(this).setTitle("이 시점으로 되돌릴까요?").setMessage(merchantInfo(ver) + (ver.optBoolean("deleted") ? "\n\n(이 시점엔 삭제된 상태였어요)" : ""))
                         .setNegativeButton("취소", null).setPositiveButton("되돌리기", (d2, w2) -> {
                             if (snapshotMerchants("이력되돌리기전") == null) {
-                                Ui.toast(this, "되돌리기 전 백업을 만들지 못해서 멈췄어요.");
+                                Ui.warn(this, "되돌리기 전 백업을 만들지 못해서 멈췄어요.");
                                 return;
                             }
                             store.restoreMerchants(new JSONArray().put(ver), false);
@@ -5480,7 +5675,7 @@ public class MainActivity extends Activity {
         Collections.sort(us, (x, y) -> x.optString("name").compareTo(y.optString("name")));
         String[] names = new String[us.size()];
         for (int i = 0; i < names.length; i++) names[i] = us.get(i).optString("name");
-        new AlertDialog.Builder(this).setTitle("누구와 1:1 대화할까요?").setItems(names, (d, w) -> startDm(us.get(w).optInt("id"))).setNegativeButton("취소", null).show();
+        new Dlg(this).setTitle("누구와 1:1 대화할까요?").setItems(names, (d, w) -> startDm(us.get(w).optInt("id"))).setNegativeButton("취소", null).show();
     }
 
     private void startDm(int uid) {
@@ -5550,7 +5745,7 @@ public class MainActivity extends Activity {
                             .setPrimaryClip(android.content.ClipData.newPlainText("메시지", m.optString("text")));
                     Ui.toast(this, "복사했어요.");
                 } else {
-                    new AlertDialog.Builder(this).setTitle("내 메시지를 삭제할까요?").setMessage("대화에서 사라지고, 서버에는 기록이 보관돼요.")
+                    new Dlg(this).setTitle("내 메시지를 삭제할까요?").setMessage("대화에서 사라지고, 서버에는 기록이 보관돼요.")
                             .setNegativeButton("취소", null).setPositiveButton("삭제", (d2, w2) -> {
                                 try {
                                     m.put("deleted", true);
@@ -5563,7 +5758,7 @@ public class MainActivity extends Activity {
             });
             col.addView(b);
         }
-        dd[0] = new AlertDialog.Builder(this).setView(col).show();
+        dd[0] = new Dlg(this).setView(col).show();
     }
 
     /** 한 번 탭 = onTap, 두 번 탭 = ❤️ 좋아요, 길게 = 메뉴. */
@@ -5773,7 +5968,7 @@ public class MainActivity extends Activity {
             ph.setPadding(0, Ui.dp(this, 12), 0, Ui.dp(this, 4));
             f.addView(ph);
         }
-        AlertDialog.Builder b = new AlertDialog.Builder(this).setView(f).setNegativeButton("닫기", null);
+        AlertDialog.Builder b = new Dlg(this).setView(f).setNegativeButton("닫기", null);
         if (uid == myId()) {
             b.setNeutralButton("사진 변경", (d, w) -> {
                 try {
@@ -5790,7 +5985,7 @@ public class MainActivity extends Activity {
                 JSONObject pp = store.profile(uid);
                 e.setText(pp == null ? "" : pp.optString("status"));
                 g.addView(e);
-                new AlertDialog.Builder(this).setTitle("상태 메시지").setView(g).setNegativeButton("취소", null)
+                new Dlg(this).setTitle("상태 메시지").setView(g).setNegativeButton("취소", null)
                         .setPositiveButton("저장", (d2, w2) -> {
                             try {
                                 store.myProfile(uid).put("status", e.getText().toString().trim());
@@ -5882,7 +6077,7 @@ public class MainActivity extends Activity {
             if (tk.length() >= 6 && tk.length() <= 30 && tk.matches(".*[0-9].*") && !cand.contains(tk)) cand.add(tk);
         }
         if (cand.isEmpty()) {
-            new AlertDialog.Builder(this).setTitle("시리얼을 찾지 못했어요")
+            new Dlg(this).setTitle("시리얼을 찾지 못했어요")
                     .setMessage("글자가 또렷하게 나오도록 가까이서, 흔들리지 않게 다시 찍어 보세요. 바코드가 있으면 '바코드 스캔'이 더 정확해요.")
                     .setPositiveButton("확인", null).show();
             return;
@@ -5890,7 +6085,7 @@ public class MainActivity extends Activity {
         final String[] arr = cand.toArray(new String[0]);
         final boolean[] on = new boolean[arr.length];
         if (arr.length == 1) on[0] = true;
-        new AlertDialog.Builder(this).setTitle("읽은 시리얼 (맞는 것을 고르세요)")
+        new Dlg(this).setTitle("읽은 시리얼 (맞는 것을 고르세요)")
                 .setMultiChoiceItems(arr, on, (d, i, c) -> on[i] = c)
                 .setNegativeButton("취소", null)
                 .setPositiveButton("넣기", (d, w) -> {
@@ -6355,9 +6550,9 @@ public class MainActivity extends Activity {
         }
         ScrollView sv = new ScrollView(this);
         sv.addView(l);
-        AlertDialog.Builder b = new AlertDialog.Builder(this).setTitle("일정 상세").setView(sv).setPositiveButton("닫기", null);
+        AlertDialog.Builder b = new Dlg(this).setTitle("일정 상세").setView(sv).setPositiveButton("닫기", null);
         if (e.optInt("who") == myId() || can(Perm.STAFF_MANAGE)) {
-            b.setNeutralButton("삭제", (d, w) -> new AlertDialog.Builder(this).setTitle("일정을 삭제할까요?")
+            b.setNeutralButton("삭제", (d, w) -> new Dlg(this).setTitle("일정을 삭제할까요?")
                     .setMessage(e.optString("title") + "\n" + e.optString("date"))
                     .setNegativeButton("취소", null).setPositiveButton("삭제", (d2, w2) -> {
                         try {

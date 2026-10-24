@@ -147,6 +147,15 @@ final class Ui {
         Toast.makeText(c, s, Toast.LENGTH_SHORT).show();
     }
 
+    /** true 면 방금 확인 버튼의 검사에서 막힌 것 — 팝업을 닫지 않는다(Dlg). */
+    static boolean rejected = false;
+
+    /** 입력이 빠졌을 때 알림. 팝업은 그대로 열어 둔다. */
+    static void warn(Context c, String s) {
+        rejected = true;
+        toast(c, s);
+    }
+
     static void center(View v) {
         if (v instanceof TextView) ((TextView) v).setGravity(Gravity.CENTER);
     }
