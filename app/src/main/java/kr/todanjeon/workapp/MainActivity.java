@@ -1835,14 +1835,16 @@ public class MainActivity extends Activity {
             list.removeAllViews();
             String s = allQuery.trim();
             if (s.isEmpty()) {
-                String lastSec = "";
-                for (Entry en : entries) {
-                    if ("바로가기".equals(en.section)) continue;
-                    if (!en.section.equals(lastSec)) {
-                        lastSec = en.section;
-                        list.addView(sectionLabel(en.section));
+                for (String sec : new String[]{"계정", "회사", "일", "관리자"}) { // 같은 이름은 한 묶음으로
+                    boolean head = false;
+                    for (Entry en : entries) {
+                        if (!sec.equals(en.section)) continue;
+                        if (!head) {
+                            head = true;
+                            list.addView(sectionLabel(sec));
+                        }
+                        list.addView(menuRow(en.label, en.badge, en.go));
                     }
-                    list.addView(menuRow(en.label, en.badge, en.go));
                 }
             } else {
                 int n = 0;
@@ -1872,10 +1874,16 @@ public class MainActivity extends Activity {
         fill.run();
     }
 
-    private TextView sectionLabel(String s) {
-        TextView t = Ui.text(this, s, 13, Ui.GRAY, false);
-        t.setPadding(0, Ui.dp(this, 22), 0, Ui.dp(this, 4));
-        return t;
+    private View sectionLabel(String s) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(0, Ui.dp(this, 22), 0, Ui.dp(this, 2));
+        box.addView(Ui.text(this, s, 15, Ui.DARK, true));
+        View line = new View(this);
+        line.setBackgroundColor(Ui.GOLD);
+        box.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 2)));
+        ((LinearLayout.LayoutParams) line.getLayoutParams()).topMargin = Ui.dp(this, 6);
+        return box;
     }
 
     private View menuRow(String label, String badge, final Runnable r) {
@@ -4006,6 +4014,7 @@ public class MainActivity extends Activity {
 
     /** {버전, 날짜, 내용}. 새 버전은 맨 위에 추가. CI 가 현재 versionName 항목이 있는지 검사한다. */
     private static final String[][] CHANGELOG = {
+            {"0.1.8", "2026-10-24", "• 전체 메뉴: 같은 이름이 두 번 나오던 '일'·'회사' 묶음을 하나로 합치고, 순서를 계정 → 회사 → 일 → 관리자로 바꿨어요. 묶음 이름은 굵게 쓰고 금색 구분선을 넣었어요"},
             {"0.1.7", "2026-10-24", "• 신규 계약의 계약일·만료일을 달력에서 고르게 바꿨어요 (직접 쓰다 틀리는 일 방지). 만료일이 계약일보다 빠르면 알려줘요\n• 재고 추가 때 이미 있는 시리얼(또는 같이 적은 중복 시리얼)이면 막고 어떤 번호인지 알려줘요"},
             {"0.1.6", "2026-10-24", "• 다른 직원이 자료를 고쳐도 내 화면이 맨 위로 튀지 않고, 쓰던 검색어도 그대로 남아요\n• 글자를 쓰는 팝업은 바깥을 잘못 눌러도 닫히지 않아요. 제목 같은 필수 칸이 비었을 땐 알림만 뜨고 쓴 내용은 그대로 남아요\n• 채팅: 안 읽은 글 수가 방 목록과 아래 '채팅' 탭에 빨간 숫자로 보여요 (음소거한 방은 회색, 탭 숫자에서 제외)\n• 가맹점 상세에 '전화 걸기' 버튼, 응대 기록은 100건씩 보기\n• 로그인: 오류를 한글로 안내, 인증번호 6자리를 넣으면 바로 확인, '인증번호 다시 받기' 추가\n• 업무 화면 위쪽 요약 카드를 작게 줄여 목록 공간을 넓혔어요"},
             {"0.1.5", "2026-10-24", "• 가맹점이 수천 곳이어도 버벅이지 않게: 목록은 50곳씩만 그리고 '더 보기'로 늘려요 (검색은 전체에서 찾음, 전체 곳 수 표시)\n• 저장할 때마다 폰 안 보관본을 통째로 다시 쓰던 것을 모아서 쓰도록 바꿔 반응이 빨라졌어요"},
