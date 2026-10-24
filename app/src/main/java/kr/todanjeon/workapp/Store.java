@@ -122,6 +122,44 @@ final class Store {
         return true;
     }
 
+    /** 두 직원의 1:1 대화방이 이미 있으면 돌려주고, 없으면 null. */
+    JSONObject findDm(int a, int b) {
+        int lo = Math.min(a, b), hi = Math.max(a, b);
+        JSONArray rooms = db.optJSONArray("rooms");
+        for (int i = 0; i < rooms.length(); i++) {
+            JSONObject r = rooms.optJSONObject(i);
+            JSONArray mm = r.optJSONArray("members");
+            if (!r.optBoolean("dm") || mm == null || mm.length() != 2 || r.optBoolean("deleted")) continue;
+            int x = mm.optInt(0), y = mm.optInt(1);
+            if (Math.min(x, y) == lo && Math.max(x, y) == hi) return r;
+        }
+        return null;
+    }
+
+    /** 아직 저장하지 않은 1:1 대화방 초안. 첫 메시지를 보낼 때 addRoom 으로 실제로 만든다(텔레그램처럼). */
+    JSONObject dmDraft(int a, String phoneA, int b, String phoneB) {
+        int lo = Math.min(a, b), hi = Math.max(a, b);
+        try {
+            int id = 1500000000 + (int) (((long) lo * 1000003L + hi) % 400000000L);
+            if (byId("rooms", id) != null || idUsed(id)) id = nextId();
+            JSONObject r = new JSONObject();
+            r.put("id", id);
+            r.put("created", now());
+            r.put("name", "");
+            r.put("dm", true);
+            r.put("members", new JSONArray().put(lo).put(hi));
+            r.put("mem", new JSONArray().put(a == lo ? phoneA : phoneB).put(a == lo ? phoneB : phoneA));
+            return r;
+        } catch (JSONException e) {
+            return null;
+        }
+    }
+
+    void addRoom(JSONObject r) {
+        db.optJSONArray("rooms").put(r);
+        save();
+    }
+
     /** 두 직원의 1:1 대화방을 찾고, 없으면 만든다. 참가자 전화번호(mem)가 들어 있어 서버가 둘에게만 보여 준다. */
     JSONObject dmRoom(int a, String phoneA, int b, String phoneB) {
         int lo = Math.min(a, b), hi = Math.max(a, b);
