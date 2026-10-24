@@ -241,9 +241,28 @@ final class Store {
     }
 
     // ---------- 저장·동기화 ----------
+    private final Runnable localTask = new Runnable() {
+        @Override
+        public void run() {
+            saveLocal();
+        }
+    };
+
+    /** 서버에는 바로 올리고, 폰 안 보관본은 1.5초 모아서 한 번만 쓴다(자료가 많아도 느려지지 않게). 오프라인이면 바로 쓴다. */
     void save() {
-        sp.edit().putString("db2", db.toString()).apply();
+        if (online) {
+            main.removeCallbacks(localTask);
+            main.postDelayed(localTask, 1500);
+        } else {
+            saveLocal();
+        }
         push();
+    }
+
+    /** 앱이 가려질 때 아직 안 쓴 보관본을 바로 쓴다. */
+    void flush() {
+        main.removeCallbacks(localTask);
+        saveLocal();
     }
 
     private void saveLocal() {
