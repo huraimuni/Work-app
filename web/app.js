@@ -2,9 +2,9 @@
 /* 나인패밀리 웹앱 — 앱과 같은 Firebase(nine-family)를 쓴다. 문서는 {j: JSON문자열, u: 시각} 형식. */
 const CFG = {apiKey: 'AIzaSyCsA-M6QGGGk0owyDXzziv1X79TqF5NptI', authDomain: 'nine-family.firebaseapp.com', projectId: 'nine-family',
   storageBucket: 'nine-family.firebasestorage.app', messagingSenderId: '48232341344', appId: '1:48232341344:web:19be016c9c1c1de5a34805'};
-const VERSION = '웹 0.0.3';
+const VERSION = '웹 0.0.4';
 const DEMO = location.hash === '#demo';
-const COLLS = ['users', 'tasks', 'notices', 'projects', 'events', 'merchants', 'rooms', 'msgs', 'profiles', 'mlogs', 'config'];
+const COLLS = ['users', 'tasks', 'notices', 'projects', 'events', 'merchants', 'rooms', 'msgs', 'profiles', 'mlogs', 'config', 'stock', 'contracts', 'deposits', 'costs'];
 const TYPES = ['신규 설치', 'AS', '영업 방문', '서류 접수', '카드사 서류', '기타'];
 const KINDS = ['방문A/S', '원격A/S', '전화응대', '기타'];
 const logKind = k => (k === 'AS' || k === '방문' || k === '방문 A/S') ? '방문A/S' : k === '원격 A/S' ? '원격A/S' : k === '전화 응대' ? '전화응대' : k;
@@ -73,6 +73,7 @@ function put(coll, o) {
   const m = {j, u: Date.now()}; let target = coll, priv = false;
   if ((coll === 'rooms' || coll === 'msgs') && o.mem && o.mem.length) { m.mem = o.mem; target = coll === 'rooms' ? 'prooms' : 'pmsgs'; priv = true; }
   if (coll === 'profiles') m.who = o.id;
+  if (coll === 'contracts') { m.who = o.who; m.date = o.date || ''; }
   fs.collection(target).doc(String(o.id)).set(m).catch(e => toast('저장하지 못했어요: ' + (e.code || e.message)));
   if (!(priv || coll === 'msgs' || coll === 'profiles')) fs.collection('audit').add({c: coll, id: o.id, by: S.uid, u: Date.now(), j}).catch(() => {});
 }
@@ -86,8 +87,10 @@ function attach() {
   srvs.push(['rooms', 'prooms'], ['msgs', 'pmsgs']);
   srvs.forEach(([coll, srv]) => {
     const priv = srv === 'prooms' || srv === 'pmsgs';
+    if (coll === 'costs' && !canPerf()) return; // 단가는 실적 권한자만
     let q = fs.collection(srv);
     if (priv) q = q.where('mem', 'array-contains', S.phone);
+    if (coll === 'contracts' && !canPerf()) q = q.where('who', '==', S.uid); // 실적 권한이 없으면 내 계약만
     if (srv === 'msgs') q = q.orderBy('u', 'desc').limit(400);
     unsubs.push(q.onSnapshot(snap => {
       let ch = false;
@@ -225,6 +228,9 @@ function viewBody(k) {
     case 'merchants': return viewMerchants();
     case 'notice': return viewNotices();
     case 'logs': return viewAllLogs();
+    case 'stock': return viewStock();
+    case 'contracts': return viewContracts();
+    case 'deposit': return viewDeposits();
     case 'manual': return viewManual();
     case 'about': return viewAbout();
     default: return viewTasks();
@@ -232,7 +238,7 @@ function viewBody(k) {
 }
 function fab() {
   const k = S.sub || S.tab;
-  const map = {task: 'newTask', project: 'newProject', merchants: canEditMerchant() ? 'newMerchant' : '', calendar: can('staff_manage') ? 'newEvent' : '', notice: can('notice_write') ? 'newNotice' : ''};
+  const map = {task: 'newTask', project: 'newProject', merchants: canEditMerchant() ? 'newMerchant' : '', calendar: can('staff_manage') ? 'newEvent' : '', notice: can('notice_write') ? 'newNotice' : '', stock: 'newStock', contracts: 'newContract', deposit: 'newDeposit'};
   return map[k] ? '<button class="fab" data-act="' + map[k] + '">+</button>' : '';
 }
 function bind(root) {
@@ -591,6 +597,269 @@ function viewAllLogs() {
     ls.slice(0, 100).map(g => logCard(g, 'editLog|' + g.id + '|' + g.merchant).replace('<span class="chip">' + esc(logKind(g.kind)) + '</span>', '<span class="chip">' + esc(logKind(g.kind)) + '</span> <b>' + esc(g.mname) + '</b>')).join('') + (ls.length > 100 ? '<div class="sub">최근 100건만 보여요.</div>' : '') + (ls.length ? '' : '<div class="empty">기록이 없어요.</div>') + '</div>';
 }
 
+// ---------- 바코드 스캔 ----------
+// PC: USB·블루투스 바코드 스캐너는 키보드처럼 번호를 치고 Enter 를 누른다 → 입력칸에 커서를 두고 찍으면 된다.
+// 휴대폰(아이폰): 카메라로 찍는다. 브라우저 기본 기능(BarcodeDetector)이 없으면 zxing(web/vendor)을 그때 불러온다.
+let zxingP = null;
+function loadZxing() {
+  return zxingP || (zxingP = new Promise((ok, no) => {
+    const s = document.createElement('script'); s.src = 'vendor/zxing-0.21.3.min.js';
+    s.onload = () => ok(window.ZXing); s.onerror = () => { zxingP = null; no(new Error('zxing')); }; document.head.appendChild(s);
+  }));
+}
+async function nativeDetector() {
+  try { if (!('BarcodeDetector' in window)) return null; const f = await BarcodeDetector.getSupportedFormats(); return f && f.length ? new BarcodeDetector({formats: f}) : null; } catch (e) { return null; }
+}
+function scanCamera(onCode) {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return toast('이 브라우저는 카메라를 쓸 수 없어요. 번호를 직접 입력해 주세요.');
+  const ov = document.createElement('div'); ov.className = 'scanov';
+  ov.innerHTML = '<video playsinline muted autoplay></video><div class="scanbox"></div><div class="scanmsg">바코드를 네모 안에 맞춰 주세요</div><button class="btn">닫기</button>';
+  document.body.appendChild(ov);
+  const video = ov.querySelector('video'); let stream = null, timer = 0, reader = null, done = false;
+  const stop = () => { done = true; clearInterval(timer); if (reader) { try { reader.reset(); } catch (e) {} } if (stream) stream.getTracks().forEach(t => t.stop()); ov.remove(); };
+  const hit = code => { if (done || !code) return; stop(); if (navigator.vibrate) navigator.vibrate(80); onCode(String(code).trim()); };
+  const fail = e => { if (done) return; stop(); toast(e && e.name === 'NotAllowedError' ? '카메라 권한이 필요해요. 설정에서 이 사이트의 카메라를 허용해 주세요.' : '카메라를 열지 못했어요. 번호를 직접 입력해 주세요.'); };
+  ov.querySelector('button').onclick = stop;
+  nativeDetector().then(det => {
+    if (done) return;
+    if (det) {
+      return navigator.mediaDevices.getUserMedia({video: {facingMode: 'environment'}, audio: false}).then(s => {
+        stream = s; if (done) return stop(); video.srcObject = s; video.play().catch(() => {});
+        timer = setInterval(() => { if (video.readyState >= 2) det.detect(video).then(r => { if (r && r[0]) hit(r[0].rawValue); }).catch(() => {}); }, 250);
+      });
+    }
+    return loadZxing().then(Z => { if (done) return; reader = new Z.BrowserMultiFormatReader(); return reader.decodeFromConstraints({video: {facingMode: 'environment'}}, video, r => { if (r) hit(r.getText()); }); });
+  }).catch(fail);
+}
+ACT.scanInto = id => scanCamera(code => { const el = $('#' + id); if (!el) return; if (el.tagName === 'TEXTAREA') el.value = (el.value.trim() ? el.value.trim() + '\n' : '') + code; else el.value = code; el.dispatchEvent(new Event('input', {bubbles: true})); toast('읽었어요: ' + code); });
+
+// ---------- 재고 ----------
+const canPerf = () => !!(S.caps && (S.caps.perf || S.caps.admin)); // 단가(입고·출고)는 실적 권한자만 (서버 규칙과 같음)
+const costOf = sid => list('costs').find(c => c.stock === sid);
+function costDoc(sid) { let c = costOf(sid); if (!c) { c = create('costs', {stock: sid, buy: 0, sell: 0}); } return c; }
+const numOf = v => Number(String(v || '').replace(/[^0-9]/g, '')) || 0;
+function viewStock() {
+  let asset = '';
+  if (canPerf()) {
+    let sum = 0, noPrice = 0;
+    list('stock').forEach(r => { if (r.status !== '재고') return; const c = costOf(r.id); if (!c || !c.buy) noPrice += r.qty || 1; else sum += c.buy * (r.qty || 1); });
+    asset = '<div class="card flat"><div class="sub" style="margin:0">보유 재고 자산 (입고 단가 합계)</div><div class="t1" style="font-size:22px;margin-top:2px">' + wonFmt(sum) + '</div>' + (noPrice ? '<div class="sub" style="color:var(--amber)">단가 미입력 ' + noPrice + '대는 빠져 있어요.</div>' : '') + '</div>';
+  }
+  return '<h1>재고</h1><div class="sub">장비를 직접 입력해 관리해요. 계약에서 장비를 고르면 ‘출고중’이 되고, 설치 완료하면 재고에서 빠집니다.</div>' + asset +
+    '<div class="row" style="gap:8px"><input id="sq" data-q="sq" placeholder="🔍 모델명·시리얼 검색 (초성도, 스캐너로 찍어도 돼요)" value="' + esc(S.sq || '') + '" autocomplete="off"><button class="btn tint" data-act="scanInto" data-arg="sq" style="flex:none" aria-label="카메라로 바코드 찍기">📷 바코드</button></div>' +
+    '<div class="qres" data-for="sq">' + stockGroups() + '</div>';
+}
+function stockGroups() {
+  const g = new Map();
+  list('stock').filter(r => r.status !== '설치완료' && kmatch((r.model || '') + ' ' + (r.serial || ''), S.sq || '')).sort((a, b) => (a.model || '').localeCompare(b.model || '') || (a.serial || '').localeCompare(b.serial || ''))
+    .forEach(r => { if (!g.has(r.model)) g.set(r.model, []); g.get(r.model).push(r); });
+  if (!g.size) return '<div class="empty">' + ((S.sq || '').trim() ? '찾는 장비가 없어요.' : '등록된 재고가 없습니다. 오른쪽 아래 + 로 추가해 주세요.') + '</div>';
+  return [...g.entries()].map(([model, rows]) => {
+    let have = 0, out = 0, safe = 0;
+    rows.forEach(r => { if (r.status === '출고중') out += r.qty || 1; else have += r.qty || 1; safe = Math.max(safe, r.safe || 0); });
+    const low = safe > 0 && have < safe;
+    return '<div class="card flat"><div class="row"><div class="grow t1">' + esc(model) + '</div><span class="chip"' + (low ? ' style="background:#fdecea;color:var(--red)"' : '') + '>재고 ' + have + (out ? ' · 출고중 ' + out : '') + '</span></div>' +
+      (safe ? '<div class="sub" style="' + (low ? 'color:var(--red);font-weight:700' : '') + '">안전재고 ' + safe + '대' + (low ? ' — 부족해요!' : '') + '</div>' : '') +
+      rows.map(r => '<button class="srow' + (r.status === '출고중' ? ' out' : '') + '" data-act="editStock" data-arg="' + r.id + '">' + esc(r.serial ? r.serial : '시리얼 없음 · ' + (r.qty || 1) + '개') + (r.status === '출고중' ? '<i>출고중</i>' : '') + '</button>').join('') + '</div>';
+  }).join('');
+}
+// 스캐너로 검색칸에 시리얼을 찍으면(Enter) 그 장비를 바로 연다
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || e.isComposing || !e.target || e.target.id !== 'sq') return;
+  const c = e.target.value.trim().toLowerCase(); if (!c) return;
+  const r = list('stock').find(x => (x.serial || '').trim().toLowerCase() === c && x.status !== '설치완료');
+  if (r) { e.preventDefault(); ACT.editStock(r.id); }
+});
+ACT.newStock = () => formModal('재고 추가',
+  '<label class="fl" for="f_mo">모델명 (필수)</label><input id="f_mo" placeholder="예: 토스 포스 T2">' +
+  '<label class="fl" for="f_se">시리얼 (여러 개는 한 줄에 하나 — 스캐너로 계속 찍으면 줄이 바뀌어요)</label><textarea id="f_se" placeholder="시리얼 번호"></textarea><button class="btn tint full" data-act="scanInto" data-arg="f_se">📷 카메라로 바코드 찍기</button>' +
+  '<label class="fl" for="f_q">시리얼이 없는 물품의 수량 (선택)</label><input id="f_q" inputmode="numeric" placeholder="예: 10">' +
+  '<label class="fl" for="f_sf">안전재고 (이 수 아래면 알려줘요, 선택)</label><input id="f_sf" inputmode="numeric" placeholder="예: 3">' +
+  (canPerf() ? '<label class="fl" for="f_b">입고 단가 (1대당 산 값, 원, 선택)</label><input id="f_b" inputmode="numeric" placeholder="예: 250000">' : ''), () => {
+  const m = $('#f_mo').value.trim(); if (!m) return warn('모델명을 입력해 주세요.');
+  const qn = numOf($('#f_q').value), sf = numOf($('#f_sf').value), by = canPerf() ? numOf($('#f_b').value) : 0;
+  const ss = $('#f_se').value.split(/[\n,]+/).map(x => x.trim()).filter(Boolean);
+  if (!ss.length && qn < 1) return warn('시리얼을 적거나 수량을 입력해 주세요.');
+  const seen = new Set();
+  for (const x of ss) { const k = x.toLowerCase(); if (seen.has(k) || list('stock').some(r => (r.serial || '').trim().toLowerCase() === k)) return warn('이미 있는 시리얼이에요: ' + x); seen.add(k); }
+  const one = (serial, qty) => { const r = create('stock', {model: m, serial, qty, safe: sf, status: '재고', deleted: false}); put('stock', r); if (by > 0) { const c = costDoc(r.id); c.buy = by; put('costs', c); } };
+  if (ss.length) ss.forEach(x => one(x, 1)); else one('', qn);
+  render(); toast('재고에 추가했어요.'); return true;
+}, '추가');
+ACT.editStock = id => {
+  const r = byId('stock', id); if (!r) return; const c = canPerf() ? costOf(r.id) : null; const mer = r.merchant ? byId('merchants', r.merchant) : null;
+  formModal('재고 수정', '<label class="fl" for="f_mo">모델명</label><input id="f_mo" value="' + esc(r.model) + '"><label class="fl" for="f_se">시리얼</label><input id="f_se" value="' + esc(r.serial) + '"><button class="btn tint full" data-act="scanInto" data-arg="f_se">📷 카메라로 바코드 찍기</button>' +
+    (r.serial ? '' : '<label class="fl" for="f_q">수량</label><input id="f_q" inputmode="numeric" value="' + (r.qty || 1) + '">') +
+    '<label class="fl" for="f_sf">안전재고</label><input id="f_sf" inputmode="numeric" value="' + (r.safe || 0) + '">' +
+    (canPerf() ? '<label class="fl" for="f_b">입고 단가 (산 값, 원)</label><input id="f_b" inputmode="numeric" value="' + (c && c.buy ? c.buy : '') + '"><label class="fl" for="f_s">출고 단가 (판 값, 원)</label><input id="f_s" inputmode="numeric" value="' + (c && c.sell ? c.sell : '') + '">' : '') +
+    '<div class="sub" style="margin-top:10px">상태: ' + esc(r.status || '재고') + (r.status === '출고중' && mer ? ' · ' + esc(mer.name) : '') + '</div><button class="btn red full" id="f_del">이 재고 삭제</button>', () => {
+    const m = $('#f_mo').value.trim(); if (!m) return warn('모델명을 입력해 주세요.');
+    const se = $('#f_se').value.trim();
+    if (se && se.toLowerCase() !== (r.serial || '').trim().toLowerCase() && list('stock').some(x => x.id !== r.id && (x.serial || '').trim().toLowerCase() === se.toLowerCase())) return warn('이미 있는 시리얼이에요: ' + se);
+    r.model = m; r.serial = se; r.safe = numOf($('#f_sf').value); if ($('#f_q')) r.qty = Math.max(1, numOf($('#f_q').value)); put('stock', r);
+    if (canPerf()) { const b2 = numOf($('#f_b').value), s2 = numOf($('#f_s').value); const cd = costOf(r.id) || (b2 || s2 ? costDoc(r.id) : null); if (cd) { cd.buy = b2; cd.sell = s2; put('costs', cd); } }
+    render(); toast('저장했어요.'); return true;
+  }, '저장');
+  $('#f_del').onclick = () => { if (!confirm((r.model || '') + ' ' + (r.serial || '') + '\n목록에서 지울까요?')) return; r.deleted = true; put('stock', r); closeModal(); render(); toast('삭제했어요.'); };
+};
+
+// ---------- 가맹점 고르기 · 장비 고르기 (팝업 안에서 쓰는 조각) ----------
+const MP_HTML = '<div class="lb">가맹점</div><div id="mpSel" class="sub">아직 고르지 않았어요. 아래에서 찾아 눌러 주세요.</div><input id="mpq" placeholder="🔍 가맹점 찾기 — 상호·초성·사업자번호" autocomplete="off"><div id="mpl" class="picks"></div>';
+function wireMerchantPicker(onPick) {
+  const q = $('#mpq'), l = $('#mpl');
+  const fill = () => { // 검색칸은 그대로 두고 목록만 바꾼다 → 한글을 치는 중에도 바로 걸러진다
+    const v = q.value.trim(); if (!v) { l.innerHTML = ''; return; }
+    const hits = list('merchants').filter(m => kmatch(mHay(m), v)).sort((a, b) => (a.name || '').localeCompare(b.name || '')).slice(0, 8);
+    l.innerHTML = hits.map(m => { const n = mNums(m); return '<button type="button" class="pick" data-id="' + m.id + '"><b>' + esc(m.name) + '</b><span>' + esc([m.bizno, n.phone || n.mobile].filter(Boolean).join(' · ')) + '</span></button>'; }).join('') || '<div class="sub">찾는 가맹점이 없어요.</div>';
+  };
+  q.addEventListener('input', fill);
+  l.onclick = ev => { const p = ev.target.closest('.pick'); if (!p) return; const m = byId('merchants', p.dataset.id); const s = $('#mpSel'); s.className = 'picked'; s.innerHTML = '✔ <b>' + esc(m.name) + '</b>' + (m.bizno ? ' · ' + esc(m.bizno) : ''); q.value = ''; l.innerHTML = ''; onPick(m); };
+}
+const EQ_HTML = '<div class="lb">나가는 장비</div><div id="eqSel"></div><div class="row" style="gap:8px"><input id="eqq" placeholder="재고에서 찾기 — 모델명·시리얼 (스캐너로 찍어도 돼요)" autocomplete="off"><button type="button" class="btn tint" id="eqcam" style="flex:none" aria-label="카메라로 바코드 찍기">📷</button></div><div id="eqList" class="picks"></div>' +
+  '<details class="direct"><summary>재고에 없는 장비 직접 입력</summary><input id="eqm" placeholder="모델명"><input id="eqs" placeholder="시리얼 (선택)"><button type="button" class="btn full" id="eqadd">장비 추가</button></details>';
+function wireEquipPicker(sel) {
+  const q = $('#eqq'), L = $('#eqList'), box = $('#eqSel');
+  const showSel = () => { box.innerHTML = sel.length ? sel.map((e, i) => '<div class="eqi"><span>' + esc(e.model) + (e.serial ? ' / ' + esc(e.serial) : '') + (e.sid ? '' : ' <i>직접 입력</i>') + '</span><button type="button" data-i="' + i + '" aria-label="빼기">−</button></div>').join('') : '<div class="sub">아직 고른 장비가 없어요.</div>'; };
+  const avail = () => list('stock').filter(r => r.status === '재고' && !sel.some(e => e.sid && e.sid === r.id));
+  const fill = () => {
+    const v = q.value.trim(); const rows = avail().filter(r => kmatch((r.model || '') + ' ' + (r.serial || ''), v)).sort((a, b) => (a.model || '').localeCompare(b.model || '')).slice(0, 40);
+    L.innerHTML = rows.map(r => '<button type="button" class="pick" data-id="' + r.id + '"><b>' + esc(r.model) + '</b><span>' + (r.serial ? esc(r.serial) : '시리얼 없음 · ' + (r.qty || 1) + '개 보유') + '</span></button>').join('') || '<div class="sub">' + (v ? '재고에 맞는 장비가 없어요.' : '재고에 남은 장비가 없어요. 아래 ‘직접 입력’을 써 주세요.') + '</div>';
+  };
+  const addRow = r => { sel.push({sid: r.id, model: r.model, serial: r.serial || ''}); showSel(); fill(); };
+  const byCode = code => {
+    const c = code.trim().toLowerCase(); if (!c) return;
+    const same = list('stock').filter(r => (r.serial || '').trim().toLowerCase() === c); const r = same.find(x => x.status === '재고') || same[0];
+    if (r && r.status === '재고') { if (sel.some(e => e.sid === r.id)) toast('이미 고른 장비예요.'); else { addRow(r); toast('장비를 추가했어요: ' + r.model + ' · ' + r.serial); } }
+    else if (r) toast('이미 출고된 장비예요: ' + code);
+    else { const one = avail().filter(x => kmatch((x.model || '') + ' ' + (x.serial || ''), code)); if (one.length === 1) addRow(one[0]); else if (!/\s/.test(code) && code.length >= 4) { toast('재고에 없는 번호예요. 모델명을 적어 직접 입력해 주세요.'); $('.direct').open = true; $('#eqs').value = code; $('#eqm').focus(); } else return; }
+    q.value = ''; fill();
+  };
+  q.addEventListener('input', fill);
+  q.addEventListener('keydown', ev => { if (ev.key === 'Enter' && !ev.isComposing) { ev.preventDefault(); byCode(q.value); } });
+  L.onclick = ev => { const p = ev.target.closest('.pick'); if (p) addRow(byId('stock', p.dataset.id)); };
+  box.onclick = ev => { const b = ev.target.closest('button[data-i]'); if (b) { sel.splice(Number(b.dataset.i), 1); showSel(); fill(); } };
+  $('#eqcam').onclick = () => scanCamera(byCode);
+  $('#eqadd').onclick = () => { const m = $('#eqm').value.trim(); if (!m) return toast('모델명을 입력해 주세요.'); sel.push({sid: 0, model: m, serial: $('#eqs').value.trim()}); $('#eqm').value = ''; $('#eqs').value = ''; showSel(); };
+  showSel(); fill();
+}
+
+// ---------- 계약 ----------
+function daysLeft(ymd) { const a = new Date(todayStr() + 'T00:00:00'), b = new Date(String(ymd) + 'T00:00:00'); return isNaN(b) ? 99999 : Math.round((b - a) / 86400000); }
+function dday(d) { return d === 99999 ? '' : d < 0 ? '만료 ' + (-d) + '일 지남' : d === 0 ? '오늘 만료' : 'D-' + d; }
+function addMonths(ymd, m) { const p = String(ymd).split('-').map(Number); if (p.length < 3 || !p[0]) return ''; const d = new Date(p[0], p[1] - 1 + m, p[2]); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+const amountLabel = k => k === 'CMS' ? 'CMS 금액' : k === '렌탈' ? '월 렌탈료' : '판매금액';
+const expiringContracts = () => list('contracts').filter(c => c.expire && daysLeft(c.expire) <= 90).sort((a, b) => daysLeft(a.expire) - daysLeft(b.expire));
+function contractCard(c) {
+  const d = c.expire ? daysLeft(c.expire) : 99999; const n = (c.equip || []).length;
+  return '<div class="card" data-act="contract" data-arg="' + c.id + '"><div class="row"><div class="grow t1">' + esc(c.client) + '</div>' + (c.expire ? '<span class="chip"' + (d <= 90 ? ' style="background:#fdecea;color:var(--red)"' : ' style="background:var(--field);color:var(--gray)"') + '>' + dday(d) + '</span>' : '') + '</div>' +
+    '<div class="t2">' + esc(c.kind + (c.amount ? ' ' + wonFmt(c.amount) : '') + ' · 장비 ' + n + '대 · ' + (c.installed ? '설치 완료' : '설치 대기') + ' · ' + uname(c.who)) + '</div>' + (c.expire ? '<div class="t2">만료일 ' + esc(c.expire) + '</div>' : '') + '</div>';
+}
+function viewContracts() {
+  const exp = expiringContracts(); const all = list('contracts').sort((a, b) => (b.created || '').localeCompare(a.created || ''));
+  return '<h1>계약 관리</h1><div class="sub">올린 계약을 눌러 장비를 추가하거나 ‘설치 완료’를 처리해요. 오른쪽 아래 + 로 새 계약을 올립니다.' + (canPerf() ? '' : ' (내가 올린 계약만 보여요)') + '</div>' +
+    (exp.length ? '<h2 style="color:var(--red)">만료가 가까운 계약 (3개월 이내)</h2>' + exp.map(contractCard).join('') : '') +
+    '<h2>전체 계약</h2>' + (all.length ? all.map(contractCard).join('') : '<div class="empty">아직 올린 계약이 없습니다.</div>');
+}
+function takeStock(row, merchant, contract) { // 재고 한 줄을 출고 처리 (수량 여러 개짜리는 1개만 떼어 낸다) — 앱의 Store.takeStock 과 같다
+  let use = row;
+  if (!row.serial && (row.qty || 1) > 1) {
+    row.qty = (row.qty || 1) - 1; put('stock', row);
+    use = create('stock', {model: row.model, serial: '', safe: row.safe || 0, deleted: false});
+    const rc = canPerf() ? costOf(row.id) : null; if (rc) put('costs', create('costs', {stock: use.id, buy: rc.buy || 0, sell: rc.sell || 0}));
+  }
+  use.qty = 1; use.status = '출고중'; use.merchant = merchant; use.contract = contract; put('stock', use); return use;
+}
+function addEquip(c, sel) {
+  c.equip = c.equip || [];
+  sel.forEach(e => {
+    const x = {sid: e.sid || 0, model: e.model, serial: e.serial || ''};
+    if (x.sid) { const row = byId('stock', x.sid); if (row) { const used = takeStock(row, c.merchant, c.id); if (c.installed) { used.status = '설치완료'; put('stock', used); } x.sid = used.id; } }
+    c.equip.push(x);
+  });
+  c.qty = Math.max(1, c.equip.length); put('contracts', c);
+}
+ACT.contract = id => {
+  const c = byId('contracts', id); if (!c) return;
+  const ln = (k, v) => v ? '<div class="line"><b>' + k + '</b><div>' + esc(v) + '</div></div>' : '';
+  modal('<h3>계약 정보</h3>' + ln('가맹점', c.client) + ln('구분', c.kind) + (c.amount ? ln(amountLabel(c.kind), wonFmt(c.amount)) : '') + ln('계약일', c.date) +
+    (c.expire ? ln('만료일', c.expire + '  (' + dday(daysLeft(c.expire)) + ')') : '') + ln('결제 연동', ((c.linkType || '') + ' ' + (c.company || '')).trim()) + ln('담당', uname(c.who)) +
+    ln('상태', c.installed ? '설치 완료 ' + (c.installedAt || '') : '설치 대기') +
+    '<h2>나간 장비</h2>' + ((c.equip || []).length ? c.equip.map(e => '<div class="bul">· ' + esc(e.model) + (e.serial ? '  /  ' + esc(e.serial) : '') + '</div>').join('') : '<div class="sub">없음</div>') + ln('장비 메모', c.memo) +
+    '<div class="btns" style="margin-top:12px"><button class="btn tint" data-act="contractEquip" data-arg="' + c.id + '">장비 추가</button>' + (c.installed ? '' : '<button class="btn gold" data-act="contractDone" data-arg="' + c.id + '">설치 완료</button>') + '<button class="btn" data-act="close">닫기</button></div>');
+};
+ACT.contractDone = id => {
+  const c = byId('contracts', id); if (!c || !confirm('설치 완료로 처리할까요?\n나간 장비가 재고에서 빠집니다.')) return;
+  c.installed = true; c.installedAt = todayStr();
+  (c.equip || []).forEach(e => { const r = byId('stock', e.sid); if (r) { r.status = '설치완료'; put('stock', r); } });
+  put('contracts', c); closeModal(); render(); toast('설치 완료로 처리했어요.');
+};
+ACT.contractEquip = id => {
+  const c = byId('contracts', id); if (!c) return; const sel = [];
+  formModal('장비 추가 — ' + c.client, EQ_HTML, () => { if (!sel.length) return warn('추가할 장비를 골라 주세요.'); addEquip(c, sel); render(); setTimeout(() => ACT.contract(id), 0); toast('장비를 추가했어요.'); return true; }, '추가');
+  wireEquipPicker(sel);
+};
+ACT.newContract = () => {
+  let mer = null; const sel = [];
+  formModal('신규 계약 올리기', MP_HTML +
+    '<label class="fl" for="f_lk">결제 연동</label><select id="f_lk"><option>VAN사</option><option>PG사</option></select><input id="f_co" placeholder="VAN사·PG사 업체명 (예: 다우데이타)">' +
+    '<label class="fl" for="f_k">구분 (판매 / CMS / 렌탈)</label><select id="f_k"><option>판매</option><option>CMS</option><option>렌탈</option></select>' +
+    '<label class="fl" for="f_a" id="f_al">판매금액 (원)</label><input id="f_a" inputmode="numeric" placeholder="숫자만 (예: 450000)">' + EQ_HTML +
+    '<label class="fl" for="f_m">장비 메모 (선택)</label><textarea id="f_m" placeholder="장비 메모"></textarea>' +
+    '<label class="fl" for="f_d">계약일</label><input id="f_d" type="date" value="' + todayStr() + '"><label class="fl" for="f_e">계약 만료일 (필수)</label><input id="f_e" type="date">' +
+    '<div class="pills"><button type="button" class="pill" data-m="12">+12개월</button><button type="button" class="pill" data-m="24">+24개월</button><button type="button" class="pill" data-m="36">+36개월</button></div>', () => {
+    const dt = $('#f_d').value, ex = $('#f_e').value;
+    if (!mer) return warn('가맹점을 골라 주세요.');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dt) || !/^\d{4}-\d{2}-\d{2}$/.test(ex)) return warn('계약일과 만료일을 골라 주세요.');
+    if (ex < dt) return warn('만료일이 계약일보다 빨라요. 다시 확인해 주세요.');
+    const c = create('contracts', {date: dt, who: S.uid, merchant: mer.id, client: mer.name, linkType: $('#f_lk').value, company: $('#f_co').value.trim(), kind: $('#f_k').value, amount: numOf($('#f_a').value), memo: $('#f_m').value.trim(), expire: ex, installed: false, equip: [], qty: 1});
+    addEquip(c, sel); render(); toast('신규 계약을 올렸어요.'); return true;
+  }, '올리기');
+  wireMerchantPicker(m => { mer = m; }); wireEquipPicker(sel);
+  $('#f_k').onchange = () => { $('#f_al').textContent = amountLabel($('#f_k').value) + ' (원)'; };
+  document.querySelectorAll('#modal .pill[data-m]').forEach(b => b.onclick = () => { $('#f_e').value = addMonths($('#f_d').value, Number(b.dataset.m)); });
+};
+
+// ---------- 입금 확인 ----------
+const DEP_KINDS = ['판매대금', '미납금', '정보변경수수료', '기타'];
+function postToRoom(name, text) { // 이름이 맞는 채팅방에 알림 글을 올린다 (없으면 만든다) — 앱과 같다
+  let r = list('rooms').find(x => x.name === name && !(x.mem && x.mem.length));
+  if (!r) { r = create('rooms', {name, by: S.uid}); put('rooms', r); }
+  put('msgs', create('msgs', {room: r.id, who: S.uid, text, ts: Date.now()}));
+}
+function viewDeposits() {
+  const ls = list('deposits').sort((a, b) => (b.t || '').localeCompare(a.t || ''));
+  const wait = ls.filter(d => !d.ok);
+  return '<h1>입금 확인</h1><div class="sub">입금 내역을 올리면 ‘입금확인’ 채팅방에도 자동으로 알림이 올라가요. 오른쪽 아래 + 로 올립니다.</div>' +
+    (wait.length ? '<div class="sub" style="font-weight:700;margin-top:10px">확인 전 ' + wait.length + '건 · ' + wonFmt(wait.reduce((s, d) => s + (d.amount || 0), 0)) + '</div>' : '') +
+    (ls.length ? ls.map(d => '<div class="card" data-act="deposit" data-arg="' + d.id + '"><div class="t1" style="color:' + (d.ok ? 'var(--green)' : 'var(--ink)') + '">' + esc(d.kind) + '  ' + wonFmt(d.amount) + (d.ok ? '  ✔ 확인됨' : '  · 확인 전') + '</div>' +
+      '<div class="t2" style="color:var(--ink)">' + esc((d.mname || '(가맹점 미지정)') + (d.memo ? ' · ' + d.memo : '')) + '</div><div class="t2">' + esc((d.t || '') + ' · 올린 사람 ' + uname(d.by) + (d.ok ? ' · 확인 ' + uname(d.okby) : '')) + '</div></div>').join('') : '<div class="empty">올라온 입금 내역이 없습니다.</div>');
+}
+ACT.deposit = id => {
+  const d = byId('deposits', id); if (!d) return;
+  const ln = (k, v) => '<div class="line"><b>' + k + '</b><div>' + esc(v || '-') + '</div></div>';
+  modal('<h3>입금 내역</h3>' + ln('구분', d.kind) + ln('금액', wonFmt(d.amount)) + ln('가맹점', d.mname) + ln('메모', d.memo) + ln('올린 사람', uname(d.by) + ' · ' + (d.t || '')) + (d.ok ? ln('확인', uname(d.okby)) : '') +
+    '<div class="btns" style="margin-top:12px">' + (d.ok ? '' : '<button class="btn gold" data-act="depositOk" data-arg="' + d.id + '">확인 처리</button>') + '<button class="btn" data-act="close">닫기</button></div>');
+};
+ACT.depositOk = id => {
+  const d = byId('deposits', id); if (!d || d.ok) return;
+  d.ok = true; d.okby = S.uid; put('deposits', d);
+  postToRoom('입금확인', '✔ 입금 확인 완료 · ' + d.kind + ' ' + wonFmt(d.amount) + (d.mname ? ' · ' + d.mname : '') + ' (' + uname(S.uid) + ')');
+  closeModal(); render(); toast('확인 처리했어요.');
+};
+ACT.newDeposit = () => {
+  let mer = null;
+  formModal('입금 올리기', '<label class="fl" for="f_k">구분</label><select id="f_k">' + DEP_KINDS.map(k => '<option>' + k + '</option>').join('') + '</select>' +
+    '<label class="fl" for="f_a">금액 (원)</label><input id="f_a" inputmode="numeric" placeholder="숫자만 (예: 30000)">' + MP_HTML.replace('<div class="lb">가맹점</div>', '<div class="lb">가맹점 (어느 가맹점 입금인지, 선택)</div>') +
+    '<label class="fl" for="f_m">메모 (기타일 때 내용, 입금자명 등)</label><input id="f_m" placeholder="메모">', () => {
+    const a = numOf($('#f_a').value); if (a <= 0) return warn('금액을 입력해 주세요.');
+    const k = $('#f_k').value, memo = $('#f_m').value.trim();
+    put('deposits', create('deposits', {kind: k, amount: a, memo, merchant: mer ? mer.id : 0, mname: mer ? mer.name : '', by: S.uid, t: nowStr(), ok: false}));
+    postToRoom('입금확인', '💰 입금 확인 요청 · ' + k + ' ' + wonFmt(a) + (mer ? ' · ' + mer.name : '') + (memo ? ' · ' + memo : '') + ' (' + uname(S.uid) + ')');
+    render(); toast('올렸어요. ‘입금확인’ 채팅방에도 알렸습니다.'); return true;
+  }, '올리기');
+  wireMerchantPicker(m => { mer = m; });
+};
+
 // ---------- 공지 ----------
 function viewNotices() {
   const ns = list('notices').sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b.t || '').localeCompare(a.t || ''));
@@ -614,12 +883,13 @@ function menuItems() {
   const add = (sec, label, words, go, badge) => it.push({sec, label, words, go, badge});
   add('바로가기', '업무', '업무 지시 할일 설치 AS 서류', 'nav:task:'); add('바로가기', '프로젝트', '프로젝트 진행률', 'nav:project:');
   add('바로가기', '채팅', '채팅 대화 메시지 방', 'nav:chat:'); add('바로가기', '일정 (달력)', '일정 달력 캘린더 방문 약속', 'nav:calendar:');
-  add('일', '재고', '재고 장비 바코드 시리얼 단가 입고 출고 스캔');
+  add('일', '재고', '재고 장비 바코드 시리얼 단가 입고 출고 스캔', 'nav:all:stock');
   add('일', '가맹점', '가맹점 거래처 상호 사업자 삭제', 'nav:all:merchants');
   add('일', '가맹점 응대 기록 조회', '응대 기록 AS 전화 응대 방문 메모 이력 날짜 가맹점', 'nav:all:logs');
   add('일', '가맹점 일괄 가져오기 (엑셀·이카운트)', '가맹점 일괄 가져오기 업로드 엑셀 csv 이카운트');
-  add('일', '계약 관리 (설치 완료·만료 알림)', '계약 설치 완료 만료 알림 장비'); add('일', '신규 계약 올리기', '신규 계약 올리기 CMS 판매 렌탈');
-  add('일', '입금 확인 (입금 내역 올리기)', '입금 확인 입금 내역 미납금'); add('일', '단체 문자 보내기 (가맹점)', '단체 문자 sms 발송 가맹점 문자 안내');
+  const ex = expiringContracts().length;
+  add('일', '계약 관리 (설치 완료·만료 알림)', '계약 설치 완료 만료 알림 장비', 'nav:all:contracts', ex ? '만료 ' + ex : ''); add('일', '신규 계약 올리기', '신규 계약 올리기 CMS 판매 렌탈', 'act:newContract');
+  add('일', '입금 확인 (입금 내역 올리기)', '입금 확인 입금 내역 미납금 판매대금 정보변경수수료', 'nav:all:deposit'); add('일', '단체 문자 보내기 (가맹점)', '단체 문자 sms 발송 가맹점 문자 안내');
   add('일', '내 실적', '내 실적 월별 성장률 계약');
   if (P) { add('일', '전체 실적·직원별 순위', '전체 실적 직원별 순위 성장률'); add('일', '수익 현황 (입고·출고 단가)', '수익 현황 입고 출고 단가 매출 매입'); add('일', '실적 보고서 올리기 (대표님께)', '실적 보고서 올리기 대표님 본부장'); }
   add('일', '일일보고 쓰기', '일일보고 보고 오늘 한 일');
@@ -683,6 +953,7 @@ function viewHome() {
 
 // ---------- 사용설명서 · 버전 내역 (웹) ----------
 const WEB_CHANGES = [
+  ['웹 0.0.4', '2026-10-24', ['재고: 모델별 재고·출고중 수량, 안전재고 부족 표시, 재고 추가(시리얼 여러 개 한 번에)·수정·삭제, 입고·출고 단가와 보유 재고 자산(실적 권한자)', '바코드: PC는 USB·블루투스 스캐너로 찍으면 바로 입력·검색, 아이폰·휴대폰은 📷 버튼으로 카메라 스캔', '계약 관리: 만료 3개월 이내 계약 따로 보기(D-day), 계약 정보·나간 장비, 장비 추가, 설치 완료(장비가 재고에서 빠짐)', '신규 계약 올리기: 가맹점 찾기(상호·초성·사업자번호), 결제 연동(VAN/PG), 판매·CMS·렌탈과 금액, 재고에서 장비 고르기·스캔·직접 입력, 만료일 +12/24/36개월', '입금 확인: 입금 올리기·확인 처리, ‘입금확인’ 채팅방에 자동 알림', '안드로이드 앱과 같은 서버 자료라 어느 쪽에서 해도 바로 서로 보여요']],
   ['웹 0.0.3', '2026-10-24', ['화면 구성: 아이폰(휴대폰)은 안드로이드 앱과 같은 화면 — 아래 탭 업무·프로젝트·채팅·일정·전체, 나머지 기능은 전체 탭 안에', 'PC: 위쪽 가로줄에 주 메뉴(업무·채팅·일정·가맹점·응대 기록), 왼쪽 위 ☰ 를 누르면 계정·회사·일·관리자로 묶인 전체 메뉴, 왼쪽 위 나인패밀리를 누르면 홈(오늘 현황)', '가맹점 검색 고침: 한글을 치는 중에도 바로 걸러지고, 상호·초성(ㅅㅇㅍ)·사업자번호(- 없이도) 모두 찾아요. 가맹점 목록·응대 기록·채팅·메뉴 검색 모두 같아요', '가맹점: 목록과 PC 표에 전화·휴대폰·VAN사·계약이 보이고, 예전에 한 칸에 넣은 휴대폰 번호는 휴대폰번호 칸으로 이어받아요', '가맹점 삭제: ‘가맹점 등록·수정’ 권한과 암호가 있어야 해요 (목록에서만 사라지고 기록은 남아요)', '전체 메뉴에 사용설명서·버전 내역 추가, 아직 앱에서만 되는 기능은 ‘앱에서’ 로 표시']],
   ['웹 0.0.2', '2026-10-24', ['가맹점 항목 추가(전화·휴대폰·이메일·VAN사·계약구분과 금액), 모든 칸에 이름표', '가맹점 등록·수정 권한과 수정 암호(관리자가 설정)', '한글 검색 입력 끊김 고침, ☰ 전체 메뉴']],
   ['웹 0.0.1', '2026-10-24', ['웹앱 시작: 업무·프로젝트·채팅·일정·가맹점·응대 기록·공지, PC·아이폰 설치']]
@@ -699,9 +970,11 @@ const WEB_MANUAL = [
   ['채팅', '직원을 눌러 1:1 대화, ‘새 그룹 채팅방’으로 단체방을 만들어요. (사진·파일 보내기는 아직 앱에서만)'],
   ['일정', '달력에서 날짜를 누르면 그날 일정과 기한이 있는 업무가 보여요.'],
   ['가맹점', '검색칸에 상호, 초성(예: ㅅㅇㅍ), 사업자번호(- 없이도), 전화번호를 치면 바로 걸러져요.\n등록·수정·삭제는 ‘가맹점 등록·수정’ 권한이 있어야 하고, 관리자가 수정 암호를 정해 두면 관리자도 암호를 넣어야 해요(한 번 넣으면 5분 동안은 다시 묻지 않아요).\n계약구분이 임대면 ‘월 CMS 금액’, 판매면 ‘판매 금액’을 적어요.'],
+  ['재고', '전체 → 재고. + 로 추가할 때 시리얼을 한 줄에 하나씩 적거나 스캐너로 계속 찍으면 여러 대가 한 번에 들어가요. 시리얼이 없는 물품은 수량만 적어요.\n검색칸에 시리얼을 스캐너로 찍으면 그 장비가 바로 열려요. 휴대폰은 📷 바코드 버튼으로 카메라를 써요(처음에 카메라 권한을 허용해 주세요).\n입고·출고 단가와 재고 자산은 실적 권한이 있는 사람만 보여요.'],
+  ['계약 · 입금', '신규 계약 올리기: 가맹점을 찾아 고르고, 구분(판매·CMS·렌탈)과 금액, 나가는 장비(재고에서 고르기·스캔·직접 입력), 계약일과 만료일을 넣어요. 고른 장비는 ‘출고중’이 돼요.\n계약 관리에서 계약을 눌러 장비를 더 넣거나 ‘설치 완료’를 누르면 장비가 재고에서 빠져요. 만료 3개월 이내 계약은 위에 따로 보여요. 실적 권한이 없으면 내가 올린 계약만 보여요.\n입금 확인: + 로 입금을 올리면 ‘입금확인’ 채팅방에 알림이 가고, 확인한 사람이 ‘확인 처리’를 눌러요.'],
   ['가맹점 응대 기록', '가맹점을 찾아 눌러서 요청사항·처리결과를 남기고 고쳐요. 누가 언제 고쳤는지 남아요.'],
   ['공지사항', '전체(☰) → 공지사항. 읽지 않은 공지는 숫자로 표시돼요.'],
-  ['아직 앱에서만 되는 기능', '재고, 계약·입금, 단체 문자, 실적·수익, 보고, 자료실, 비상연락망, 직원과 권한, 백업 등은 메뉴에 ‘앱에서’ 로 표시돼요. 웹에도 차례로 넣고 있어요.']
+  ['아직 앱에서만 되는 기능', '단체 문자, 실적·수익, 보고, 자료실, 비상연락망, 직원과 권한, 백업, 가맹점 일괄 가져오기 등은 메뉴에 ‘앱에서’ 로 표시돼요. 웹에도 차례로 넣고 있어요.']
 ];
 function viewManual() { return '<h1>사용설명서</h1><div class="sub">나인패밀리 ' + VERSION + ' 기준</div>' + WEB_MANUAL.map(([t, b]) => '<div class="card flat"><div class="t1">' + esc(t) + '</div><div class="mtext">' + esc(b) + '</div></div>').join(''); }
 
@@ -732,7 +1005,7 @@ ACT.installApp = async () => { if (!installEv) return toast('이미 설치됐거
 
 // ---------- 시작 ----------
 function demoSeed() {
-  S.uid = 1; S.phone = '+821000000000';
+  S.uid = 1; S.phone = '+821000000000'; S.caps = {perf: true, admin: true};
   const U = (id, name, perms) => S.data.users.set(id, {id, name, phone: '+82100000000' + id, active: true, perms: perms || ['task_create']});
   U(1, '양문희', ['task_create', 'task_assign', 'task_view_all', 'notice_write', 'staff_manage']); U(2, '김영업'); U(3, '이사무');
   S.me = user(1);
@@ -748,6 +1021,10 @@ function demoSeed() {
   S.data.msgs.set(61, {id: 61, room: 51, who: 2, text: '오늘 입금 확인 부탁드려요', ts: Date.now() - 3600000});
   S.data.msgs.set(62, {id: 62, room: 51, who: 1, text: '네 확인했습니다 👍', ts: Date.now() - 1800000});
   S.data.events.set(71, {id: 71, date: todayStr(), title: '본사 회의', time: '15:00', place: '광주지사', who: 1});
+  [[91, 'Toss T2', 'T2-0001'], [92, 'Toss T2', 'T2-0002'], [93, '영수증 용지', '', 30]].forEach(([id, model, serial, qty]) => S.data.stock.set(id, {id, model, serial, qty: qty || 1, safe: serial ? 3 : 0, status: '재고', created: '2026-10-20 10:00'}));
+  S.data.costs.set(95, {id: 95, stock: 91, buy: 250000, sell: 0});
+  S.data.contracts.set(97, {id: 97, date: '2024-01-10', who: 1, merchant: 31, client: '삼영푸드', linkType: 'VAN사', company: 'KIS정보통신', kind: 'CMS', amount: 30000, expire: '2026-12-31', installed: true, installedAt: '2024-01-12', equip: [{sid: 0, model: 'Toss T1', serial: 'T1-9999'}], qty: 1, created: '2024-01-10 09:00'});
+  S.data.deposits.set(98, {id: 98, kind: '판매대금', amount: 450000, memo: '입금자 김사장', merchant: 32, mname: '행복분식', by: 2, t: nowStr(), ok: false, created: nowStr()});
   S.data.notices.set(81, {id: 81, title: '웹앱 체험 중입니다', body: '이 화면은 연습용 가짜 자료예요. 서버에 아무것도 저장되지 않아요.', pinned: true, author: 1, t: nowStr(), readBy: []});
 }
 if (DEMO) { demoSeed(); render(); } else {
