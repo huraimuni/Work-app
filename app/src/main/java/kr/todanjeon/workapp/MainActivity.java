@@ -4260,7 +4260,18 @@ public class MainActivity extends Activity {
     }
 
     /** 이 방에서 내가 마지막으로 읽은 시각. 처음 쓰는 폰은 지금부터 센다(옛 글이 모두 안 읽음으로 뜨지 않게). */
+    /** 이 계정이 서버(내 프로필 rd)에 남긴 읽은 시각 — 웹·다른 폰과 같이 쓴다. */
+    private long serverReadAt(int room) {
+        JSONObject pr = store.profile(myId());
+        JSONObject rd = pr == null ? null : pr.optJSONObject("rd");
+        return rd == null ? 0 : rd.optLong(String.valueOf(room), 0);
+    }
+
     private long readAt(int room) {
+        return Math.max(localReadAt(room), serverReadAt(room));
+    }
+
+    private long localReadAt(int room) {
         android.content.SharedPreferences p = cprefs();
         String k = ck("rd", room);
         if (p.contains(k)) return p.getLong(k, 0);
@@ -4278,7 +4289,20 @@ public class MainActivity extends Activity {
         if (room == 0 || me == null) return;
         long mx = readAt(room);
         for (JSONObject m : store.list(store.arr("msgs"))) if (m.optInt("room") == room && m.optLong("ts") > mx) mx = m.optLong("ts");
-        if (mx != readAt(room)) cprefs().edit().putLong(ck("rd", room), mx).apply();
+        if (mx != localReadAt(room)) cprefs().edit().putLong(ck("rd", room), mx).apply();
+        if (mx > serverReadAt(room)) { // 계정 단위로 읽음을 맞춘다 (웹에서 읽으면 폰에서도 읽은 것으로)
+            try {
+                JSONObject pr = store.myProfile(myId());
+                JSONObject rd = pr.optJSONObject("rd");
+                if (rd == null) {
+                    rd = new JSONObject();
+                    pr.put("rd", rd);
+                }
+                rd.put(String.valueOf(room), mx);
+                store.save();
+            } catch (Exception ignored) {
+            }
+        }
     }
 
     /** 방별 안 읽은 글 수(내가 쓴 글·지운 글 제외). */
@@ -4897,15 +4921,56 @@ public class MainActivity extends Activity {
                     return;
                 }
                 new Dlg(this).setTitle("새 버전이 나왔어요")
-                        .setMessage("지금 v" + cur + " → 새 버전 " + fTag.replace("-test", "") + "\n\n'받기'를 누르면 새 APK 를 내려받아요. 받은 파일을 열어 설치하면 자료는 그대로 두고 앱만 바뀝니다.")
+                        .setMessage("지금 v" + cur + " → 새 버전 " + fTag.replace("-test", "") + "\n\n'업데이트'를 누르면 앱이 새 버전을 받아 설치 화면을 열어요. '설치'만 누르면 끝나고, 자료는 그대로예요.")
                         .setNegativeButton("나중에", null)
-                        .setPositiveButton("받기", (d, w) -> openIntent(new Intent(Intent.ACTION_VIEW, Uri.parse(fUrl)))).show();
+                        .setPositiveButton("업데이트", (d, w) -> installUpdate(fUrl)).show();
             });
+        }).start();
+    }
+
+    /** 새 APK 를 앱 안에서 받아 안드로이드 설치 화면을 연다 (구글 플레이 밖 앱은 '설치' 한 번은 사람이 눌러야 한다). */
+    private void installUpdate(final String url) {
+        if (android.os.Build.VERSION.SDK_INT >= 26 && !getPackageManager().canRequestPackageInstalls()) {
+            new Dlg(this).setTitle("설치 허용이 한 번 필요해요")
+                    .setMessage("다음 화면에서 '나인패밀리'의 '이 출처 허용'을 켜고 돌아와 '업데이트'를 다시 눌러 주세요. 처음 한 번만 하면 돼요.")
+                    .setNegativeButton("취소", null)
+                    .setPositiveButton("설정 열기", (d, w) -> openIntent(new Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getPackageName())))).show();
+            return;
+        }
+        Ui.toast(this, "새 버전을 받는 중이에요… (잠시만 기다려 주세요)");
+        new Thread(() -> {
+            try {
+                File dir = new File(getCacheDir(), "shared");
+                dir.mkdirs();
+                final File out = new File(dir, "update.apk");
+                java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+                c.setInstanceFollowRedirects(true);
+                c.setConnectTimeout(15000);
+                c.setReadTimeout(60000);
+                java.io.InputStream in = c.getInputStream();
+                java.io.FileOutputStream fo = new java.io.FileOutputStream(out);
+                byte[] buf = new byte[64 * 1024];
+                int n;
+                while ((n = in.read(buf)) > 0) fo.write(buf, 0, n);
+                fo.close();
+                in.close();
+                runOnUiThread(() -> {
+                    Uri u = androidx.core.content.FileProvider.getUriForFile(this, getPackageName() + ".files", out);
+                    Intent it = new Intent(Intent.ACTION_VIEW);
+                    it.setDataAndType(u, "application/vnd.android.package-archive");
+                    it.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+                    openIntent(it);
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> new Dlg(this).setTitle("받기에 실패했어요").setMessage("인터넷 연결을 확인해 주세요. 브라우저로 직접 받을 수도 있어요.")
+                        .setNegativeButton("닫기", null).setPositiveButton("브라우저로 받기", (d, w) -> openIntent(new Intent(Intent.ACTION_VIEW, Uri.parse(url)))).show());
+            }
         }).start();
     }
 
     /** {버전, 날짜, 내용}. 새 버전은 맨 위에 추가. CI 가 현재 versionName 항목이 있는지 검사한다. */
     private static final String[][] CHANGELOG = {
+            {"0.0.4", "2026-10-24", "• 앱 안에서 업데이트: 새 버전 안내에서 '업데이트'를 누르면 앱이 새 APK 를 받아 설치 화면을 바로 열어요 (처음 한 번만 '이 출처 허용'을 켜 주세요)\n• 채팅 읽음을 계정 단위로 맞춤: 웹·PC·다른 폰에서 읽은 대화는 이 폰에서도 읽은 것으로 보여요"},
             {"0.0.3", "2026-10-24", "• 업무 ↔ 응대 기록 연결: 업무를 올릴 때 가맹점을 고르고 '가맹점 요청사항'을 적으면, 처리 완료 때 적는 '처리결과'와 함께 그 가맹점 응대 기록에 자동으로 남아요(📋 업무에서 표시, 응대 종류 선택)\n• 가맹점 정보에 그 가맹점의 진행 중인 업무가 보여요\n• 재고: 입고(같은 모델 수량에 더하기·입고처 메모·있던 모델 고르기), 출고(반품·불량·A/S 교체·분실 — 계약 없이), 수량 정정(재고 조사, 바코드 확인), 재고 이력(입고·출고·계약 출고·정정)\n• 새 버전 알림: 새 APK 가 나오면 앱을 열 때 '받기' 안내가 떠요 (전체 → 회사 → 앱 업데이트 확인으로 직접 확인도 돼요)\n• 웹앱(웹 0.0.17)과 같은 자료·같은 방식으로 맞췄어요"},
             {"0.0.2", "2026-10-24", "• 가맹점 정보에 항목 추가: 전화번호·휴대폰번호·이메일·VAN사·계약구분(임대 월 CMS / 판매 금액)을 넣을 수 있고, 모든 칸에 이름이 적혀요\n• 가맹점 등록·수정은 '가맹점 등록·수정' 권한이 있는 사람만, 관리자가 정한 암호를 입력해야 할 수 있어요(전체 → 가맹점 수정 암호)\n• 웹앱: 한글로 상호를 검색하면 결과가 안 나오던 문제 수정(상호·초성·사업자번호 모두 찾아요)\n• 웹앱: 기본 화면은 업무·프로젝트·채팅·일정·가맹점 5개, 나머지는 왼쪽 위 ☰ 전체 메뉴에서. 왼쪽 위 '나인패밀리'를 누르면 홈으로 가요"},
             {"0.0.1", "2026-10-24", "• 나인패밀리 처음부터 다시 시작! 지금까지의 업데이트 내역은 정리하고 여기서부터 기록해요\n• 가맹점 응대 기록: 종류를 방문A/S·원격A/S·전화응대·기타로 바꾸고, 내용을 '요청사항'과 '처리결과' 두 칸으로 나눴어요 (글자 수 제한 없음, 예전 기록은 요청사항으로 보여요)\n• 응대 기록 조회에서 상호·사업자번호로 가맹점을 찾아 그 가맹점의 기록을 보고·추가·수정해요 (직원 누구나 수정, 수정한 사람·시각이 남아요)\n• 웹앱(PC·아이폰) 추가: 같은 주소 https://ninepayments.github.io/Work-app/"},
