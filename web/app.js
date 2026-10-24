@@ -2,7 +2,7 @@
 /* 나인패밀리 웹앱 — 앱과 같은 Firebase(nine-family)를 쓴다. 문서는 {j: JSON문자열, u: 시각} 형식. */
 const CFG = {apiKey: 'AIzaSyCsA-M6QGGGk0owyDXzziv1X79TqF5NptI', authDomain: 'nine-family.firebaseapp.com', projectId: 'nine-family',
   storageBucket: 'nine-family.firebasestorage.app', messagingSenderId: '48232341344', appId: '1:48232341344:web:19be016c9c1c1de5a34805'};
-const VERSION = '웹 0.0.7';
+const VERSION = '웹 0.0.8';
 const DEMO = location.hash === '#demo';
 const COLLS = ['users', 'tasks', 'notices', 'projects', 'events', 'merchants', 'rooms', 'msgs', 'profiles', 'mlogs', 'config', 'stock', 'contracts', 'deposits', 'costs'];
 const TYPES = ['신규 설치', 'AS', '영업 방문', '서류 접수', '카드사 서류', '기타'];
@@ -299,6 +299,10 @@ function viewBody(k) {
     case 'stock': return viewStock();
     case 'contracts': return viewContracts();
     case 'deposit': return viewDeposits();
+    case 'myperf': return viewPerf(true);
+    case 'perf': return canPerf() ? viewPerf(false) : '<div class="empty">실적 보기 권한이 있어야 볼 수 있어요.</div>';
+    case 'profit': return viewProfit();
+    case 'history': return viewHistory();
     case 'manual': return viewManual();
     case 'about': return viewAbout();
     default: return viewTasks();
@@ -884,7 +888,7 @@ function viewStock() {
   if (canPerf()) {
     let sum = 0, noPrice = 0;
     list('stock').forEach(r => { if (r.status !== '재고') return; const c = costOf(r.id); if (!c || !c.buy) noPrice += r.qty || 1; else sum += c.buy * (r.qty || 1); });
-    asset = '<div class="card flat"><div class="sub" style="margin:0">보유 재고 자산 (입고 단가 합계)</div><div class="t1" style="font-size:22px;margin-top:2px">' + wonFmt(sum) + '</div>' + (noPrice ? '<div class="sub" style="color:var(--amber)">단가 미입력 ' + noPrice + '대는 빠져 있어요.</div>' : '') + '</div>';
+    asset = '<div class="card flat"><div class="sub" style="margin:0">보유 재고 자산 (입고 단가 합계)</div><div class="t1" style="font-size:22px;margin-top:2px">' + wonFmt(sum) + '</div>' + (noPrice ? '<div class="sub" style="color:var(--amber)">단가 미입력 ' + noPrice + '대는 빠져 있어요.</div>' : '') + '<button class="btn tint" data-nav="all" data-sub="profit">수익 현황 보기</button></div>';
   }
   return '<h1>재고</h1><div class="sub">장비를 직접 입력해 관리해요. 계약에서 장비를 고르면 ‘출고중’이 되고, 설치 완료하면 재고에서 빠집니다. 검색칸에 바코드 스캐너로 찍으면 그 장비가 바로 열려요.</div>' + asset +
     '<div class="row" style="gap:8px"><input id="sq" data-q="sq" placeholder="🔍 모델명·시리얼 (초성)" value="' + esc(S.sq || '') + '" autocomplete="off"><button class="btn tint" data-act="scanInto" data-arg="sq" style="flex:none" aria-label="카메라로 바코드 찍기">📷 바코드</button></div>' +
@@ -1064,6 +1068,83 @@ ACT.newContract = () => {
   document.querySelectorAll('#modal .pill[data-m]').forEach(b => b.onclick = () => { $('#f_e').value = addMonths($('#f_d').value, Number(b.dataset.m)); });
 };
 
+// ---------- 실적 · 수익 · 지난 업무 기록 (앱과 같은 계산) ----------
+function perfYM() { if (!S.perfY) { const d = new Date(); S.perfY = d.getFullYear(); S.perfM = d.getMonth() + 1; } return S.perfY + '-' + pad(S.perfM); }
+function monthKey(ym, off) { const [y, m] = ym.split('-').map(Number); const d = new Date(y, m - 1 + off, 1); return d.getFullYear() + '-' + pad(d.getMonth() + 1); }
+function perfStats(ym, mine) { // 직원별 [대수, 판매, CMS, 렌탈, 판매금액] — 계약일 기준
+  const st = {};
+  list('contracts').forEach(c => {
+    if (!(c.date || '').startsWith(ym) || (mine && c.who !== S.uid)) return;
+    const a = st[c.who] || (st[c.who] = [0, 0, 0, 0, 0]);
+    a[0] += c.qty || 1;
+    if (c.kind === '판매') { a[1]++; a[4] += c.amount || 0; } else if (c.kind === 'CMS') a[2]++; else if (c.kind === '렌탈') a[3]++;
+  });
+  return st;
+}
+const activeStaff = () => list('users').filter(u => u.active !== false);
+const rankedStaff = st => activeStaff().sort((a, b) => { const x = st[a.id] || [0, 0, 0, 0, 0], y = st[b.id] || [0, 0, 0, 0, 0]; return (y[0] - x[0]) || (y[4] - x[4]); });
+function growth(c, p) { if (!p) return c > 0 ? '신규' : '-'; const g = Math.round((c - p) * 100 / p); return (g > 0 ? '▲ +' : g < 0 ? '▼ ' : '') + g + '%'; }
+const gcol = (c, p) => c > p ? 'var(--green)' : c < p ? 'var(--red)' : 'var(--gray)';
+const pbar = (pct, color) => '<div class="pbar"><i style="width:' + Math.max(0, Math.min(100, Math.round(pct))) + '%;background:' + (color || 'var(--gold)') + '"></i></div>';
+function monthNavHTML() { perfYM(); return '<div class="row" style="margin-top:12px"><button class="btn" style="margin:0" data-act="pm" data-arg="-1" aria-label="이전 달">‹</button><div class="grow t1" style="text-align:center;font-size:18px">' + S.perfY + '년 ' + S.perfM + '월</div><button class="btn" style="margin:0" data-act="pm" data-arg="1" aria-label="다음 달">›</button></div>'; }
+ACT.pm = a => { S.perfM += Number(a); if (S.perfM < 1) { S.perfM = 12; S.perfY--; } if (S.perfM > 12) { S.perfM = 1; S.perfY++; } render(); };
+function trendHTML(ym, mine) { // 지난달 → 이번 달, 최근 6개월
+  const prev = monthKey(ym, -1), cur = perfStats(ym, mine), pre = perfStats(prev, mine);
+  const sum = st => Object.values(st).reduce((s, a) => s + a[0], 0); const ct = sum(cur), pt = sum(pre);
+  let h = '<h2>월별 성과 (' + Number(prev.slice(5)) + '월 → ' + Number(ym.slice(5)) + '월)</h2><div class="card flat"><div class="sub" style="margin:0">' + (mine ? '내 신규 계약' : '전체 신규 계약') + '</div><div class="t1" style="font-size:20px;color:' + gcol(ct, pt) + '">' + pt + '대 → ' + ct + '대 &nbsp; ' + growth(ct, pt) + '</div></div>';
+  if (!mine) {
+    let mx = 1; Object.values(cur).concat(Object.values(pre)).forEach(a => mx = Math.max(mx, a[0]));
+    rankedStaff(cur).forEach(u => { const cn = (cur[u.id] || [0])[0], pn = (pre[u.id] || [0])[0]; if (!cn && !pn) return;
+      h += '<div class="prow"><b>' + esc(u.name) + '</b><div class="grow">' + pbar(pn * 100 / mx, '#c8ccd6') + pbar(cn * 100 / mx) + '</div><span style="color:' + gcol(cn, pn) + '">' + pn + ' → ' + cn + '<br>' + growth(cn, pn) + '</span></div>'; });
+    h += '<div class="sub">회색 막대 = 지난달, 금색 막대 = 선택한 달</div>';
+  }
+  const n6 = [], lb = []; let m6 = 1;
+  for (let i = -5; i <= 0; i++) { const k = monthKey(ym, i); lb.push(Number(k.slice(5)) + '월'); n6.push(sum(perfStats(k, mine))); }
+  n6.forEach(v => m6 = Math.max(m6, v));
+  return h + '<h2>최근 6개월 신규 계약</h2>' + n6.map((v, i) => '<div class="prow"><b>' + lb[i] + '</b><div class="grow">' + pbar(v * 100 / m6) + '</div><span>' + v + '대</span></div>').join('');
+}
+function viewPerf(mine) {
+  const ym = perfYM(), st = perfStats(ym, mine); let total = 0, sales = 0; Object.values(st).forEach(a => { total += a[0]; sales += a[4]; });
+  let h = '<h1>' + (mine ? '내 실적' : '전체 실적·직원별 순위') + '</h1><div class="sub">' + (mine ? '나만 볼 수 있는 내 실적이에요.' : '직원별 순위는 신규 계약 대수 순, 같으면 판매금액 순이에요.') + '</div>' + monthNavHTML() +
+    '<div class="hero"><div>' + (mine ? '이번 달 내 신규 계약' : '이번 달 신규 계약') + '</div><div class="n">' + total + '대</div><div style="font-size:13px">판매금액 합계 ' + wonFmt(sales) + '</div></div>' + trendHTML(ym, mine);
+  if (!mine) {
+    let mx = 1; Object.values(st).forEach(a => mx = Math.max(mx, a[0]));
+    h += '<h2>직원별 순위</h2>' + rankedStaff(st).map((u, i) => { const a = st[u.id]; const n = a ? a[0] : 0;
+      return '<div class="prow"><b style="width:22px;color:' + (i < 3 && n ? 'var(--deep)' : 'var(--gray)') + '">' + (i + 1) + '</b><b>' + esc(u.name) + '</b><div class="grow">' + pbar(n * 100 / mx) + '</div><span>' + n + '</span></div>' +
+        (a ? '<div class="sub" style="margin:-2px 0 6px 30px">판매 ' + a[1] + ' · CMS ' + a[2] + ' · 렌탈 ' + a[3] + (a[4] ? ' · 판매금액 ' + wonFmt(a[4]) : '') + '</div>' : ''); }).join('');
+  }
+  const month = list('contracts').filter(c => (c.date || '').startsWith(ym) && (!mine || c.who === S.uid)).sort((a, b) => (b.created || '').localeCompare(a.created || ''));
+  return h + '<h2>올라온 계약</h2>' + (month.length ? month.map(contractCard).join('') : '<div class="empty">이 달에 올라온 계약이 없습니다.</div>');
+}
+function sales() { // 계약으로 출고된 장비(출고중·설치완료)의 단가 — 월은 계약일 기준
+  return list('stock').filter(r => r.status === '출고중' || r.status === '설치완료').map(r => {
+    const c = byId('contracts', r.contract); if (!c) return null; const cd = costOf(r.id);
+    const buy = cd ? cd.buy || 0 : 0, sell = cd ? cd.sell || 0 : 0;
+    return {month: (c.date || '').slice(0, 7), who: c.who, buy, sell, row: r, priced: !!cd && (buy > 0 || sell > 0)};
+  }).filter(Boolean);
+}
+function viewProfit() {
+  if (!canPerf()) return '<h1>수익 현황</h1><div class="empty">실적 보기 권한이 있어야 볼 수 있어요.</div>';
+  const ym = perfYM(), all = sales(); let tS = 0, tB = 0, mS = 0, mB = 0, mC = 0, miss = 0; const by = {};
+  all.forEach(s => { if (!s.priced) { miss++; return; } tS += s.sell; tB += s.buy; if (s.month === ym) { mS += s.sell; mB += s.buy; mC++; const a = by[s.who] || (by[s.who] = [0, 0]); a[0]++; a[1] += s.sell - s.buy; } });
+  const pr = [], lb = []; let mx = 1;
+  for (let i = -5; i <= 0; i++) { const k = monthKey(ym, i); lb.push(Number(k.slice(5)) + '월'); let v = 0; all.forEach(s => { if (s.priced && s.month === k) v += s.sell - s.buy; }); pr.push(v); mx = Math.max(mx, Math.abs(v)); }
+  return '<h1>수익 현황</h1><div class="sub">재고에 적어 둔 입고 단가(산 값)와 출고 단가(판 값)의 차이로 계산해요. 계약에 올라가 출고된 장비가 대상입니다.</div>' + monthNavHTML() +
+    '<div class="hero"><div>지금까지 총 수익</div><div class="n">' + wonFmt(tS - tB) + '</div><div style="font-size:13px">매출 ' + wonFmt(tS) + ' − 매입 ' + wonFmt(tB) + '</div></div>' +
+    '<div class="card flat"><div class="sub" style="margin:0">' + S.perfM + '월 수익</div><div class="t1" style="font-size:22px;color:' + (mS - mB < 0 ? 'var(--red)' : 'var(--ink)') + '">' + wonFmt(mS - mB) + '</div><div class="sub">' + mC + '대 · 매출 ' + wonFmt(mS) + ' · 매입 ' + wonFmt(mB) + '</div></div>' +
+    '<h2>최근 6개월 수익</h2>' + pr.map((v, i) => '<div class="prow"><b>' + lb[i] + '</b><div class="grow">' + pbar(Math.abs(v) * 100 / mx, v < 0 ? 'var(--red)' : 'var(--gold)') + '</div><span>' + wonFmt(v) + '</span></div>').join('') +
+    '<h2>' + S.perfM + '월 직원별 수익</h2>' + (Object.keys(by).length ? Object.entries(by).map(([w, a]) => '<div class="card flat row"><div class="grow t1">' + esc(uname(Number(w))) + '</div><b style="color:' + (a[1] < 0 ? 'var(--red)' : 'var(--deep)') + '">' + a[0] + '대 · ' + wonFmt(a[1]) + '</b></div>').join('') : '<div class="empty">이 달에 단가가 입력된 출고 장비가 없습니다.</div>') +
+    (miss ? '<h2 style="color:var(--red)">단가를 아직 안 적은 출고 장비 ' + miss + '대</h2><div class="sub">눌러서 입고·출고 단가를 입력하면 수익에 반영돼요.</div>' + all.filter(s => !s.priced).slice(0, 30).map(s => '<div class="card row" data-act="editStock" data-arg="' + s.row.id + '"><div class="grow"><div class="t1">' + esc(s.row.model) + '</div><div class="t2">' + esc((s.row.serial || '시리얼 없음') + ' · ' + uname(s.who)) + '</div></div><span class="sub">' + esc(s.month) + '</span></div>').join('') : '');
+}
+function viewHistory() {
+  return '<h1>지난 업무 기록</h1><div class="sub">' + (can('history_all') ? '완료된 모든 업무를 찾아봐요.' : '내가 맡아 완료한 업무를 찾아봐요.') + '</div><input id="hq" data-q="hq" placeholder="🔍 제목·거래처·담당자·완료 메시지 (초성 가능)" value="' + esc(S.hq || '') + '"><div class="qres" data-for="hq">' + historyList() + '</div>';
+}
+function historyList() {
+  const ls = list('tasks').filter(t => t.status === '완료' && (can('history_all') || t.assignee === S.uid) && kmatch((t.title || '') + ' ' + (t.client || '') + ' ' + uname(t.assignee) + ' ' + (t.doneMsg || ''), S.hq || ''))
+    .sort((a, b) => (b.doneAt || '').localeCompare(a.doneAt || ''));
+  return '<div class="sub" style="font-weight:700">' + ls.length + '건</div>' + (ls.length ? ls.slice(0, 200).map(t => '<div class="card" data-act="task" data-arg="' + t.id + '"><div class="t1">[' + esc(t.type) + '] ' + esc(t.title) + '</div><div class="t2">' + esc((t.client ? t.client + ' · ' : '') + uname(t.assignee) + ' · 완료 ' + (t.doneAt || '')) + '</div>' + (t.doneMsg ? '<div style="color:var(--green);font-size:13px;margin-top:4px">' + esc(t.doneMsg) + '</div>' : '') + '</div>').join('') : '<div class="empty">완료된 업무 이력이 없습니다.</div>');
+}
+
 // ---------- 입금 확인 ----------
 const DEP_KINDS = ['판매대금', '미납금', '정보변경수수료', '기타'];
 function postToRoom(name, text) { // 이름이 맞는 채팅방에 알림 글을 올린다 (없으면 만든다) — 앱과 같다
@@ -1184,11 +1265,11 @@ function menuItems() {
   const ex = expiringContracts().length;
   add('일', '계약 관리 (설치 완료·만료 알림)', '계약 설치 완료 만료 알림 장비', 'nav:all:contracts', ex ? '만료 ' + ex : ''); add('일', '신규 계약 올리기', '신규 계약 올리기 CMS 판매 렌탈', 'act:newContract');
   add('일', '입금 확인 (입금 내역 올리기)', '입금 확인 입금 내역 미납금 판매대금 정보변경수수료', 'nav:all:deposit'); add('일', '단체 문자 보내기 (가맹점)', '단체 문자 sms 발송 가맹점 문자 안내');
-  add('일', '내 실적', '내 실적 월별 성장률 계약');
-  if (P) { add('일', '전체 실적·직원별 순위', '전체 실적 직원별 순위 성장률'); add('일', '수익 현황 (입고·출고 단가)', '수익 현황 입고 출고 단가 매출 매입'); add('일', '실적 보고서 올리기 (대표님께)', '실적 보고서 올리기 대표님 본부장'); }
+  add('일', '내 실적', '내 실적 월별 성장률 계약', 'nav:all:myperf');
+  if (P) { add('일', '전체 실적·직원별 순위', '전체 실적 직원별 순위 성장률', 'nav:all:perf'); add('일', '수익 현황 (입고·출고 단가)', '수익 현황 입고 출고 단가 매출 매입', 'nav:all:profit'); add('일', '실적 보고서 올리기 (대표님께)', '실적 보고서 올리기 대표님 본부장'); }
   add('일', '일일보고 쓰기', '일일보고 보고 오늘 한 일');
   if (R) { add('일', '일일보고 종합 보기', '일일보고 종합 대표님 직원별'); if (!P) add('일', '실적 보고서 보기', '실적 보고서 보기 대표님'); }
-  add('일', '지난 업무 기록', '지난 업무 기록 이력 완료 검색');
+  add('일', '지난 업무 기록', '지난 업무 기록 이력 완료 검색', 'nav:all:history');
   add('회사', '자료실', '자료실 게시판 양식 서식 계약서 파일 문서'); add('회사', '비상연락망 (눌러서 전화)', '비상연락망 연락처 전화 번호');
   add('회사', '사용설명서', '사용설명서 매뉴얼 도움말 사용법 설치', 'nav:all:manual'); add('회사', '버전·업데이트 내역', '버전 업데이트 내역 변경 이력', 'nav:all:about');
   add('회사', '공지사항', '공지사항 공지 알림', 'nav:all:notice', nu ? String(nu) : '');
@@ -1253,6 +1334,7 @@ function viewHome() {
 
 // ---------- 사용설명서 · 버전 내역 (웹) ----------
 const WEB_CHANGES = [
+  ['웹 0.0.8', '2026-10-24', ['내 실적: 이번 달 신규 계약·판매금액, 지난달과 비교(성장률), 최근 6개월, 올린 계약', '전체 실적·직원별 순위(실적 권한자): 직원별 대수·판매·CMS·렌탈·판매금액 순위, 직원별 지난달→이번 달 막대', '수익 현황(실적 권한자): 총 수익·월 수익·최근 6개월·직원별 수익, 단가 안 적은 출고 장비 바로 입력', '지난 업무 기록: 완료된 업무 검색(전체 이력 권한이 있으면 모두, 없으면 내 것)']],
   ['웹 0.0.7', '2026-10-24', ['안드로이드 앱과 맞춤: 업무 상태 변경은 담당자·최고관리자, 업무 삭제는 만든 사람·최고관리자', '서류 업무(서류 접수·카드사 서류)를 지시하면 ‘서류접수’ 채팅방에 자동으로 알림', '계약 만료 3개월 이내 계약이 있으면 업무 화면 위에 알림 카드', '일정: 다가오는 일정 목록, 일정을 누르면 내용·가맹점 정보 보기, 관리자는 일정 삭제', '가맹점 등급 코드(0~7) 입력·표시', '공지: 작성 권한자·관리자는 읽은 사람 목록', '채팅: 나인이 프렌즈 스티커 80종·이모지, 말풍선 누르면 반응·답장·복사·내 메시지 삭제, 두 번 누르면 ❤️, 글 속 웹 주소 누르면 열림', '가맹점 응대 기록: 종류·날짜로 걸러 보기']],
   ['웹 0.0.6', '2026-10-24', ['저장 상태 표시: 서버에 저장되는 동안 ‘저장 중’, 인터넷이 끊기면 ‘저장 대기 n건’ — 연결되면 자동으로 저장돼요', '가맹점 동시 수정 보호: 수정 창을 연 사이 다른 직원(앱·다른 PC)이 같은 가맹점을 고치면 바뀐 항목을 알려 주고, 덮어쓸지 한 번 더 물어요', '가맹점 등록: 같은 사업자번호가 이미 있으면 알려 줘요', '백업: 관리자 → 데이터 백업 내려받기(PC에 파일로), 관리자가 웹을 열면 하루 한 번 이 PC 안에 자동 보관(14일치)', '매일 새벽 서버 전체 자료를 암호화해 따로 보관하는 자동 백업 준비(관리자가 비밀값을 넣으면 시작)']],
   ['웹 0.0.5', '2026-10-24', ['뒤로가기: 폰 뒤로가기·브라우저 뒤로 버튼이 앱처럼 한 단계씩 닫아요(팝업 → 대화방 → 메뉴 → 하위 화면 → 첫 화면, 첫 화면에서 한 번 더 누르면 나가요)', '빨라짐: 한 번 받은 자료를 기기에 보관해서 다음부터 바로 열리고, 인터넷이 약해도 보여요', '알림: 웹앱을 열어 둔 동안 새 업무·채팅·공지가 오면 소리·진동·안내, PC는 다른 창을 보고 있어도 브라우저 알림(전체 → 알림 받기), 탭 제목에 안 본 개수', '채팅: 사진 보기·저장, 파일 받기, 사진·파일 보내기(+ 버튼, 파일 3MB까지), PC와 아이폰 웹앱끼리 읽음 표시 맞춤', '업무 지시·일정 추가: 모든 칸에 이름표, 가맹점 조회로 거래처·전화·주소 자동 채우기', '일정: 공휴일 빨간색·이름 표시, 토요일 파란색, 오늘 버튼', '전체 메뉴: 아직 앱에서만 되는 기능은 맨 아래에 접어 두기, PC 주 메뉴에 프로젝트', '확인 창을 웹앱 모양으로, 팝업 안 안내가 버튼을 가리지 않게, 채팅 보내기 버튼·말풍선 줄바꿈 고침, 권한이 없을 때 안내']],
@@ -1281,7 +1363,8 @@ const WEB_MANUAL = [
   ['공지사항', '전체(☰) → 공지사항. 읽지 않은 공지는 숫자로 표시돼요.'],
   ['백업 (관리자)', '자료는 여러 겹으로 지켜져요.\n① 서버: 지우기가 막혀 있어 ‘삭제’해도 표시만 되고, 모든 변경은 변경 기록에 따로 남아요.\n② 매일 새벽 자동 백업: 서버 전체 자료를 암호화해 90일 보관해요(관리자가 비밀값을 넣어 두면 동작).\n③ 관리자 기기: 안드로이드 앱은 폰 안에, 웹은 이 PC 안에 하루 한 번 저절로 14일치 보관해요. 전체 → 관리자 → PC에 보관된 자동 백업.\n④ 언제든 전체 → 관리자 → 데이터 백업 내려받기로 파일을 받아 드라이브 등에 따로 두세요(한 달에 한 번 이상 권장).'],
   ['저장 상태', '저장하면 화면 위에 ‘저장 중’이 잠깐 보였다가 사라져요. 인터넷이 끊기면 ‘저장 대기’로 바뀌고, 다시 연결되면 저절로 서버에 저장돼요. 이 띠가 남아 있는 동안에는 웹앱을 닫지 마세요.\n가맹점 수정 창을 연 사이 다른 직원이 같은 가맹점을 고치면, 저장할 때 바뀐 항목을 알려 주고 덮어쓸지 한 번 더 물어요.'],
-  ['아직 앱에서만 되는 기능', '단체 문자, 실적·수익, 보고, 자료실, 비상연락망, 직원과 권한, 백업, 가맹점 일괄 가져오기 등은 전체 메뉴 맨 아래 ‘아직 안드로이드 앱에서만 되는 기능’에 접혀 있어요. 웹에도 차례로 넣고 있어요.']
+  ['실적 · 수익', '전체 → 내 실적: 계약일 기준으로 이번 달 내 신규 계약과 지난달 비교를 봐요. ‹ › 로 달을 바꿔요.\n전체 실적·직원별 순위, 수익 현황은 실적 보기 권한이 있는 사람만 보여요. 수익은 출고된 장비의 출고 단가 − 입고 단가로 계산하고, 단가를 안 적은 장비는 아래 목록에서 눌러 적으면 바로 반영돼요.\n지난 업무 기록: 완료된 업무를 제목·거래처·담당자·완료 메시지로 찾아요.'],
+  ['아직 앱에서만 되는 기능', '단체 문자, 보고, 자료실, 비상연락망, 직원과 권한, 백업, 가맹점 일괄 가져오기 등은 전체 메뉴 맨 아래 ‘아직 안드로이드 앱에서만 되는 기능’에 접혀 있어요. 웹에도 차례로 넣고 있어요.']
 ];
 function viewManual() { return '<h1>사용설명서</h1><div class="sub">나인패밀리 ' + VERSION + ' 기준</div>' + WEB_MANUAL.map(([t, b]) => '<div class="card flat"><div class="t1">' + esc(t) + '</div><div class="mtext">' + esc(b) + '</div></div>').join(''); }
 
