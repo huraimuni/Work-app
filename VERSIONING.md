@@ -20,3 +20,8 @@
 4. 데이터 구조·보안 규칙이 바뀌면 Firestore 규칙 먼저 게시 후 앱 배포
 5. `RELEASE_NOTES.md` 갱신 (GitHub 릴리스 본문)
 6. 커밋 → 푸시 → CI 성공 확인 → APK 전달
+
+## 웹앱만 바뀔 때 (APK 는 그대로)
+1. `web/app.js` 의 `VERSION` 올리기 (웹 0.0.3 → 0.0.4 …)
+2. `web/app.js` 의 `WEB_CHANGES` 맨 위에 이번 버전 항목, 바뀐 기능은 `WEB_MANUAL` 에 반영 (웹 전체 → 사용설명서·버전 내역에 보임)
+3. 커밋 → 푸시 → "Deploy web app" 성공 확인
