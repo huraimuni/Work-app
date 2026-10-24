@@ -2,7 +2,7 @@
 /* 나인패밀리 웹앱 — 앱과 같은 Firebase(nine-family)를 쓴다. 문서는 {j: JSON문자열, u: 시각} 형식. */
 const CFG = {apiKey: 'AIzaSyCsA-M6QGGGk0owyDXzziv1X79TqF5NptI', authDomain: 'nine-family.firebaseapp.com', projectId: 'nine-family',
   storageBucket: 'nine-family.firebasestorage.app', messagingSenderId: '48232341344', appId: '1:48232341344:web:19be016c9c1c1de5a34805'};
-const VERSION = '웹 0.0.15';
+const VERSION = '웹 0.0.16';
 const DEMO = location.hash === '#demo';
 const COLLS = ['users', 'tasks', 'notices', 'projects', 'events', 'merchants', 'rooms', 'msgs', 'profiles', 'mlogs', 'config', 'stock', 'contracts', 'deposits', 'costs', 'reports', 'library', 'contacts'];
 const TYPES = ['신규 설치', 'AS', '영업 방문', '서류 접수', '카드사 서류', '기타'];
@@ -262,7 +262,8 @@ function bodyHTML() {
   const k = S.sub || S.tab, wide = isWide();
   if (wide && S.menu) return '<div class="scroll menupg"><div class="col">' + viewMenu(true) + '</div></div>';
   if (S.tab === 'chat' && !S.sub) return viewChat();
-  return '<div class="scroll"><div class="col">' + (!wide && S.sub ? '<button class="back" data-act="back">‹ 전체</button>' : '') + viewBody(k) + '</div></div>';
+  const main = '<div class="scroll"><div class="col">' + (!wide && S.sub ? '<button class="back" data-act="back">‹ 전체</button>' : '') + viewBody(k) + '</div></div>';
+  return wide && k !== 'manual' && k !== 'about' ? '<div class="pcsplit"><aside class="pcside">' + sideHTML(k) + '<div style="height:60px"></div></aside>' + main + '</div>' : main;
 }
 function render() {
   if (S.comp) { later(); return; } // 글자 조합 중에는 화면을 갈아엎지 않는다
@@ -747,6 +748,7 @@ function viewMerchants() {
 ACT.mmore = () => { S.mlimit += 100; render(); };
 ACT.merchant = id => {
   const m = byId('merchants', id); if (!m) return;
+  rememberMerchant(m.id);
   if (S.logMid !== m.id) { S.logMid = m.id; S.logLimit = 30; }
   if (S.logMidF !== m.id) { S.logMidF = m.id; S.logKindF = ''; S.logDateF = ''; }
   const logs = list('mlogs').filter(g => g.merchant === m.id && (!S.logKindF || logKind(g.kind) === S.logKindF) && (!S.logDateF || g.date === S.logDateF)).sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.created || '').localeCompare(a.created || ''));
@@ -1878,6 +1880,48 @@ ACT.menu = () => { S.menu = !S.menu; render(); };
 ACT.home = () => { S.tab = 'task'; S.sub = ''; S.room = 0; S.menu = false; render(); };
 ACT.logout = () => askConfirm('로그아웃할까요?', '', '로그아웃', logout);
 
+// ---------- PC 왼쪽 칸 (채팅처럼 넓은 화면의 왼쪽 여백을 쓰는 곁가지 목록) ----------
+function recentMerchants() { try { return JSON.parse(localStorage.getItem('nf_recentM') || '[]'); } catch (e) { return []; } }
+function rememberMerchant(id) { try { const r = recentMerchants().filter(x => x !== id); r.unshift(id); localStorage.setItem('nf_recentM', JSON.stringify(r.slice(0, 12))); } catch (e) {} }
+const sideTask = t => '<div class="sl" data-act="task" data-arg="' + t.id + '"><b>' + esc(t.title) + '</b><small>' + esc([t.client, t.assignee !== S.uid ? uname(t.assignee) : '', t.due ? t.due.slice(5) : ''].filter(Boolean).join(' · ')) + '</small>' + (t.status !== '완료' ? '<i class="st">' + esc(ST[t.status] || t.status) + '</i>' : '') + '</div>';
+const sideSec = (title, body, empty) => '<div class="ssec"><h3>' + title + '</h3>' + (body || '<div class="sub" style="margin:4px 0 0">' + empty + '</div>') + '</div>';
+function sideHTML(k) {
+  const today = todayStr(), open = list('tasks').filter(t => t.status !== '완료');
+  const mine = open.filter(t => t.assignee === S.uid).sort((a, b) => (a.due || '9').localeCompare(b.due || '9'));
+  const late = open.filter(t => t.due && t.due.slice(0, 10) < today && (t.assignee === S.uid || can('task_view_all'))).sort((a, b) => a.due.localeCompare(b.due));
+  const mnames = new Set(list('merchants').map(m => (m.name || '').trim())); const merTasks = open.filter(t => t.merchant || t.req || mnames.has((t.client || '').trim())).sort((a, b) => (a.due || '9').localeCompare(b.due || '9'));
+  const recentLogs = list('mlogs').sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.created || '').localeCompare(a.created || '')).slice(0, 12)
+    .map(g => '<div class="sl" data-act="merchant" data-arg="' + g.merchant + '"><b>' + esc(g.mname || (byId('merchants', g.merchant) || {}).name || '') + '</b><small>' + esc((g.date || '').slice(5) + ' · ' + logKind(g.kind) + ' · ' + (logReq(g) || logRes(g) || '').slice(0, 30)) + '</small></div>').join('');
+  const recentM = recentMerchants().map(id => byId('merchants', id)).filter(m => m && !m.deleted).slice(0, 10)
+    .map(m => '<div class="sl" data-act="merchant" data-arg="' + m.id + '"><b>' + esc(m.name) + '</b><small>' + esc(m.bizno || mNums(m).phone || mNums(m).mobile || '') + '</small></div>').join('');
+  if (k === 'task') return '<h1>내 할 일</h1><button class="btn gold full" data-act="newTask">+ 업무 지시</button>' +
+    (late.length ? sideSec('⏰ 기한 지난 업무 (' + late.length + ')', late.slice(0, 10).map(sideTask).join('')) : '') +
+    sideSec('내가 맡은 업무 (' + mine.length + ')', mine.slice(0, 30).map(sideTask).join(''), '맡은 업무가 없어요.') +
+    sideSec('최근 완료', list('tasks').filter(t => t.status === '완료' && (t.assignee === S.uid || can('task_view_all'))).sort((a, b) => (b.doneAt || '').localeCompare(a.doneAt || '')).slice(0, 5).map(sideTask).join(''), '아직 없어요.');
+  if (k === 'project') {
+    const ps = list('projects').sort((a, b) => pctOf(a) - pctOf(b) || (b.created || '').localeCompare(a.created || ''));
+    return '<h1>프로젝트</h1><button class="btn gold full" data-act="newProject">+ 새 프로젝트</button>' +
+      sideSec('진행 중 (' + ps.filter(p => pctOf(p) < 100).length + ')', ps.filter(p => pctOf(p) < 100).map(p => '<div class="sl" data-act="project" data-arg="' + p.id + '"><b>' + esc(p.title) + '</b><small>' + esc(uname(p.owner) + (p.due ? ' · 마감 ' + p.due : '')) + '</small>' + pbar(pctOf(p)) + '</div>').join(''), '진행 중인 프로젝트가 없어요.') +
+      sideSec('내 업무', mine.slice(0, 10).map(sideTask).join(''), '맡은 업무가 없어요.');
+  }
+  if (k === 'calendar') {
+    const wk = []; for (let i = 0; i < 7; i++) { const d = new Date(); d.setDate(d.getDate() + i); wk.push(d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())); }
+    const dayRows = d => list('events').filter(e => e.date === d).map(e => '<div class="sl" data-act="event" data-arg="' + e.id + '"><b>' + esc((e.time ? e.time + ' ' : '') + e.title) + '</b>' + (e.place ? '<small>' + esc(e.place) + '</small>' : '') + '</div>').join('') +
+      open.filter(t => (t.due || '').startsWith(d) && (t.assignee === S.uid || can('task_view_all'))).map(sideTask).join('');
+    return '<h1>이번 주</h1>' + (can('staff_manage') ? '<button class="btn gold full" data-act="newEvent">+ 일정 추가</button>' : '') +
+      wk.map((d, i) => { const r = dayRows(d); const w = '일월화수목금토'[new Date(d + 'T00:00:00').getDay()]; return r || i === 0 ? sideSec((i === 0 ? '오늘 · ' : '') + Number(d.slice(5, 7)) + '/' + Number(d.slice(8)) + ' (' + w + ')', r, '일정 없음') : ''; }).join('') +
+      (late.length ? sideSec('⏰ 기한 지난 업무 (' + late.length + ')', late.slice(0, 10).map(sideTask).join('')) : '');
+  }
+  if (k === 'merchants' || k === 'logs') return '<h1>' + (k === 'logs' ? '응대 바로가기' : '가맹점 바로가기') + '</h1>' +
+    sideSec('📋 가맹점 업무 진행 중 (' + merTasks.length + ')', merTasks.slice(0, 12).map(t => sideTask(t) .replace('</small>', '</small>' + (t.req ? '<small>요청: ' + esc(t.req.slice(0, 40)) + '</small>' : ''))).join(''), '진행 중인 가맹점 업무가 없어요.') +
+    sideSec('최근 연 가맹점 (이 기기)', recentM, '가맹점을 열면 여기에 쌓여요.') +
+    (k === 'merchants' ? sideSec('최근 응대 기록', recentLogs, '응대 기록이 없어요.') : '');
+  // 그 밖의 화면(☰ 메뉴에서 연 것): 같은 묶음의 메뉴를 왼쪽에 두고 바로 옮겨 다닌다
+  const items = menuItems().filter(e => e.go && e.go.startsWith('nav:all:'));
+  const cur = items.find(e => e.go === 'nav:all:' + k); const sec = cur ? cur.sec : '일';
+  return '<h1>' + esc(sec) + '</h1>' + items.filter(e => e.sec === sec).map(e => menuRow(e).replace('class="mi', 'class="mi' + (e === cur ? ' on' : ''))).join('');
+}
+
 // ---------- PC 홈 (오늘 현황) ----------
 function viewHome() {
   const today = todayStr(); const mine = list('tasks').filter(t => t.assignee === S.uid && t.status !== '완료');
@@ -1898,6 +1942,7 @@ function viewHome() {
 
 // ---------- 사용설명서 · 버전 내역 (웹) ----------
 const WEB_CHANGES = [
+  ['웹 0.0.16', '2026-10-24', ['PC: 채팅처럼 화면 왼쪽 칸을 씀 — 업무(기한 지난·내 업무·최근 완료), 프로젝트(진행률), 일정(오늘부터 일주일), 가맹점·응대 기록(진행 중 가맹점 업무·최근 연 가맹점·최근 응대 기록), ☰에서 연 화면은 같은 묶음 메뉴']],
   ['웹 0.0.15', '2026-10-24', ['업무 ↔ 응대 기록 연결: 업무를 올릴 때 가맹점을 고르고 ‘가맹점 요청사항’을 적으면, 완료할 때 적는 ‘처리결과’와 함께 그 가맹점 응대 기록에 자동으로 남아요(다시 완료하면 같은 기록을 고침, 응대 종류 선택)', '가맹점 화면에 그 가맹점의 진행 중인 업무가 보여요', '응대 기록에 ‘📋 업무에서’ 표시']],
   ['웹 0.0.14', '2026-10-24', ['재고: 입고(같은 모델은 수량에 더하기·입고처 메모), 출고(반품·불량·A/S 교체·분실 — 계약 없이), 수량 정정(재고 조사, 시리얼 스캔 확인), 재고 이력(입고·출고·계약 출고·정정, 날짜·직원·메모)', 'PC: ☰ 전체 메뉴 화면 바탕색을 구분하고 묶음별 카드로 정리', '업데이트: 새 버전이 나오면 위쪽에 ‘지금 업데이트’ 띠가 떠요. 새로고침·프로그램 재시작만 해도 새 버전이 바로 적용되고, 전체 → 회사 → 업데이트 확인으로 직접 확인할 수도 있어요']],
   ['웹 0.0.13', '2026-10-24', ['사용설명서 전면 정리: 앱 사용설명서와 같은 순서로 모든 기능 설명, 항목을 눌러 펼치기, 검색(초성 가능), 자주 묻는 질문 추가']],
@@ -1920,7 +1965,7 @@ function viewAbout() {
 }
 const WEB_MANUAL = [
   ['처음 시작하기 · 로그인', '1. 관리자가 등록해 둔 내 휴대폰 번호를 넣고 ‘인증번호 받기’를 눌러요.\n2. 문자로 온 인증번호 6자리를 넣으면 로그인돼요. 한 번 로그인하면 계속 유지돼요.\n※ ‘등록되지 않은 번호입니다’가 나오면 관리자에게 번호 등록을 요청하세요.\n※ 아이폰: Safari 로 열고 공유 버튼 → ‘홈 화면에 추가’ 하면 앱처럼 써요.\n※ 로그아웃: 전체(☰) → 계정 → 로그아웃.'],
-  ['PC 프로그램 (윈도우)', '전체(☰) → 계정 → ‘PC 프로그램 설치 파일 받기’로 설치 파일을 받아 실행하면 바탕화면·시작 메뉴에 ‘나인패밀리’가 생겨요.\n처음 실행할 때 ‘Windows의 PC 보호’ 창이 뜨면 ‘추가 정보’ → ‘실행’을 눌러 주세요.\n프로그램은 이 웹앱을 창으로 띄우는 방식이라, 업데이트가 나오면 다시 설치하지 않아도 다음에 켤 때(켜 둔 상태면 F5) 바로 바뀌어요.\n크롬·엣지에서 주소창 오른쪽 설치 버튼으로 설치해도 같아요.'],
+  ['PC 프로그램 (윈도우)', '전체(☰) → 계정 → ‘PC 프로그램 설치 파일 받기’로 설치 파일을 받아 실행하면 바탕화면·시작 메뉴에 ‘나인패밀리’가 생겨요.\n처음 실행할 때 ‘Windows의 PC 보호’ 창이 뜨면 ‘추가 정보’ → ‘실행’을 눌러 주세요.\n프로그램은 이 웹앱을 창으로 띄우는 방식이라, 업데이트가 나오면 다시 설치하지 않아도 다음에 켤 때(켜 둔 상태면 F5) 바로 바뀌어요.\n크롬·엣지에서 주소창 오른쪽 설치 버튼으로 설치해도 같아요.\n■ 왼쪽 칸: PC에서는 채팅처럼 화면 왼쪽에 바로가기 목록이 나와요. 업무는 기한 지난·내 업무, 프로젝트는 진행률, 일정은 오늘부터 일주일, 가맹점·응대 기록은 진행 중인 가맹점 업무와 최근 연 가맹점, ☰에서 연 화면은 같은 묶음 메뉴. 눌러서 바로 열어요.'],
   ['화면 구성', '휴대폰(아이폰): 안드로이드 앱과 같은 화면이에요. 아래 탭 업무·프로젝트·채팅·일정·전체, 나머지 기능은 전체 탭에 계정 → 회사 → 일 → 관리자 순서로 있어요.\nPC: 위쪽 가로줄이 주 메뉴(업무·프로젝트·채팅·일정·가맹점·응대 기록)예요. 왼쪽 위 ☰ 를 누르면 전체 메뉴가 펼쳐지고, ‘나인패밀리’를 누르면 홈(오늘 현황)으로 가요.\n전체 메뉴 위 기능 검색에 단어나 초성(예: ㅈㄱ)을 치면 기능을 바로 찾아요.\n안드로이드 앱·아이폰·PC 는 같은 서버를 써서, 어디서 고쳐도 다른 기기에 바로 보여요.'],
   ['업무', '■ 보기: 업무 탭 위에 남은 업무 수, ‘상태별로 보기’(미완료·미확인·진행중·보류·완료)로 걸러 봐요. ‘전체 업무 보기’ 권한이 있으면 ‘내 업무 / 전체 업무’를 바꿔 봐요.\n■ 지시: 오른쪽 아래 + → 제목·종류·거래처·전화·주소·기한·메모·담당 직원. ‘가맹점 조회’로 고르면 거래처·전화·주소가 자동으로 채워져요. 기한을 넣으면 일정 달력에도 표시돼요. ‘다른 직원에게 업무 배정’ 권한이 없으면 나에게만 지시할 수 있어요.\n■ 서류 업무: 종류가 ‘서류 접수’·‘카드사 서류’이면 ‘서류접수’ 채팅방에 자동으로 알림이 올라가요.\n■ 처리: 업무를 눌러 진행 시작 → 보류·연기(다시 할 날짜) → 완료(처리 결과 한 줄). 상태는 담당자 본인과 최고관리자만 바꿔요. 모든 처리는 이력으로 남아요.\n■ 삭제: 업무를 만든 사람과 최고관리자만 해요.\n■ 계약 만료가 3개월 안으로 남은 계약이 있으면 업무 화면 위에 빨간 알림 카드가 떠요.\n■ 가맹점 업무와 응대 기록: 업무를 올릴 때 가맹점을 골라 ‘가맹점 요청사항’을 적어 두면, 완료 때 적는 ‘처리결과’와 함께 그 가맹점 응대 기록에 자동으로 남아요(📋 업무에서 표시). 가맹점 화면에는 아직 안 끝난 업무도 보여요.'],
   ['프로젝트', '+ 로 이름·마감일·메모·체크리스트(한 줄에 하나)·담당자를 넣어 만들어요.\n프로젝트를 눌러 항목을 체크하면 진행률이 자동으로 올라가고, ‘항목 추가’로 늘려요. 100%가 되면 ‘완료 되돌리기’로 진행중으로 돌릴 수 있어요.\n목록 위 전체·진행중·완료로 걸러 봐요.'],

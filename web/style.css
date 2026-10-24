@@ -263,3 +263,20 @@ details.man[open]{padding-bottom:12px}
 #updbar{position:fixed;left:50%;transform:translateX(-50%);top:10px;z-index:60;background:var(--dark);color:#fff;border-radius:14px;padding:8px 8px 8px 16px;font-size:14px;display:flex;align-items:center;gap:8px;box-shadow:0 4px 16px rgba(0,0,0,.25);width:max-content;max-width:calc(100% - 32px)}
 #updbar button{white-space:nowrap;flex:none;border:0;border-radius:10px;padding:7px 12px;font-weight:700;cursor:pointer;background:var(--gold);color:var(--dark)}
 #updbar button+button{background:none;color:#fff;padding:7px 8px}
+/* 웹 0.0.16: PC 왼쪽 칸 (채팅처럼 목록) */
+.pcsplit{display:flex;flex:1;min-height:0;height:100%}
+.pcsplit>.scroll{flex:1;min-width:0}
+.pcside{width:320px;flex:none;overflow-y:auto;padding:0 16px 20px;border-right:1px solid #eceef1;background:#fbfaf6}
+.pcside h1{font-size:22px}
+.pcside .btn.full{margin-top:4px}
+.ssec{margin-top:16px}
+.ssec h3{font-size:13px;margin:0 0 6px;color:var(--deep);border-bottom:1px solid #ece4cf;padding-bottom:5px}
+.sl{position:relative;display:block;padding:8px 10px;border-radius:10px;cursor:pointer;margin:2px 0;background:#fff;border:1px solid #f0ece0}
+.sl:hover{border-color:var(--gold)}
+.sl b{display:block;font-size:14px;font-weight:600;padding-right:52px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sl small{display:block;font-size:12px;color:var(--gray);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sl .st{position:absolute;right:8px;top:8px;font-style:normal;font-size:11px;font-weight:700;color:var(--deep);background:var(--tint);padding:1px 7px;border-radius:8px}
+.sl .pbar{margin-top:5px}
+.pcside .mi{padding:11px 4px;font-size:14px}
+.pcside .mi.on{background:var(--tint);border-radius:10px;font-weight:700}
+@media(max-width:1180px){.pcside{width:270px}}
