@@ -23,6 +23,9 @@ function createWindow() {
     webPreferences: {contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false}
   });
   win.loadURL(HOME);
+  win.webContents.on('before-input-event', (e, i) => { // F5·Ctrl+R = 새 버전으로 새로고침 (메뉴줄이 없어서 직접 건다)
+    if (i.type === 'keyDown' && (i.key === 'F5' || (i.control && i.key.toLowerCase() === 'r'))) { e.preventDefault(); win.webContents.reloadIgnoringCache(); }
+  });
   win.webContents.setWindowOpenHandler(({url}) => { if (!inApp(url)) shell.openExternal(url); return {action: 'deny'}; });
   win.webContents.on('will-navigate', (e, url) => { if (!inApp(url)) { e.preventDefault(); shell.openExternal(url); } });
   win.webContents.on('did-fail-load', (e, code, desc, url, isMain) => { // 인터넷이 끊겨 처음 화면을 못 받으면 안내 후 다시 시도
@@ -31,8 +34,10 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   Menu.setApplicationMenu(null);
+  // 켤 때마다 임시 보관 화면을 비워 항상 최신 웹앱을 받는다 (로그인·자료 보관은 그대로)
+  try { await session.defaultSession.clearCache(); } catch (e) {}
   // 바코드 카메라·알림만 허용 (우리 웹앱에서 요청할 때)
   session.defaultSession.setPermissionRequestHandler((wc, perm, cb, details) => cb(inApp(details.requestingUrl || wc.getURL()) && ['media', 'notifications', 'clipboard-sanitized-write'].includes(perm)));
   createWindow();
