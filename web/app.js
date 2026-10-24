@@ -2,7 +2,7 @@
 /* 나인패밀리 웹앱 — 앱과 같은 Firebase(nine-family)를 쓴다. 문서는 {j: JSON문자열, u: 시각} 형식. */
 const CFG = {apiKey: 'AIzaSyCsA-M6QGGGk0owyDXzziv1X79TqF5NptI', authDomain: 'nine-family.firebaseapp.com', projectId: 'nine-family',
   storageBucket: 'nine-family.firebasestorage.app', messagingSenderId: '48232341344', appId: '1:48232341344:web:19be016c9c1c1de5a34805'};
-const VERSION = '웹 0.1.1';
+const VERSION = '웹 0.1.2';
 const DEMO = location.hash === '#demo';
 const COLLS = ['users', 'tasks', 'notices', 'projects', 'events', 'merchants', 'rooms', 'msgs', 'profiles', 'mlogs'];
 const TYPES = ['신규 설치', 'AS', '영업 방문', '서류 접수', '카드사 서류', '기타'];
@@ -12,7 +12,7 @@ const $ = (s, r) => (r || document).querySelector(s);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 
 let auth, fs;
-const S = {me: null, uid: 0, phone: '', tab: 'task', sub: '', data: {}, pushed: {}, taskFilter: 0, showAll: false, projFilter: 0,
+const S = {logLimit: 30, lmq: '', me: null, uid: 0, phone: '', tab: 'task', sub: '', data: {}, pushed: {}, taskFilter: 0, showAll: false, projFilter: 0,
   room: 0, dmDraft: null, calY: 0, calM: 0, calSel: '', mq: '', mlimit: 50, allQ: '', chatQ: ''};
 COLLS.forEach(c => S.data[c] = new Map());
 
@@ -426,14 +426,30 @@ function viewMerchants() {
 ACT.mmore = () => { S.mlimit += 100; render(); };
 ACT.merchant = id => {
   const m = byId('merchants', id); if (!m) return;
+  if (S.logMid !== m.id) { S.logMid = m.id; S.logLimit = 30; }
   const logs = list('mlogs').filter(g => g.merchant === m.id).sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.created || '').localeCompare(a.created || ''));
   const ln = (k, v) => v ? '<div class="line"><b>' + k + '</b><div>' + esc(v) + '</div></div>' : '';
   const ph = (m.phone || '').replace(/[^0-9+*#]/g, '');
   modal('<h3>' + esc(m.name) + '</h3>' + ln('사업자번호', m.bizno) + ln('주소', m.addr) + ln('계약조건', m.terms) + ln('메모', m.memo) +
     (ph ? '<a class="btn tint full" style="display:block;text-align:center;text-decoration:none" href="tel:' + ph + '">📞 ' + esc(m.phone) + ' 전화 걸기</a>' : '') +
     '<h2>📝 응대 기록 (' + logs.length + '건)</h2><button class="btn gold full" data-act="newLog" data-arg="' + m.id + '">+ 응대 기록 남기기</button>' +
-    logs.slice(0, 30).map(g => '<div class="card flat"><span class="chip">' + esc(g.kind) + '</span> <b style="font-size:13px">' + esc(g.date) + '</b><div style="margin-top:6px;white-space:pre-wrap">' + esc(g.text) + '</div><div class="t2">' + esc(uname(g.who)) + '</div></div>').join('') + (logs.length > 30 ? '<div class="sub">최근 30건만 보여요. 앱에서 전체를 볼 수 있어요.</div>' : '') +
+    logs.slice(0, S.logLimit).map(g => logCard(g, 'editLog|' + g.id + '|' + m.id)).join('') + (logs.length > S.logLimit ? '<button class="btn full" data-act="logmore" data-arg="' + m.id + '">더 보기 (' + (logs.length - S.logLimit) + '건 남음)</button>' : '') +
     '<div class="btns" style="margin-top:10px"><button class="btn" data-act="editMerchant" data-arg="' + m.id + '">정보 수정</button><button class="btn" data-act="close">닫기</button></div>');
+};
+function logCard(g, act) {
+  const [a, id, mid] = act.split('|');
+  return '<div class="card" data-act="' + a + '" data-arg="' + id + '|' + mid + '"><span class="chip">' + esc(g.kind) + '</span> <b style="font-size:13px">' + esc(g.date) + '</b><div style="margin-top:6px;white-space:pre-wrap">' + esc(g.text) + '</div><div class="t2">' + esc(uname(g.who) + (g.editedBy ? ' · 수정 ' + uname(g.editedBy) + ' ' + (g.editedAt || '') : '')) + '</div></div>';
+}
+ACT.logmore = mid => { S.logLimit += 50; ACT.merchant(mid); };
+ACT.editLog = a => {
+  const [id, mid] = a.split('|'); const g = byId('mlogs', id); if (!g) return;
+  const mine = g.who === S.uid || can('staff_manage');
+  formModal('응대 기록 수정', '<div class="sub">' + esc(g.mname) + ' · 작성 ' + esc(uname(g.who)) + (g.editedBy ? ' · 마지막 수정 ' + esc(uname(g.editedBy)) + ' ' + esc(g.editedAt || '') : '') + '</div><input id="f_d" type="date" value="' + esc(g.date) + '"><select id="f_k">' + KINDS.map(k => '<option' + (k === g.kind ? ' selected' : '') + '>' + k + '</option>').join('') + '</select><textarea id="f_m">' + esc(g.text) + '</textarea>' + (mine ? '<button class="btn red full" id="f_del">이 기록 지우기</button>' : ''), () => {
+    const d = $('#f_d').value, t = $('#f_m').value.trim(); if (!d || !t) return warn('날짜와 내용을 확인해 주세요.');
+    if (t !== g.text) { g.editedBy = S.uid; g.editedAt = nowStr(); }
+    g.date = d; g.kind = $('#f_k').value; g.text = t; put('mlogs', g); render(); if (mid && byId('merchants', mid)) ACT.merchant(mid); toast('고쳤어요.'); return true;
+  }, '저장');
+  const del = $('#f_del'); if (del) del.onclick = () => { if (!confirm('이 기록을 지울까요?')) return; g.deleted = true; put('mlogs', g); closeModal(); render(); if (mid && byId('merchants', mid)) ACT.merchant(mid); };
 };
 ACT.newLog = mid => formModal('응대 기록', '<input id="f_d" type="date" value="' + todayStr() + '"><select id="f_k">' + KINDS.map(k => '<option>' + k + '</option>').join('') + '</select><textarea id="f_m" placeholder="내용 (필수)"></textarea>', () => {
   const d = $('#f_d').value, t = $('#f_m').value.trim(); if (!d || !t) return warn('날짜와 내용을 확인해 주세요.');
@@ -453,10 +469,17 @@ ACT.editMerchant = id => formModal('가맹점 정보 수정', merchantForm(byId(
   const o = readMerchant(byId('merchants', id)); put('merchants', o); render(); toast('저장했어요.'); return true;
 }, '저장');
 function viewAllLogs() {
-  const q = S.lq || '';
+  const mq = (S.lmq || '').trim(); const q = S.lq || '';
+  let found = '';
+  if (mq) {
+    const hits = list('merchants').filter(m => { const b = m.bizno || ''; return kmatch((m.name || '') + ' ' + b + ' ' + b.replace(/-/g, ''), mq); }).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    found = hits.slice(0, 20).map(m => { const c = list('mlogs').filter(g => g.merchant === m.id).length; return '<div class="card" data-act="merchant" data-arg="' + m.id + '"><div class="row"><div class="grow"><div class="t1">' + esc(m.name) + '</div><div class="t2">' + esc((m.bizno || '사업자번호 없음') + ' · 응대 기록 ' + c + '건') + '</div></div><span style="color:var(--deep);font-size:22px">›</span></div></div>'; }).join('') +
+      (hits.length > 20 ? '<div class="sub">더 있어요. 검색어를 더 적어 주세요.</div>' : '') + (hits.length ? '' : '<div class="empty">찾는 가맹점이 없어요. (상호·사업자번호만 찾아요)</div>');
+  }
   const ls = list('mlogs').filter(g => kmatch((g.mname || '') + ' ' + (g.text || ''), q)).sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.created || '').localeCompare(a.created || ''));
-  return '<h1>가맹점 응대 기록</h1><input id="lq" data-q="lq" placeholder="가맹점·내용 검색 (초성 가능)" value="' + esc(q) + '"><div class="sub" style="margin-top:8px;font-weight:700">기록 ' + ls.length + '건</div>' +
-    ls.slice(0, 100).map(g => '<div class="card" data-act="merchant" data-arg="' + g.merchant + '"><span class="chip">' + esc(g.kind) + '</span> <b>' + esc(g.mname) + '</b> <span class="sub">' + esc(g.date) + '</span><div style="margin-top:6px;white-space:pre-wrap">' + esc(g.text) + '</div><div class="t2">' + esc(uname(g.who)) + '</div></div>').join('') + (ls.length > 100 ? '<div class="sub">최근 100건만 보여요.</div>' : '') + (ls.length ? '' : '<div class="empty">기록이 없어요.</div>');
+  return '<h1>가맹점 응대 기록</h1><div class="sub">상호 또는 사업자번호로 가맹점을 찾아 눌러서 기록을 보고·추가·수정해요.</div><input id="lmq" data-q="lmq" placeholder="🔍 가맹점 찾기 — 상호 또는 사업자번호" value="' + esc(S.lmq) + '">' + found +
+    '<h2>최근 기록</h2><input id="lq" data-q="lq" placeholder="가맹점·내용 검색 (초성 가능)" value="' + esc(q) + '"><div class="sub" style="margin-top:8px;font-weight:700">기록 ' + ls.length + '건 · 눌러서 수정</div>' +
+    ls.slice(0, 100).map(g => logCard(g, 'editLog|' + g.id + '|' + g.merchant).replace('<span class="chip">' + esc(g.kind) + '</span>', '<span class="chip">' + esc(g.kind) + '</span> <b>' + esc(g.mname) + '</b>')).join('') + (ls.length > 100 ? '<div class="sub">최근 100건만 보여요.</div>' : '') + (ls.length ? '' : '<div class="empty">기록이 없어요.</div>');
 }
 
 // ---------- 공지 ----------
