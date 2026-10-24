@@ -1,0 +1,40 @@
+# 나인패밀리 인수인계 (새 작업 세션용)
+
+사용자: 양문희 지사장((주)나인페이먼츠, 광주). 직원 약 10명이 쓰는 무료 사내 앱. 답변은 한국어, 짧게. "너가 다 진행해" 방식 (Firebase·GitHub 설정도 크롬으로 직접 진행, 단 비밀번호·인증번호·보안 규칙 게시 버튼은 사용자가 직접).
+
+## 구성
+- 안드로이드 앱: 순수 Java, 코드로 UI 구성 (`app/`), minSdk 26 / targetSdk 34. 거의 전부 `MainActivity.java`.
+- 웹앱(PWA): `web/` (바닐라 JS, Firebase compat SDK). PC 설치형 + 아이폰 홈 화면 추가. GitHub Pages 배포(`.github/workflows/web.yml`).
+- 서버: Firebase 프로젝트 `nine-family` (Spark 요금제). Firestore + 전화번호 인증. 보안 규칙은 `firestore.rules` (콘솔에서 사용자가 게시).
+- 빌드: `.github/workflows/build.yml` 이 main 푸시 때 APK 빌드 후 `vX-test` 시험판 릴리스에 올림 (웹 변경만이면 건너뜀).
+- 저장소: `ninepayments/Work-app` (2026-10-24 huraimuni 에서 이전). 웹앱 주소 `https://ninepayments.github.io/Work-app/` (Pages Source = GitHub Actions). Firebase 로그인 허용 도메인에 `ninepayments.github.io` 추가됨.
+
+## 데이터 구조
+- `Store.java` 가 전체 DB를 JSON 으로 SharedPreferences 에 두고 Firestore 와 실시간 동기화. 문서 = `{j: JSON문자열, u: 시각}` (+ 일부 추가 필드: 비공개 대화 `mem`, 계약·보고 `who/date`, 프로필 `who`).
+- 컬렉션: users, tasks, notices, projects, contracts, events, merchants, stock, rooms, msgs, reports, profiles, costs, contacts, deposits, library, mlogs, config. 삭제는 항상 소프트 삭제, 변경 기록(audit) 별도 저장.
+- 1:1 비공개 대화는 prooms/pmsgs (참가자 번호 `mem`), DM id = 1500000000 + ((lo*1000003+hi) % 400000000).
+- 웹앱은 같은 문서 형식(`ser()` 로 org.json 모양 직렬화), `#demo` 주소 뒤에 붙이면 가짜 데이터 데모 모드.
+
+## 지켜야 할 규칙
+- 배포마다: 버전(앱 `app/build.gradle` versionName·versionCode, 웹 `web/app.js` VERSION), 앱 안 사용설명서(MANUAL)·업데이트 내역(CHANGELOG), `RELEASE_NOTES.md` 갱신. 화면에 버전 표시. 버전은 0.0.1 에서 시작해 끝자리 1씩 (VERSIONING.md).
+- 입력칸 있는 팝업은 `Dlg` (바깥 터치로 안 닫힘, `Ui.warn` 으로 확인 거부).
+- 전체 메뉴 구역 순서: 계정 → 회사 → 일 → 관리자.
+- 한글 검색은 초성 포함(`Kor.match` / 웹 `kmatch`). 웹에서 한글 입력 조합 중에는 다시 그리지 않음 (compositionstart/end 는 `addEventListener` 로 걸 것).
+- 이미지 만들 때 방사형 햇살 무늬 금지(욱일기 연상).
+
+## 지금까지 된 것 (v0.0.2 기준)
+- 앱: 업무·프로젝트·채팅(1:1·그룹·반응·답장·스티커·사진·파일)·일정(한국 달력)·가맹점·재고(바코드)·계약·단체 문자·실적·보고·자료실·공지·직원/권한·백업.
+- 가맹점: 상호/사업자번호/전화/휴대폰/이메일/주소/VAN사/계약구분(임대 월 CMS·판매 금액)/추가 조건/메모. 수정은 '가맹점 등록·수정' 권한(관리자 포함) + 관리자가 정한 암호(해시, `config` 문서, 5분 동안 재입력 없음). 암호는 화면 잠금이며 서버 규칙이 강제하지는 않음.
+- 응대 기록: 가맹점 찾기(상호·초성·사업자번호) → 기록 조회·추가·수정(요청사항/처리결과, 종류 방문A/S·원격A/S·전화응대·기타, 수정자 기록).
+- 웹앱: 업무·프로젝트·채팅·일정·가맹점·응대 기록·공지. 기본 탭 5개 + 왼쪽 위 ☰ 전체 메뉴(토스포스 느낌), 로고 누르면 홈. (안드로이드 앱 화면 구성은 그대로)
+
+## 남은 일 (사용자 결정·준비 대기 포함)
+- Firebase 보안 규칙에 `config` 컬렉션 추가분 게시 (사용자 버튼).
+- 실제 폰·PC에서 확인: 웹앱 로그인과 앱 동기화, 가맹점 수정 화면과 암호, 웹앱 설치.
+- Blaze 요금제 전환 → 실제 문자 인증, 테스트 번호 삭제(Firebase 콘솔), SMS 지역 제한, App Check, 정기 백업, 1.0.0 선언.
+- 알리고 단체 문자 연동(가입·발신번호 사용자), 이카운트 가맹점 엑셀 가져오기(내보내기 샘플 필요), 보고서 양식(샘플 필요), 파일 3MB 초과(Storage), 푸시 알림(FCM).
+- 웹앱에 없는 기능: 재고·계약·실적·문자·자료실·사진/파일, 채팅 푸시. 웹 읽음 표시는 기기별.
+- 알려진 한계: 같은 문서 동시 수정은 마지막 저장 우선, 그룹방 '나가기' 없음.
+- 로그인 테스트 번호 3개가 Firebase 콘솔에 있음(문자 없이 로그인됨). 공개 저장소에 코드를 적지 말 것.
+
+자세한 사용법은 앱 안 사용설명서, 앞으로 할 일은 `BACKLOG.md`·`ROADMAP.md`.
