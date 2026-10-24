@@ -599,6 +599,7 @@ final class Store {
 
     void setStatus(JSONObject t, int who, String status, String msg) {
         try {
+            if (status.equals(t.optString("status")) && !"완료".equals(status)) return; // 같은 상태를 또 눌러도 이력이 쌓이지 않게
             t.put("status", status);
             if ("완료".equals(status)) {
                 t.put("doneMsg", msg);
