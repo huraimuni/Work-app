@@ -19,6 +19,11 @@ jobs:
       url: ${{ steps.dep.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - name: Stamp file versions (서버 임시 보관을 피해 새 파일을 바로 받게)
+        run: |
+          V=${GITHUB_SHA::8}
+          sed -i "s|src=\"app.js\"|src=\"app.js?v=$V\"|; s|href=\"style.css\"|href=\"style.css?v=$V\"|" web/index.html
+          grep -n "?v=$V" web/index.html
       - uses: actions/configure-pages@v5
         with:
           enablement: true

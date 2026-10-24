@@ -2,7 +2,7 @@
 /* 나인패밀리 웹앱 — 앱과 같은 Firebase(nine-family)를 쓴다. 문서는 {j: JSON문자열, u: 시각} 형식. */
 const CFG = {apiKey: 'AIzaSyCsA-M6QGGGk0owyDXzziv1X79TqF5NptI', authDomain: 'nine-family.firebaseapp.com', projectId: 'nine-family',
   storageBucket: 'nine-family.firebasestorage.app', messagingSenderId: '48232341344', appId: '1:48232341344:web:19be016c9c1c1de5a34805'};
-const VERSION = '웹 0.0.16';
+const VERSION = '웹 0.0.17';
 const DEMO = location.hash === '#demo';
 const COLLS = ['users', 'tasks', 'notices', 'projects', 'events', 'merchants', 'rooms', 'msgs', 'profiles', 'mlogs', 'config', 'stock', 'contracts', 'deposits', 'costs', 'reports', 'library', 'contacts'];
 const TYPES = ['신규 설치', 'AS', '영업 방문', '서류 접수', '카드사 서류', '기타'];
@@ -1942,6 +1942,7 @@ function viewHome() {
 
 // ---------- 사용설명서 · 버전 내역 (웹) ----------
 const WEB_CHANGES = [
+  ['웹 0.0.17', '2026-10-24', ['‘지금 업데이트’를 누르면 바로 새 버전이 열리게 고침(전에는 서버 임시 보관 때문에 최대 10분 늦게 바뀜)']],
   ['웹 0.0.16', '2026-10-24', ['PC: 채팅처럼 화면 왼쪽 칸을 씀 — 업무(기한 지난·내 업무·최근 완료), 프로젝트(진행률), 일정(오늘부터 일주일), 가맹점·응대 기록(진행 중 가맹점 업무·최근 연 가맹점·최근 응대 기록), ☰에서 연 화면은 같은 묶음 메뉴']],
   ['웹 0.0.15', '2026-10-24', ['업무 ↔ 응대 기록 연결: 업무를 올릴 때 가맹점을 고르고 ‘가맹점 요청사항’을 적으면, 완료할 때 적는 ‘처리결과’와 함께 그 가맹점 응대 기록에 자동으로 남아요(다시 완료하면 같은 기록을 고침, 응대 종류 선택)', '가맹점 화면에 그 가맹점의 진행 중인 업무가 보여요', '응대 기록에 ‘📋 업무에서’ 표시']],
   ['웹 0.0.14', '2026-10-24', ['재고: 입고(같은 모델은 수량에 더하기·입고처 메모), 출고(반품·불량·A/S 교체·분실 — 계약 없이), 수량 정정(재고 조사, 시리얼 스캔 확인), 재고 이력(입고·출고·계약 출고·정정, 날짜·직원·메모)', 'PC: ☰ 전체 메뉴 화면 바탕색을 구분하고 묶음별 카드로 정리', '업데이트: 새 버전이 나오면 위쪽에 ‘지금 업데이트’ 띠가 떠요. 새로고침·프로그램 재시작만 해도 새 버전이 바로 적용되고, 전체 → 회사 → 업데이트 확인으로 직접 확인할 수도 있어요']],
@@ -2056,6 +2057,7 @@ let wasWide = isWide();
 window.addEventListener('resize', () => { if (S.me && wasWide !== isWide()) { wasWide = isWide(); later(); } });
 if ('serviceWorker' in navigator && !DEMO) navigator.serviceWorker.register('sw.js').then(r => r.update()).catch(() => {});
 // ---------- 새 버전 확인 ----------
+if (/[?&]u=\d/.test(location.search)) history.replaceState(null, '', location.pathname + location.hash); // 업데이트용 주소 꼬리는 지운다
 // 서버의 app.js 에서 VERSION 을 읽어 지금 화면과 다르면 위쪽에 '업데이트' 띠를 띄운다. 새로고침(F5)·프로그램 재시작 때도 항상 새 화면을 받는다(sw.js).
 let newVer = '';
 async function checkUpdate(manual) {
@@ -2075,7 +2077,7 @@ function showUpdate() {
 ACT.doUpdate = async () => {
   toast('업데이트하는 중…');
   try { const rs = await navigator.serviceWorker.getRegistrations(); await Promise.all(rs.map(r => r.update())); const ks = await caches.keys(); await Promise.all(ks.map(k => caches.delete(k))); } catch (e) {}
-  location.reload();
+  location.replace(location.pathname + '?u=' + Date.now() + location.hash); // 처음 보는 주소로 열어야 서버(GitHub)의 10분 임시 보관을 건너뛴다
 };
 ACT.checkUpdate = () => checkUpdate(true);
 if (!DEMO) { setTimeout(checkUpdate, 20000); setInterval(checkUpdate, 10 * 60000); document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkUpdate(); }); }
