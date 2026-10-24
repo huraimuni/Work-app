@@ -42,7 +42,7 @@ import java.util.List;
 
 public class MainActivity extends Activity {
     static final String[] TYPES = {"신규 설치", "AS", "영업 방문", "서류 접수", "카드사 서류", "기타"};
-    static final String[] STATUS_ACTIONS = {"확인함", "진행중", "보류"};
+    static final String[] STATUS_ACTIONS = {"진행중", "보류"};
 
     private Store store;
     private JSONObject me;
@@ -400,6 +400,16 @@ public class MainActivity extends Activity {
         head.addView(av);
         main.addView(head);
 
+        FrameLayout fixedHolder = new FrameLayout(this);
+        fixedTop = new LinearLayout(this);
+        fixedTop.setOrientation(LinearLayout.VERTICAL);
+        fixedTop.setPadding(Ui.dp(this, 20), 0, Ui.dp(this, 20), 0);
+        int fcw = wide ? Ui.dp(this, Math.min(MAX_CONTENT_DP, widthDp() - RAIL_DP)) : ViewGroup.LayoutParams.MATCH_PARENT;
+        FrameLayout.LayoutParams fcl = new FrameLayout.LayoutParams(fcw, ViewGroup.LayoutParams.WRAP_CONTENT);
+        fcl.gravity = Gravity.CENTER_HORIZONTAL;
+        fixedHolder.addView(fixedTop, fcl);
+        main.addView(fixedHolder, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
         ScrollView sv = new ScrollView(this);
         scroll = sv;
         sv.setVerticalScrollBarEnabled(false);
@@ -459,6 +469,9 @@ public class MainActivity extends Activity {
         render();
     }
 
+    /** 업무 탭처럼 위쪽은 고정하고 아래 목록만 움직이게 하는 영역 */
+    private LinearLayout fixedTop;
+
     private int newCount() {
         int n = 0;
         for (JSONObject t : store.list(store.tasks())) {
@@ -487,6 +500,7 @@ public class MainActivity extends Activity {
         addNav("calendar", "일정", 0);
         addNav("all", "전체", unreadNotices());
         content.removeAllViews();
+        if (fixedTop != null) fixedTop.removeAllViews();
         String k = sub != null ? sub : tab;
         if (sub != null) addBack();
         if ("task".equals(k)) renderTasks();
@@ -604,6 +618,13 @@ public class MainActivity extends Activity {
         }
     }
 
+    /** 화면에 보이는 업무 상태 이름: 지시됨 → 미확인, (예전) 확인함 → 진행중 */
+    private static String stLabel(String s) {
+        if ("지시됨".equals(s)) return "미확인";
+        if ("확인함".equals(s)) return "진행중";
+        return s;
+    }
+
     private int statusColor(String s) {
         switch (s) {
             case "지시됨":
@@ -636,8 +657,19 @@ public class MainActivity extends Activity {
 
     // ---------------- 업무 ----------------
     private void renderTasks() {
-        int open = 0, doing = 0, fresh = 0, done = 0, seen = 0, held = 0;
+        int open = 0, doing = 0, fresh = 0, done = 0, held = 0;
         String today = Store.now().substring(0, 10);
+        boolean migrated = false;
+        for (JSONObject t : store.list(store.tasks())) { // 예전 '확인함' 업무는 '진행중'으로 합친다
+            if ("확인함".equals(t.optString("status"))) {
+                try {
+                    t.put("status", "진행중");
+                    migrated = true;
+                } catch (Exception ignored) {
+                }
+            }
+        }
+        if (migrated) store.save();
         for (JSONObject t : store.list(store.tasks())) {
             if (t.optInt("assignee") != myId()) continue;
             String st = t.optString("status");
@@ -647,7 +679,6 @@ public class MainActivity extends Activity {
                 open++;
                 if ("진행중".equals(st)) doing++;
                 if ("지시됨".equals(st)) fresh++;
-                if ("확인함".equals(st)) seen++;
                 if ("보류".equals(st)) held++;
             }
         }
@@ -662,7 +693,7 @@ public class MainActivity extends Activity {
         hl.addView(Ui.text(this, "남은 업무", 14, Color.argb(200, 31, 27, 18), false));
         hl.addView(Ui.text(this, open + "건", 34, Ui.DARK, true));
         hr.addView(hl, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        TextView hs = Ui.text(this, "미확인 " + fresh + " · 확인 " + seen + " · 진행 " + doing + " · 보류 " + held + "\n오늘 완료 " + done, 12, Color.argb(200, 31, 27, 18), false);
+        TextView hs = Ui.text(this, "미확인 " + fresh + " · 진행 " + doing + " · 보류 " + held + "\n오늘 완료 " + done, 12, Color.argb(200, 31, 27, 18), false);
         hs.setGravity(Gravity.END);
         hr.addView(hs);
         hero.addView(hr);
@@ -683,7 +714,7 @@ public class MainActivity extends Activity {
             fillF.setLayoutParams(lp2);
         });
         hero.addView(track, Ui.lp(this, 16));
-        content.addView(hero);
+        fixedTop.addView(hero);
         List<JSONObject> expList = expiringContracts();
         if (!expList.isEmpty()) {
             LinearLayout al = Ui.card(this);
@@ -696,7 +727,7 @@ public class MainActivity extends Activity {
                 sub = "contracts";
                 render();
             });
-            content.addView(al, Ui.lp(this, 12));
+            fixedTop.addView(al, Ui.lp(this, 12));
         }
 
         if (can(Perm.TASK_VIEW_ALL)) {
@@ -709,10 +740,10 @@ public class MainActivity extends Activity {
                 showAll = true;
                 render();
             }));
-            content.addView(row, Ui.lp(this, 16));
+            fixedTop.addView(row, Ui.lp(this, 16));
         }
-        final String[] FILT = {"미완료", "미확인", "확인함", "진행중", "보류", "완료"};
-        final String[] FST = {"", "지시됨", "확인함", "진행중", "보류", "완료"};
+        final String[] FILT = {"미완료", "미확인", "진행중", "보류", "완료"};
+        final String[] FST = {"", "지시됨", "진행중", "보류", "완료"};
         List<JSONObject> scope = new ArrayList<>();
         for (JSONObject t : store.list(store.tasks())) {
             if (showAll && can(Perm.TASK_VIEW_ALL) || t.optInt("assignee") == myId()) scope.add(t);
@@ -723,7 +754,7 @@ public class MainActivity extends Activity {
             for (int i = 1; i < FST.length; i++) if (FST[i].equals(st)) fc[i]++;
             if (!"완료".equals(st)) fc[0]++;
         }
-        content.addView(Ui.text(this, "상태별로 보기", 12, Ui.GRAY, true), Ui.lp(this, 14));
+        fixedTop.addView(Ui.text(this, "상태별로 보기", 12, Ui.GRAY, true), Ui.lp(this, 14));
         LinearLayout seg = new LinearLayout(this);
         seg.setBackground(Ui.round(Ui.FIELD, 16, this));
         seg.setPadding(Ui.dp(this, 3), Ui.dp(this, 3), Ui.dp(this, 3), Ui.dp(this, 3));
@@ -748,7 +779,7 @@ public class MainActivity extends Activity {
             });
             seg.addView(cell, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         }
-        content.addView(seg, Ui.lp(this, 4));
+        fixedTop.addView(seg, Ui.lp(this, 4));
         List<JSONObject> list = new ArrayList<>();
         for (JSONObject t : scope) {
             String st = t.optString("status");
@@ -789,7 +820,7 @@ public class MainActivity extends Activity {
                 + (t.optString("due").isEmpty() ? "" : " · " + t.optString("due")), 13, Ui.GRAY, false), Ui.lp(this, 2));
         c.addView(mid, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         String st = t.optString("status");
-        c.addView(Ui.chip(this, st, statusBg(st), statusColor(st)));
+        c.addView(Ui.chip(this, stLabel(st), statusBg(st), statusColor(st)));
         c.setOnClickListener(v -> showTask(t.optInt("id")));
         return c;
     }
@@ -875,13 +906,14 @@ public class MainActivity extends Activity {
         final LinearLayout l = new LinearLayout(this);
         l.setOrientation(LinearLayout.VERTICAL);
         l.setPadding(Ui.dp(this, 20), Ui.dp(this, 8), Ui.dp(this, 20), 0);
-        l.addView(Ui.text(this, t.optString("type") + "  ·  " + t.optString("status"), 14, statusColor(t.optString("status")), true));
+        l.addView(Ui.text(this, t.optString("type") + "  ·  " + stLabel(t.optString("status")), 14, statusColor(t.optString("status")), true));
         addLine(l, "거래처", t.optString("client"));
         addLine(l, "전화", t.optString("phone"));
         addLine(l, "주소", t.optString("addr"));
         addLine(l, "기한", t.optString("due"));
         addLine(l, "담당", store.userName(t.optInt("assignee")));
         addLine(l, "지시한 사람", store.userName(t.optInt("creator")));
+        if (!t.optString("seenAt").isEmpty()) addLine(l, "열어본 시각", t.optString("seenAt"));
         addLine(l, "메모", t.optString("memo"));
         if (t.has("doneMsg")) addLine(l, "완료 메시지", t.optString("doneMsg"));
         l.addView(Ui.text(this, "처리 이력", 14, Ui.NAVY, true), Ui.lp(this, 12));
@@ -960,9 +992,14 @@ public class MainActivity extends Activity {
                     }).show());
         }
         dlg[0] = b.show();
-        // 지시됨 상태에서 담당자가 열면 자동으로 확인함 처리
-        if ("지시됨".equals(t.optString("status")) && t.optInt("assignee") == myId()) {
-            store.setStatus(t, myId(), "확인함", "");
+        // 담당자가 처음 열어보면 '열어본 시각'만 남긴다 (상태는 '진행중'을 눌러야 바뀜)
+        if ("지시됨".equals(t.optString("status")) && t.optInt("assignee") == myId() && t.optString("seenAt").isEmpty()) {
+            try {
+                t.put("seenAt", Store.now());
+            } catch (Exception ignored) {
+            }
+            store.log(t, myId(), "담당자가 열어봄");
+            store.save();
             render();
         }
     }
@@ -1606,6 +1643,7 @@ public class MainActivity extends Activity {
         }));
         e.add(new Entry("일", "재고", "재고 장비 바코드 시리얼 단가 입고 출고 스캔", () -> goSub("stock")));
         e.add(new Entry("일", "가맹점", "가맹점 거래처 상호 사업자 등급 삭제", () -> goSub("merchants")));
+        e.add(new Entry("일", "가맹점 응대 기록 조회", "응대 기록 AS 전화 응대 방문 메모 이력 날짜 가맹점", () -> showMerchantLogs(null)));
         e.add(new Entry("일", "가맹점 일괄 가져오기 (엑셀·이카운트)", "가맹점 일괄 가져오기 업로드 엑셀 csv 이카운트 거래처 등록", () -> {
             goSub("merchants");
             startMerchantImport();
@@ -1817,7 +1855,7 @@ public class MainActivity extends Activity {
             LinearLayout r = Ui.card(this);
             if (!dueTime(t).isEmpty()) r.addView(Ui.text(this, dueTime(t) + "  업무", 12, Ui.DEEP, true));
             r.addView(Ui.text(this, "[" + t.optString("type") + "] " + t.optString("title"), 15, Ui.INK, true));
-            r.addView(Ui.text(this, store.userName(t.optInt("assignee")) + " · " + t.optString("status"), 12, Ui.GRAY, false), Ui.lp(this, 2));
+            r.addView(Ui.text(this, store.userName(t.optInt("assignee")) + " · " + stLabel(t.optString("status")), 12, Ui.GRAY, false), Ui.lp(this, 2));
             final int id = t.optInt("id");
             r.setOnClickListener(v -> showTask(id));
             content.addView(r, Ui.lp(this, 8));
@@ -2073,6 +2111,17 @@ public class MainActivity extends Activity {
         TextView t = Ui.text(this, merchantInfo(m), 15, Ui.INK, false);
         t.setLineSpacing(0, 1.3f);
         l.addView(t);
+        int ln = 0;
+        String lastLog = "";
+        for (JSONObject g : store.list(store.arr("mlogs"))) {
+            if (g.optInt("merchant") != m.optInt("id")) continue;
+            ln++;
+            if (g.optString("date").compareTo(lastLog) > 0) lastLog = g.optString("date");
+        }
+        TextView lg = Ui.text(this, "📝 응대 기록 (" + ln + "건)" + (lastLog.isEmpty() ? "" : " · 마지막 " + lastLog) + "  — 날짜별 조회·기록 추가", 14, Ui.DEEP, true);
+        lg.setPadding(0, Ui.dp(this, 14), 0, Ui.dp(this, 4));
+        lg.setOnClickListener(v -> showMerchantLogs(m));
+        l.addView(lg);
         if (can(Perm.STAFF_MANAGE)) {
             TextView hs = Ui.text(this, "🕘 변경 이력 · 되돌리기", 14, Ui.DEEP, true);
             hs.setPadding(0, Ui.dp(this, 14), 0, Ui.dp(this, 4));
@@ -2083,6 +2132,179 @@ public class MainActivity extends Activity {
                 .setNegativeButton("닫기", null)
                 .setPositiveButton("수정", (d, w) -> showEditMerchant(m, x -> render()));
         if (can(Perm.STAFF_MANAGE)) b.setNeutralButton("삭제", (d, w) -> confirmDeleteMerchant(m, x -> render()));
+        b.show();
+    }
+
+    // ---------- 가맹점 응대 기록 (AS·전화·방문 메모, 날짜별 조회) ----------
+    private static final String[] LOG_KINDS = {"AS", "전화 응대", "방문", "기타"};
+
+    /** m 이 null 이면 모든 가맹점의 기록을 한꺼번에 본다. */
+    private void showMerchantLogs(final JSONObject m) {
+        final LinearLayout root = form();
+        final String[] fk = {""};
+        final Button add = Ui.button(this, "+ 응대 기록 남기기", Ui.GOLD, Ui.DARK);
+        root.addView(add);
+        final EditText dq = Ui.field(this, "날짜", false);
+        datePickField(dq, "📅 날짜로 찾기 (눌러서 고르기 · 길게 누르면 해제)");
+        root.addView(dq, Ui.lp(this, 8));
+        final EditText kw = Ui.field(this, m == null ? "가맹점·내용 검색 (초성 가능)" : "내용 검색 (초성 가능)", false);
+        root.addView(kw, Ui.lp(this, 6));
+        final LinearLayout chips = new LinearLayout(this);
+        final TextView[] cv = new TextView[LOG_KINDS.length + 1];
+        final LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        final TextView sum = Ui.text(this, "", 12, Ui.GRAY, true);
+        final SimpleDateFormat wk = new SimpleDateFormat("yyyy-MM-dd (E)", Locale.KOREA);
+        final SimpleDateFormat pd = new SimpleDateFormat("yyyy-MM-dd", Locale.KOREA);
+        final Runnable[] fill = new Runnable[1];
+        fill[0] = () -> {
+            list.removeAllViews();
+            List<JSONObject> ls = new ArrayList<>();
+            for (JSONObject g : store.list(store.arr("mlogs"))) {
+                if (m != null && g.optInt("merchant") != m.optInt("id")) continue;
+                if (!fk[0].isEmpty() && !fk[0].equals(g.optString("kind"))) continue;
+                String d = dq.getText().toString().trim();
+                if (!d.isEmpty() && !d.equals(g.optString("date"))) continue;
+                if (!Kor.match(g.optString("mname") + " " + g.optString("text"), kw.getText().toString())) continue;
+                ls.add(g);
+            }
+            Collections.sort(ls, (a, b) -> {
+                int c = b.optString("date").compareTo(a.optString("date"));
+                return c != 0 ? c : b.optString("created").compareTo(a.optString("created"));
+            });
+            sum.setText("기록 " + ls.size() + "건");
+            if (ls.isEmpty()) list.addView(Ui.text(this, "기록이 없어요.", 14, Ui.GRAY, false), Ui.lp(this, 10));
+            String lastDay = "";
+            for (final JSONObject g : ls) {
+                if (!g.optString("date").equals(lastDay)) {
+                    lastDay = g.optString("date");
+                    String lab = lastDay;
+                    try {
+                        lab = wk.format(pd.parse(lastDay));
+                    } catch (Exception ignored) {
+                    }
+                    list.addView(Ui.text(this, lab, 13, Ui.DEEP, true), Ui.lp(this, 14));
+                }
+                LinearLayout c = Ui.card(this);
+                LinearLayout top = new LinearLayout(this);
+                top.setGravity(Gravity.CENTER_VERTICAL);
+                top.addView(Ui.chip(this, g.optString("kind"), Ui.TINT, Ui.DEEP));
+                if (m == null) {
+                    TextView mn = Ui.text(this, "  " + g.optString("mname"), 14, Ui.INK, true);
+                    top.addView(mn);
+                }
+                c.addView(top);
+                TextView body = Ui.text(this, g.optString("text"), 14, Ui.INK, false);
+                body.setLineSpacing(0, 1.25f);
+                c.addView(body, Ui.lp(this, 6));
+                c.addView(Ui.text(this, store.userName(g.optInt("who")), 11, Ui.GRAY, false), Ui.lp(this, 4));
+                c.setOnClickListener(v -> showEditLog(g, null, fill[0]));
+                list.addView(c, Ui.lp(this, 6));
+            }
+        };
+        for (int i = 0; i <= LOG_KINDS.length; i++) {
+            final int ki = i;
+            TextView t = Ui.chip(this, i == 0 ? "전체" : LOG_KINDS[i - 1], i == 0 ? Ui.GOLD : Ui.FIELD, i == 0 ? Ui.DARK : Ui.INK);
+            t.setGravity(Gravity.CENTER);
+            cv[i] = t;
+            t.setOnClickListener(v -> {
+                fk[0] = ki == 0 ? "" : LOG_KINDS[ki - 1];
+                for (int j = 0; j < cv.length; j++) cv[j].setBackground(Ui.round(j == ki ? Ui.GOLD : Ui.FIELD, 10, this));
+                fill[0].run();
+            });
+            LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            cp.rightMargin = Ui.dp(this, 4);
+            chips.addView(t, cp);
+        }
+        root.addView(chips, Ui.lp(this, 8));
+        root.addView(sum, Ui.lp(this, 10));
+        root.addView(list);
+        TextWatcher tw = new TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            public void onTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            public void afterTextChanged(Editable s) {
+                fill[0].run();
+            }
+        };
+        dq.addTextChangedListener(tw);
+        kw.addTextChangedListener(tw);
+        add.setOnClickListener(v -> {
+            if (m != null) showEditLog(null, m, fill[0]);
+            else pickMerchant(mm -> showEditLog(null, mm, fill[0]));
+        });
+        fill[0].run();
+        ScrollView sv = new ScrollView(this);
+        sv.addView(root);
+        new AlertDialog.Builder(this).setTitle(m == null ? "응대 기록 조회" : m.optString("name") + " · 응대 기록").setView(sv)
+                .setPositiveButton("닫기", (d, w) -> render()).setOnCancelListener(d -> render()).show();
+    }
+
+    /** 기록 추가(g==null) 또는 수정·삭제(g!=null). 날짜는 달력에서 고른다. */
+    private void showEditLog(final JSONObject g, final JSONObject merchant, final Runnable after) {
+        final boolean isNew = g == null;
+        final boolean canEdit = isNew || g.optInt("who") == myId() || can(Perm.STAFF_MANAGE);
+        LinearLayout f = form();
+        f.addView(Ui.text(this, isNew ? merchant.optString("name") : g.optString("mname"), 15, Ui.INK, true));
+        final EditText d = Ui.field(this, "날짜", false);
+        datePickField(d, "📅 날짜 (눌러서 달력에서 고르기)");
+        d.setText(isNew ? todayStr() : g.optString("date"));
+        f.addView(d, Ui.lp(this, 8));
+        final Spinner kind = new Spinner(this);
+        kind.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, LOG_KINDS));
+        if (!isNew) for (int i = 0; i < LOG_KINDS.length; i++) if (LOG_KINDS[i].equals(g.optString("kind"))) kind.setSelection(i);
+        f.addView(kind, Ui.lp(this, 4));
+        final EditText tx = Ui.field(this, "내용 (예: 카드 단말기 용지 걸림 → 현장 방문해 교체)", false);
+        tx.setSingleLine(false);
+        tx.setMinLines(4);
+        if (!isNew) tx.setText(g.optString("text"));
+        f.addView(tx, Ui.lp(this, 6));
+        if (!canEdit) {
+            d.setEnabled(false);
+            kind.setEnabled(false);
+            tx.setEnabled(false);
+            f.addView(Ui.text(this, "작성자(" + store.userName(g.optInt("who")) + ")와 최고관리자만 고칠 수 있어요.", 12, Ui.GRAY, false), Ui.lp(this, 8));
+        }
+        ScrollView sv = new ScrollView(this);
+        sv.addView(f);
+        AlertDialog.Builder b = new AlertDialog.Builder(this).setTitle(isNew ? "응대 기록 남기기" : "응대 기록").setView(sv).setNegativeButton("닫기", null);
+        if (canEdit) {
+            b.setPositiveButton("저장", (x, w) -> {
+                String dd = d.getText().toString().trim();
+                String t = tx.getText().toString().trim();
+                if (!dd.matches("\\d{4}-\\d{2}-\\d{2}") || t.isEmpty()) {
+                    Ui.toast(this, "날짜와 내용을 확인해 주세요.");
+                    return;
+                }
+                try {
+                    JSONObject o = isNew ? store.create("mlogs") : g;
+                    if (isNew) {
+                        o.put("merchant", merchant.optInt("id"));
+                        o.put("mname", merchant.optString("name"));
+                        o.put("who", myId());
+                    }
+                    o.put("date", dd);
+                    o.put("kind", LOG_KINDS[kind.getSelectedItemPosition()]);
+                    o.put("text", t);
+                } catch (Exception ignored) {
+                }
+                store.save();
+                Ui.toast(this, "기록했어요.");
+                after.run();
+            });
+            if (!isNew) b.setNeutralButton("삭제", (x, w) -> new AlertDialog.Builder(this).setTitle("이 기록을 지울까요?")
+                    .setNegativeButton("취소", null).setPositiveButton("지우기", (x2, w2) -> {
+                        try {
+                            g.put("deleted", true);
+                        } catch (Exception ignored) {
+                        }
+                        store.save();
+                        after.run();
+                    }).show());
+        }
         b.show();
     }
 
@@ -3499,13 +3721,13 @@ public class MainActivity extends Activity {
     // ---------- 사용설명서 ----------
     private static final String[][] MANUAL = {
             {"처음 시작하기 · 로그인", "1. 앱을 켜면 잠깐 시작 화면이 나오고, 처음에는 로그인 화면이 나옵니다.\n2. 관리자가 등록해 둔 내 휴대폰 번호(예: 01012345678)를 입력하고 '인증번호 받기'를 누릅니다.\n3. 문자로 온 인증번호 6자리를 입력하고 '확인'을 누릅니다.\n4. 한 번 로그인하면 계속 유지됩니다. 다시 묻지 않아요.\n\n※ '등록되지 않은 번호입니다'가 나오면 관리자에게 내 번호 등록을 요청하세요.\n※ 로그아웃은 맨 아래 탭 '전체' → 맨 아래 '로그아웃'입니다. 폰을 바꾸면 같은 번호로 다시 인증하면 됩니다."},
-            {"업무 탭", "내게 지시된 업무를 확인하고 처리하는 곳입니다.\n\n■ 화면 구성\n- 맨 위 금색 카드: 남은 업무 수, 새 업무·진행·오늘 완료 수와 진행 막대\n- 계약 만료 알림: 만료가 3개월 안으로 남은 계약이 있으면 카드가 나타납니다. 누르면 계약 관리로 이동합니다.\n- 업무 카드: 종류(설치·AS·영업·서류·카드), 제목, 거래처, 기한, 상태\n\n■ 업무 처리\n1. 카드를 누르면 상세가 열립니다.\n2. 아래 버튼으로 상태를 바꿉니다: 확인함 → 진행중 → 완료(또는 보류).\n3. '완료'를 누르면 완료 메시지를 적을 수 있어요. 모든 처리 기록은 이력으로 남습니다.\n\n■ 업무 지시하기 (업무 지시 권한이 있는 사람)\n- 오른쪽 아래 + 버튼 → 제목, 종류, 거래처, 전화, 주소, 기한, 메모, 담당 직원 입력 후 '지시하기'.\n- 기한 날짜 칸을 누르면 달력이, 시간 칸을 누르면 시계가 떠서 고를 수 있어요(시간은 선택, 길게 누르면 지워져요). 고른 업무는 일정 탭 달력(점·그날 목록·다가오는 일정)에 자동으로 나타나고, 시간이 있으면 같이 보여요. 일정 추가·프로젝트 마감일도 같은 방식으로 고릅니다.\n- '가맹점 조회'를 누르면 등록된 가맹점을 검색해 선택할 수 있고, 거래처·전화·주소가 자동으로 채워집니다.\n- '전체 업무' 보기 권한이 있으면 위쪽 '내 업무 / 전체 업무' 버튼이 보입니다.\n\n■ 필터 · 일정 다시 잡기\n- 업무 목록 위 '상태별로 보기' 줄에서 미완료(완료 빼고 전부) / 미확인 / 확인함 / 진행중 / 보류 / 완료를 눌러 골라 볼 수 있어요. 칸마다 건수가 크게 보이고, 고른 칸은 금색이에요. 내 업무·전체 업무 모두 적용됩니다. (미확인+확인함+진행중+보류 = 미완료)\n- 업무를 열면 지금 상태 버튼에 ✔ 가 붙어 어디까지 왔는지 알 수 있어요.\n- 업무를 '보류'하면 새 일정을 지금 잡을지 물어요. 업무를 열어 '📅 일정 다시 잡기'를 눌러도 되고, 날짜(달력)·시간(시계)을 고르면 기한이 바뀌면서 일정 탭 달력(점·그날 목록·다가오는 일정)도 같이 바뀝니다. 바뀐 내용은 처리 이력에 남아요."},
+            {"업무 탭", "내게 지시된 업무를 확인하고 처리하는 곳입니다.\n\n■ 화면 구성\n- 맨 위 금색 카드와 상태 필터는 위에 고정되어 있고, 그 아래 업무 목록만 위아래로 움직여요. 카드: 남은 업무 수, 미확인·진행·보류·오늘 완료 수와 진행 막대\n- 계약 만료 알림: 만료가 3개월 안으로 남은 계약이 있으면 카드가 나타납니다. 누르면 계약 관리로 이동합니다.\n- 업무 카드: 종류(설치·AS·영업·서류·카드), 제목, 거래처, 기한, 상태\n\n■ 업무 처리\n1. 카드를 누르면 상세가 열립니다.\n2. 아래 버튼으로 상태를 바꿉니다: 진행중 / 보류, 끝나면 '처리 완료'.\n3. '완료'를 누르면 완료 메시지를 적을 수 있어요. 모든 처리 기록은 이력으로 남습니다.\n\n■ 업무 지시하기 (업무 지시 권한이 있는 사람)\n- 오른쪽 아래 + 버튼 → 제목, 종류, 거래처, 전화, 주소, 기한, 메모, 담당 직원 입력 후 '지시하기'.\n- 기한 날짜 칸을 누르면 달력이, 시간 칸을 누르면 시계가 떠서 고를 수 있어요(시간은 선택, 길게 누르면 지워져요). 고른 업무는 일정 탭 달력(점·그날 목록·다가오는 일정)에 자동으로 나타나고, 시간이 있으면 같이 보여요. 일정 추가·프로젝트 마감일도 같은 방식으로 고릅니다.\n- '가맹점 조회'를 누르면 등록된 가맹점을 검색해 선택할 수 있고, 거래처·전화·주소가 자동으로 채워집니다.\n- '전체 업무' 보기 권한이 있으면 위쪽 '내 업무 / 전체 업무' 버튼이 보입니다.\n\n■ 필터 · 일정 다시 잡기\n- 업무 상태는 미확인 → 진행중 → 완료(또는 보류) 순서예요. 지시된 업무는 '미확인'이고, 담당자가 '진행중'을 누르면 확인한 것으로 봅니다. (담당자가 업무를 처음 열어본 시각은 상세에 '열어본 시각'으로 남아요.) 예전의 '확인함'은 '진행중'으로 합쳐졌어요.\n- 업무 목록 위 '상태별로 보기' 줄에서 미완료(완료 빼고 전부) / 미확인 / 진행중 / 보류 / 완료를 눌러 골라 볼 수 있어요. 칸마다 건수가 크게 보이고, 고른 칸은 금색이에요. 내 업무·전체 업무 모두 적용됩니다. (미확인+진행중+보류 = 미완료)\n- 업무를 열면 지금 상태 버튼에 ✔ 가 붙어 어디까지 왔는지 알 수 있어요.\n- 업무를 '보류'하면 새 일정을 지금 잡을지 물어요. 업무를 열어 '📅 일정 다시 잡기'를 눌러도 되고, 날짜(달력)·시간(시계)을 고르면 기한이 바뀌면서 일정 탭 달력(점·그날 목록·다가오는 일정)도 같이 바뀝니다. 바뀐 내용은 처리 이력에 남아요."},
             {"프로젝트 탭", "여러 사람이 오래 진행하는 일을 관리합니다.\n\n1. 오른쪽 아래 + 로 프로젝트를 만듭니다 (제목, 기한, 메모, 책임자).\n2. 프로젝트를 누르면 체크리스트·진행률(%)·'점검 필요' 체크·메모를 수정할 수 있습니다.\n3. 체크리스트: 프로젝트를 만들 때 한 줄에 항목 하나씩 적거나, 열어서 '+ 항목 추가'(여러 줄 가능)로 필요한 만큼 늘려요. 개수 제한은 없어요. 항목을 체크하면 완료/전체 비율대로 진행률(%)과 막대가 자동으로 계산되고 바로 저장돼요. ✕ 로 항목을 지울 수 있어요. 체크리스트가 없으면 예전처럼 슬라이더로 직접 조절합니다.\n4. 프로젝트 목록 위 버튼으로 전체 / 진행중 / 완료(100%)를 나눠 볼 수 있어요. 100%가 된 프로젝트는 열어서 '↩ 완료 되돌리기'를 누르면 진행중으로 돌아가요(체크리스트면 마지막으로 체크한 항목이 풀리고, 직접 조절형이면 90%가 돼요). 항목 체크를 직접 풀어도 됩니다.\n5. 저장할 때마다 진행 기록이 쌓여서 누가 언제 무엇을 바꿨는지 볼 수 있어요."},
             {"채팅 탭", "직원끼리 대화하는 곳이에요. 원하는 만큼 채팅방을 만들 수 있습니다.\n\n■ 새 채팅 만들기\n- 채팅 탭 직원 줄에는 '직원 총 N명'이 보이고, 직원이 많으면 좌우로 밀어서 화면 밖 직원도 볼 수 있어요.\n- 맨 위 '+ 새 채팅방 만들기'를 누르면 두 가지가 나와요.\n  ① 그룹 채팅방: 그룹 이름을 적고 '다음' → 초대할 직원을 체크('전체 선택'도 있어요) → '만들기'. 초대한 사람들끼리만 보이는 방이 열려요.\n  ② 1:1 채팅: 직원 한 명을 고르면 바로 대화창이 열려요. (첫 메시지를 보내야 목록에 생겨요)\n- 방이 하나도 없으면 '기본 채팅방 만들기'로 전체방·서류접수·입금확인·신규계약·AS설치·공지 방을 한 번에 만들 수 있어요.\n\n■ 대화방\n- 방을 누르면 전체 화면 대화방이 열리고, 입력줄은 맨 아래에 고정됩니다. 왼쪽 위 ‹ 또는 폰의 뒤로가기로 목록에 돌아갑니다.\n- 내 말풍선은 금색·오른쪽, 다른 사람은 흰색·왼쪽이고 옆에 이름과 프로필 사진이 나옵니다. 같은 사람이 같은 분에 이어 보내면 사진·이름은 한 번만 나와요.\n- 사람 사진을 누르면 그 직원의 프로필(이름·상태 메시지·전화번호)이 나오고, '전화하기'로 바로 걸 수 있어요.\n\n■ 답장 · 반응 · 삭제 (텔레그램처럼)\n- 말풍선을 두 번 빠르게 누르면 ❤️ 좋아요가 붙습니다. 같은 걸 다시 두 번 누르면 취소돼요.\n- 말풍선을 길게 누르면 맨 위에 이모티콘 줄(👍 ❤️ 😂 😮 😢 🙏 🔥 👏)이 뜨고, 그 아래에 답장 / 복사(글만) / 삭제(내 메시지만)가 있어요. 이모티콘을 한 번 누르면 바로 붙습니다.\n- 답장을 고르면 입력줄 위에 '○○에게 답장' 띠가 생기고, 그 상태로 보내면 말풍선 위에 인용이 붙어요. 띠의 ✕ 로 취소합니다.\n- 이미 붙은 이모티콘을 누르면 같은 목록이 떠서 다른 이모티콘으로 바꾸거나, 내 이모티콘을 한 번 더 눌러 지울 수 있어요(텔레그램처럼).\n- 삭제한 내 메시지는 대화에서 사라지고, 서버에는 기록이 보관됩니다.\n\n■ 링크\n- 글에 웹 주소(예: https://… 또는 naver.com)를 적어 보내면 파란 밑줄로 표시되고, 말풍선을 한 번 누르면 브라우저로 열립니다. 주소가 여러 개면 목록에서 고르세요. 길게 누르기·두 번 누르기는 그대로 됩니다.\n\n■ 사진·파일·이모지·스티커\n- 입력줄 왼쪽 '+' → 사진 보내기(앨범) / 사진 찍어 보내기 / 파일 보내기.\n- 사진은 자동으로 줄여서 올라가요. 대화 속 사진을 누르면 크게 보이고, '다른 앱으로 열기·저장'으로 저장할 수 있습니다.\n- 파일은 3MB까지 보낼 수 있어요(문서·엑셀·PDF용). 더 큰 파일은 지금은 보낼 수 없습니다. 파일 말풍선을 누르면 내려받아 열립니다.\n- 입력줄 오른쪽 ☺ 를 누르면 판이 열려요. 맨 위 탭: 이모지(글 사이에 들어감) / 나인이 / 복이 / 호야 / 깍이 / 도리. 스티커는 누르면 바로 전송됩니다.\n- '나인이 프렌즈'는 우리 회사 캐릭터 5마리예요(아홉꼬리 여우 나인이, 복두꺼비 복이, 아기 호랑이 호야, 까치 깍이, 다람쥐 도리). 마리당 16종, 모두 80종으로 신규계약 성공·축하·대단해·빡쳐·정신 차려·힘내와 우리 일(POS 설치, 현장 AS, 랜선 공사, 단말기 수리·도색, 토스 영업, 테이블오더, 회의, 서류, 보고서, 차에서 꿀잠 등)이 들어 있어요.\n- 예전에 보낸 나인이 스티커 메시지는 그대로 보입니다.\n\n■ 보내는 중 안내\n- 사진·파일은 인터넷이 연결돼야 올라가요. '보내는 중…'이 뜬 뒤 대화에 나타납니다. 안 나타나면 인터넷을 확인하고 다시 보내 주세요.\n\n■ 방 안 메뉴 · 검색\n- 방 위쪽 이름(또는 사진)을 누르면: 1:1은 상대 프로필, 그룹은 참여자 목록(누르면 프로필)과 '초대하기'·'이름 변경'이 나와요. 나중에 초대한 사람은 들어온 뒤의 대화부터 볼 수 있어요.\n- 오른쪽 위 🔍 는 방 안 대화 검색이에요. 단어(초성도 가능)를 치면 찾은 글이 노랗게 표시되고, ▲ ▼ 로 이전·다음 글로 넘어가요. ✕ 로 닫습니다.\n- 오른쪽 위 ⋮ 는 채팅방 설정이에요: 대화 검색 · 프로필/참여자 · 음소거 · 배경화면 변경 · 이름 변경(그룹) · 대화 내용 비우기 · 대화방 삭제.\n- 음소거는 이 폰에서 그 방 알림만 꺼요. 비우기·삭제는 '내 화면에서만' 적용돼서 다른 사람 대화에는 영향이 없고, 삭제한 방도 새 메시지가 오면 다시 나타나요. 배경화면도 내 폰에서만 바뀌어요.\n- 채팅 탭 위쪽 🔍 검색창(엔터)에 단어를 치면 직원·대화방 이름과 함께 '대화 내용 검색' 결과가 나와요. 누르면 그 방의 그 글로 바로 이동합니다.\n\n■ 1:1 비공개 대화\n- 채팅 탭 맨 위 직원 목록에서 직원을 누르거나, 🔍 검색창에 이름(초성 가능)을 적어 찾은 직원을 누르거나, 채팅에서 직원 사진을 눌러 '1:1 대화'를 누르면 대화창이 열려요.\n- 텔레그램처럼 직원을 눌렀다고 방이 바로 생기지는 않아요. 첫 메시지를 보내야 대화 목록에 나타납니다. 같은 사람과는 항상 같은 방이 열려요.\n- 이 방은 두 사람 사이의 대화라서 다른 직원에게는 내려가지 않아요(최고관리자 포함). 목록에는 상대 이름으로 보여요.\n- 답장·반응·스티커·사진·파일은 일반 방과 같이 쓸 수 있어요. (사진·파일 자체는 보관 주소를 아는 사람만 열 수 있어 사실상 두 사람만 열어요.)\n- 이 방은 이름을 바꿀 수 없고, 업데이트 전의 앱에는 보이지 않아요.\n\n※ 1:1 대화와 초대한 그룹방을 뺀 나머지 기본 채팅방(전체방 등)은 모든 직원이 볼 수 있습니다. 민감한 개인 이야기·개인정보 파일은 1:1 대화나 그룹방으로 나누세요."},
             {"일정 탭 (달력)", "한국 달력과 앞으로의 일정을 함께 봅니다.\n\n■ 달력\n- 일요일·공휴일은 빨간색, 토요일은 파란색, 오늘은 금색 원입니다. 공휴일 이름도 표시돼요. (2026~2028년 기준)\n- ‹ › 로 달을 넘기고 '오늘'을 누르면 오늘로 돌아옵니다.\n- 일정이나 업무 기한이 있는 날은 작은 금색 점이 찍혀요.\n- 날짜를 누르면 그날의 일정과 업무가 아래에 나옵니다.\n\n■ 일정 남기기\n1. 오른쪽 아래 + 버튼.\n2. 제목과 날짜를 적고, 시간은 선택입니다.\n3. '가맹점 조회·선택'을 누르면 등록된 가맹점 중에서 찾아 고릅니다 (초성 검색 가능). 고르면 사업자번호·연락처·주소·계약조건·등급이 불러와지고, 장소에는 가맹점 주소가 자동으로 들어갑니다.\n4. '추가'를 누르면 달력에 바로 표시되고, 달력 아래 '다가오는 일정'에도 올라갑니다.\n\n■ 다가오는 일정\n- 오늘부터 앞으로의 일정과 내 업무 기한이 날짜 순으로 나와서, 언제 어디로 가야 하는지 한눈에 확인할 수 있습니다.\n- 가맹점이 연결된 일정을 누르면 가맹점 상세 정보가 열립니다."},
             {"전체 탭", "나머지 모든 기능으로 들어가는 메뉴판입니다.\n\n■ 기능 검색\n- 맨 위 프로필 카드 아래 '🔍 기능 검색' 칸에 단어나 초성을 치면 그 기능이 바로 나옵니다. 예: '재고', 'ㅈㄱ', '문자', '수익', '바코드', '프로필'.\n- 눌러서 바로 이동해요. 지우면 원래 메뉴판으로 돌아갑니다. (업무·채팅·일정 같은 탭도 검색됩니다.)\n\n■ 메뉴\n- 맨 위 내 카드를 누르면 프로필 사진과 상태 메시지를 바꿀 수 있어요.\n- 재고: 장비 재고 관리 (바코드 스캔, 단가)\n- 가맹점: 가맹점 정보 관리\n- 신규 계약 올리기 / 계약 관리: 계약 등록과 설치 완료 처리, 만료 알림\n- 단체 문자 보내기: 가맹점에 안내 문자\n- 내 실적: 나만 보는 월별 실적과 지난달 비교\n- 전체 실적·직원별 순위 / 수익 현황 / 실적 보고서 올리기: (권한이 있는 사람만 보임)\n- 일일보고 쓰기, 일일보고 종합 보기(권한자)\n- 지난 업무 기록: 완료된 업무 검색\n- 사용설명서, 버전·업데이트 내역, 공지사항\n- 직원과 권한: (관리자만) 직원 추가·권한 설정\n- 로그아웃\n\n※ 맨 아래에 현재 앱 버전이 표시됩니다. 문의할 때 이 버전을 알려 주세요."},
             {"재고", "장비를 우리가 직접 입력해서 관리합니다. (전체 → 재고)\n\n■ 재고 추가\n1. 오른쪽 아래 + 버튼.\n2. 모델명을 적고, 시리얼은 한 줄에 하나씩 적습니다. 여러 줄을 붙여 넣으면 장비가 한꺼번에 등록돼요.\n3. 시리얼이 없는 소모품(롤지 등)은 시리얼 대신 '수량'만 적습니다.\n4. 안전재고: 이 수 아래로 내려가면 빨간색으로 '부족해요!'가 표시됩니다.\n5. 입고 단가: 실적 권한자에게만 보이는 칸입니다. 1대당 산 값을 적으면 시리얼 전체에 같이 적용돼요.\n\n■ 바코드 스캔\n- '바코드 스캔'을 누르면 카메라가 열리고, 읽으면 번호가 시리얼 칸에 한 줄 들어갑니다. 한 번 누르면 한 번만 읽어요. 다음 장비는 버튼을 다시 눌러 주세요. 같은 번호는 두 번 들어가지 않아요.\n- 재고 목록 위 '바코드로 찾기'를 누르면 바코드를 읽어 그 시리얼을 바로 검색합니다.\n- 계약에서 '+ 장비 추가'를 누르고 '바코드 스캔(한 번에 한 대)'을 누르면, 읽은 번호가 재고에 있을 때 그 장비가 바로 추가돼요. 다음 장비는 다시 '+ 장비 추가'를 눌러 같은 방식으로 넣습니다. 재고에 없는 번호면 모델명만 적어 직접 입력하게 열려요.\n\n■ 시리얼 촬영 인식\n- '시리얼 촬영'을 누르고 장비 뒷면의 S/N 라벨을 가까이서 찍으면 글자를 읽어 줍니다.\n- 시리얼처럼 보이는 글자 후보가 목록으로 나오고, 맞는 것을 체크해서 '넣기'를 누르세요. 0(영)과 O(오), 1과 I처럼 헷갈리기 쉬운 글자는 꼭 눈으로 확인해 주세요.\n- 바코드가 같이 있으면 바코드 스캔이 더 정확합니다.\n- 스캔과 촬영은 구글 서비스가 있는 폰에서 동작합니다.\n\n■ 보기·검색\n- 모델별로 묶여서 '재고 n대'가 보이고, 그 아래에 시리얼이 나열됩니다.\n- 검색창에 모델명·시리얼을 치면 찾아줘요. 'ㅌㅅㅍㅅ' 같은 초성도 됩니다.\n\n■ 수정·삭제\n- 시리얼 줄을 누르면 수정창이 열립니다. 시리얼 칸에도 스캔·촬영 버튼이 있어요. '삭제'를 누르면 목록에서 지워져요 (기록은 서버에 남아 복구 가능).\n\n■ 단가와 수익 (실적 권한자 전용)\n- 재고 줄을 누르면 입고 단가(산 값)와 출고 단가(판 값)를 적을 수 있어요.\n- 재고 화면 맨 위에 보유 재고 자산(입고 단가 합계)이 나오고, '수익 현황 보기'로 이동합니다.\n- 단가는 서버에서도 실적 권한자만 읽을 수 있게 따로 보관됩니다. 권한이 없는 직원에게는 칸 자체가 보이지 않아요.\n\n■ 상태가 바뀌는 순서\n재고 → (계약에서 선택하면) 출고중 → (설치 완료 처리하면) 재고 목록에서 사라짐"},
-            {"가맹점", "우리 거래처(가맹점) 정보를 관리합니다. (전체 → 가맹점)\n\n■ 등록\n- 오른쪽 아래 + 버튼 → 상호(필수), 사업자번호, 연락처, 주소, 계약조건, 등급 코드, 메모.\n- 계약·일정·업무 지시 화면의 '가맹점 조회'에서 바로 '새 가맹점 등록'도 가능합니다.\n\n■ 등급 코드\n밴피(VAN) 기준입니다.\n0 S · 월 5만원 이상\n1 A · 3만원 이상\n2 B · 1만원 이상\n3 C · 1만원 미만\n4 해지가맹점\n5 신규가맹점\n7 협력사\n\n■ 수정\n- 목록에서 가맹점을 누르면 정보가 보이고, '수정'으로 바꿀 수 있습니다.\n\n■ 삭제 (최고관리자만)\n- 가맹점 정보 창의 '삭제', 또는 수정 창의 '삭제'를 누르면 확인 창이 나오고 목록에서 지워집니다.\n- 그 가맹점에 연결된 계약·일정이 몇 건인지 같이 알려 드려요. 이미 올라간 계약·일정 기록은 그대로 남고, 서버에도 기록이 보관됩니다.\n- 관리자가 아닌 직원에게는 삭제 버튼이 보이지 않아요.\n\n■ 검색\n- 상호·사업자번호·전화·주소 어느 것으로든, 초성으로도 검색됩니다."},
+            {"가맹점", "우리 거래처(가맹점) 정보를 관리합니다. (전체 → 가맹점)\n\n■ 등록\n- 오른쪽 아래 + 버튼 → 상호(필수), 사업자번호, 연락처, 주소, 계약조건, 등급 코드, 메모.\n- 계약·일정·업무 지시 화면의 '가맹점 조회'에서 바로 '새 가맹점 등록'도 가능합니다.\n\n■ 등급 코드\n밴피(VAN) 기준입니다.\n0 S · 월 5만원 이상\n1 A · 3만원 이상\n2 B · 1만원 이상\n3 C · 1만원 미만\n4 해지가맹점\n5 신규가맹점\n7 협력사\n\n■ 수정\n- 목록에서 가맹점을 누르면 정보가 보이고, '수정'으로 바꿀 수 있습니다.\n\n■ 삭제 (최고관리자만)\n- 가맹점 정보 창의 '삭제', 또는 수정 창의 '삭제'를 누르면 확인 창이 나오고 목록에서 지워집니다.\n- 그 가맹점에 연결된 계약·일정이 몇 건인지 같이 알려 드려요. 이미 올라간 계약·일정 기록은 그대로 남고, 서버에도 기록이 보관됩니다.\n- 관리자가 아닌 직원에게는 삭제 버튼이 보이지 않아요.\n\n■ 응대 기록 (AS·전화 응대 메모)\n- 가맹점을 눌러 열면 '📝 응대 기록'이 있어요. 누르면 그 가맹점의 기록이 날짜별로 쌓여 보이고, '+ 응대 기록 남기기'로 새 기록을 남깁니다.\n- 기록할 때 날짜는 달력에서 고르고(기본은 오늘, 지난 일도 날짜를 골라 남길 수 있어요), 종류(AS·전화 응대·방문·기타)와 내용을 적어요.\n- 조회: 위의 '날짜로 찾기'에서 날짜를 고르면 그날 기록만, 종류 버튼으로 AS·전화 응대 등만, 검색창으로 내용 속 단어(초성 가능)를 찾을 수 있어요. 날짜 칸을 길게 누르면 해제돼요.\n- 전체 → '가맹점 응대 기록 조회'(또는 전체 탭 검색창에 '응대')에서는 모든 가맹점의 기록을 한꺼번에 날짜별로 봐요. 가맹점 이름으로도 검색돼요.\n- 기록을 누르면 내용이 열리고, 쓴 사람과 최고관리자는 고치거나 지울 수 있어요. 기록은 모든 직원이 볼 수 있어요.\n\n■ 검색\n- 상호·사업자번호·전화·주소 어느 것으로든, 초성으로도 검색됩니다."},
             {"신규 계약 올리기", "계약이 되면 바로 올려 주세요. (전체 → 신규 계약 올리기, 또는 계약 관리 화면의 + 버튼)\n\n1. 가맹점 조회·선택: 등록된 가맹점을 고릅니다. 없으면 '새 가맹점 등록'.\n2. 결제 연동: VAN사 또는 PG사, 업체명 (예: 다우데이타).\n3. 구분을 고르면 금액 입력 이름이 바뀝니다.\n   - 판매 → 판매금액\n   - CMS → CMS 금액\n   - 렌탈 → 월 렌탈료\n4. 나가는 장비: '+ 장비 추가'를 눌러 재고에서 체크해 고릅니다. 재고에 없으면 '직접 입력'으로 모델명·시리얼을 적어요. 잘못 고른 장비는 오른쪽 − 로 뺍니다. 장비를 여러 번 + 해서 여러 대를 넣을 수 있어요.\n5. 장비 메모: 설치 조건 등 자유롭게 적습니다.\n6. 계약일과 만료일: 만료일 아래 '+12개월 / +24개월 / +36개월' 버튼을 누르면 계약일 기준으로 자동 계산됩니다.\n7. '올리기'.\n\n※ 올리면 고른 장비는 재고에서 '출고중'이 됩니다."},
             {"계약 관리 · 설치 완료 · 만료 알림", "(전체 → 계약 관리)\n\n■ 계약 보기\n- 위쪽에 '만료가 가까운 계약(3개월 이내)'이 빨간 D-숫자와 함께 먼저 나옵니다. 아래는 전체 계약입니다.\n- 일반 직원은 내가 올린 계약만, 실적 권한이 있는 사람은 전체 계약이 보입니다.\n\n■ 설치 완료\n- 계약을 누르고 '설치 완료'를 누르면 나간 장비가 재고에서 완전히 빠집니다.\n\n■ 장비 추가\n- 같은 가맹점에 장비가 더 나가면 계약을 열어 '장비 추가'를 눌러 모델명·시리얼을 이어서 추가합니다.\n\n■ 만료 알림\n- 만료가 90일 이하로 남은 계약이 있으면 '업무' 탭 위에 알림 카드가 뜨고, 전체 탭에도 숫자가 표시됩니다."},
             {"실적 (권한자 전용)", "■ 내 실적 (전체 → 내 실적)\n- 나만 볼 수 있습니다. 이번 달 신규 계약 대수, 판매금액, 올린 계약 목록, 지난달과의 비교가 나와요.\n\n■ 전체 실적·직원별 순위 (실적 보기 권한자)\n- 위 ‹ › 로 월을 바꿉니다.\n- 신규 계약 대수와 판매금액, 직원별 순위 막대 그래프, 올라온 계약 목록이 나옵니다.\n- 월별 성과: '지난달 → 선택한 달' 계약 대수와 성장률(▲ 늘어남 / ▼ 줄어듦, 지난달이 0이면 '신규')을 직원별 막대 두 개(회색 지난달, 금색 이번 달)로 보여 줍니다. 그 아래 최근 6개월 추이 그래프도 있어요.\n- 계약을 누르면 상세 정보와 장비를 볼 수 있어요.\n\n■ 수익 현황 (실적 보기 권한자, 전체 → 수익 현황)\n- 지금까지 총 수익, 선택한 달 수익(매출·매입), 최근 6개월 수익 그래프, 직원별 수익이 나옵니다.\n- 계약에 올라가 출고된 장비(출고중·설치완료)의 '출고 단가 − 입고 단가'를 합산하고, 월은 계약일 기준이에요.\n- 단가를 아직 안 적은 장비는 수익에서 빠지고, 맨 아래 목록에 나옵니다. 눌러서 단가를 적으면 바로 반영돼요."},
@@ -3553,6 +3775,8 @@ public class MainActivity extends Activity {
 
     /** {버전, 날짜, 내용}. 새 버전은 맨 위에 추가. CI 가 현재 versionName 항목이 있는지 검사한다. */
     private static final String[][] CHANGELOG = {
+            {"0.1.4", "2026-10-24", "• 업무 탭: 위쪽 카드와 상태 필터는 고정하고 아래 업무 목록만 위아래로 움직여요\n• 가맹점 응대 기록: AS·전화 응대·방문 내용을 날짜를 골라 남기고, 날짜·종류·단어로 조회해요 (가맹점 정보 창의 '📝 응대 기록', 전체 → 가맹점 응대 기록 조회)"},
+            {"0.1.3", "2026-10-24", "• '확인함' 상태를 없앴어요. 미확인 → 진행중 → 완료(또는 보류)로 단순해졌고, 진행중을 누르면 확인한 걸로 봐요. 예전 '확인함' 업무는 진행중으로 합쳐졌어요\n• 담당자가 업무를 열어본 시각은 상세에 '열어본 시각'으로 남아요 (지시한 사람이 읽었는지 알 수 있어요)"},
             {"0.1.2", "2026-10-24", "• 업무 상태 필터를 알아보기 쉽게 고침: 한 줄에 6칸이 다 보이고(밀 필요 없음), 칸마다 건수가 크게 나와요. '전체'는 '미완료'로 이름 변경\n• 업무 맨 위 카드에 미확인·확인·진행·보류·오늘 완료 건수를 한꺼번에 표시\n• 업무를 열면 지금 상태 버튼에 ✔ 표시, 같은 상태를 또 눌러도 이력이 중복되지 않음"},
             {"0.1.1", "2026-10-24", "• 업무 목록 필터: 전체·미확인·확인함·진행중·보류·완료 (건수 표시)\n• 보류·연기된 업무는 '일정 다시 잡기'로 날짜·시간을 다시 고르면 일정 달력도 같이 바뀜 (보류하면 바로 물어봐요)\n• 프로젝트 필터: 전체·진행중·완료(100%), 100%가 된 프로젝트는 '완료 되돌리기'로 진행중으로 복귀\n• 채팅 직원 줄에 '직원 총 N명'과 좌우로 밀어 보기 안내"},
             {"0.1.0", "2026-10-24", "• 나인패밀리 시작! 앞으로 버전은 0.1.0부터 0.1.1, 0.1.2 … 순서로 올라가고, 바뀐 내용이 여기에 기록돼요"},

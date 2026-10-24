@@ -26,7 +26,7 @@ import java.util.Map;
  * 자료는 삭제하지 않는다. 바뀐 문서는 서버에 올리면서 변경 기록(audit)도 남긴다.
  */
 final class Store {
-    static final String[] COLLS = {"users", "tasks", "notices", "projects", "contracts", "events", "merchants", "stock", "rooms", "msgs", "reports", "profiles", "costs", "contacts", "deposits", "library"};
+    static final String[] COLLS = {"users", "tasks", "notices", "projects", "contracts", "events", "merchants", "stock", "rooms", "msgs", "reports", "profiles", "costs", "contacts", "deposits", "library", "mlogs"};
     static final String[] GRADES = {"S · 5만원 이상", "A · 3만원 이상", "B · 1만원 이상", "C · 1만원 미만", "해지가맹점", "신규가맹점", "", "협력사"};
 
     private final SharedPreferences sp;
