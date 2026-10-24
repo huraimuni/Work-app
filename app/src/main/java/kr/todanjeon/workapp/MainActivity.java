@@ -707,7 +707,7 @@ public class MainActivity extends Activity {
             fab.setContentDescription("재고 추가");
             fab.setOnClickListener(v -> showAddStock());
         } else if ("merchants".equals(k)) {
-            fab.setVisibility(View.VISIBLE);
+            fab.setVisibility(canEditMerchant() ? View.VISIBLE : View.GONE);
             fab.setContentDescription("가맹점 등록");
             fab.setOnClickListener(v -> showEditMerchant(null, null));
         } else if ("contracts".equals(k)) {
@@ -1800,6 +1800,7 @@ public class MainActivity extends Activity {
         e.add(n);
         if (can(Perm.STAFF_MANAGE)) e.add(new Entry("관리자", "데이터 백업 내려받기", "데이터 백업 내려받기 저장 내보내기 json", () -> exportBackup()));
         if (can(Perm.STAFF_MANAGE)) e.add(new Entry("관리자", "가맹점 보호·복원", "가맹점 보호 복원 백업 되돌리기 삭제 복구 휴지통", () -> showSafetyMenu()));
+        if (can(Perm.STAFF_MANAGE)) e.add(new Entry("관리자", "가맹점 수정 암호", "가맹점 수정 암호 잠금 비밀번호 설정 변경 끄기", () -> showMerchantLockSet()));
         if (can(Perm.STAFF_MANAGE)) e.add(new Entry("관리자", "직원과 권한", "직원 권한 등록 사용 중지 관리자", () -> goSub("staff")));
         e.add(new Entry("계정", "내 프로필 (사진·상태 메시지)", "프로필 사진 상태 메시지 내 정보", () -> showProfile(myId())));
         e.add(new Entry("계정", "로그아웃", "로그아웃 나가기", () -> new Dlg(this).setTitle("로그아웃")
@@ -2097,10 +2098,13 @@ public class MainActivity extends Activity {
     private String merchantInfo(JSONObject m) {
         StringBuilder b = new StringBuilder();
         b.append(m.optString("name"));
-        if (!m.optString("bizno").isEmpty()) b.append("\n사업자  ").append(m.optString("bizno"));
-        if (!m.optString("phone").isEmpty()) b.append("\n연락처  ").append(m.optString("phone"));
+        if (!m.optString("bizno").isEmpty()) b.append("\n사업자번호  ").append(m.optString("bizno"));
+        if (!m.optString("phone").isEmpty()) b.append("\n전화번호  ").append(m.optString("phone"));
+        if (!m.optString("mobile").isEmpty()) b.append("\n휴대폰번호  ").append(m.optString("mobile"));
+        if (!m.optString("email").isEmpty()) b.append("\n이메일  ").append(m.optString("email"));
         if (!m.optString("addr").isEmpty()) b.append("\n주소  ").append(m.optString("addr"));
-        if (!m.optString("terms").isEmpty()) b.append("\n계약조건  ").append(m.optString("terms"));
+        if (!m.optString("van").isEmpty()) b.append("\nVAN사  ").append(m.optString("van"));
+        if (!termsText(m).isEmpty()) b.append("\n계약조건  ").append(termsText(m));
         b.append("\n등급  ").append(gradeLabel(m.optInt("grade", 5)));
         if (!m.optString("memo").isEmpty()) b.append("\n메모  ").append(m.optString("memo"));
         return b.toString();
@@ -2173,38 +2177,231 @@ public class MainActivity extends Activity {
         dlg.show();
     }
 
-    private void showEditMerchant(final JSONObject existing, final java.util.function.Consumer<JSONObject> cb) {
+    // ---------- 가맹점 등록·수정 권한과 암호(화면 잠금) ----------
+    private static final long LOCK_MS = 5 * 60 * 1000L;
+    private long unlockedAt = 0;
+    private static final String[] VANS = {"(선택 안 함)", "KICC(한국정보통신)", "다우데이타", "NICE정보통신", "KIS정보통신", "스마트로", "KOCES", "FDIK", "직접 입력"};
+
+    private boolean canEditMerchant() {
+        return can(Perm.MERCHANT_EDIT) || can(Perm.STAFF_MANAGE);
+    }
+
+    /** 설정된 가맹점 수정 암호 문서(없으면 null). */
+    private JSONObject lockDoc() {
+        JSONObject best = null;
+        for (JSONObject c : store.list(store.arr("config"))) {
+            if (!"merchant_lock".equals(c.optString("key")) || c.optString("hash").isEmpty()) continue;
+            if (best == null || c.optString("created").compareTo(best.optString("created")) > 0) best = c;
+        }
+        return best;
+    }
+
+    private static String sha256(String t) {
+        try {
+            byte[] d = java.security.MessageDigest.getInstance("SHA-256").digest(t.getBytes("UTF-8"));
+            StringBuilder b = new StringBuilder();
+            for (byte x : d) b.append(String.format("%02x", x));
+            return b.toString();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private EditText pwField(String hint) {
+        EditText e = Ui.field(this, hint, false);
+        e.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        return e;
+    }
+
+    /** 암호가 설정돼 있으면 물어보고, 맞으면(또는 5분 안에 이미 풀었으면) then 을 실행한다. */
+    private void withMerchantLock(final Runnable then) {
+        final JSONObject L = lockDoc();
+        if (L == null || System.currentTimeMillis() - unlockedAt < LOCK_MS) {
+            then.run();
+            return;
+        }
         LinearLayout f = form();
-        final EditText name = Ui.field(this, "상호 (필수)", false);
-        final EditText bizno = Ui.field(this, "사업자번호 (예: 123-45-67890)", false);
-        final EditText phone = Ui.field(this, "연락처", false);
+        f.addView(Ui.text(this, "가맹점 정보를 고치려면 암호가 필요해요.", 14, Ui.GRAY, false));
+        final EditText pw = pwField("암호");
+        f.addView(pw);
+        new Dlg(this).setTitle("암호 확인").setView(f).setNegativeButton("취소", null).setPositiveButton("확인", (d, w) -> {
+            if (sha256(L.optString("salt") + pw.getText().toString()).equals(L.optString("hash"))) {
+                unlockedAt = System.currentTimeMillis();
+                then.run();
+            } else {
+                Ui.warn(this, "암호가 맞지 않아요.");
+            }
+        }).show();
+    }
+
+    /** 관리자: 가맹점 수정 암호를 새로 정하거나 바꾼다. */
+    private void showMerchantLockSet() {
+        if (!can(Perm.STAFF_MANAGE)) return;
+        final JSONObject L = lockDoc();
+        LinearLayout f = form();
+        f.addView(Ui.text(this, L == null ? "아직 암호가 없어서, 권한이 있는 직원은 암호 없이 수정할 수 있어요. 암호를 정하면 수정할 때마다 물어봐요."
+                : "암호가 설정돼 있어요. 바꾸려면 현재 암호도 입력해 주세요.", 13, Ui.GRAY, false));
+        final EditText old = pwField("현재 암호");
+        if (L != null) f.addView(old);
+        final EditText n1 = pwField("새 암호 (4자 이상)");
+        final EditText n2 = pwField("새 암호 한 번 더");
+        f.addView(n1);
+        f.addView(n2);
+        AlertDialog.Builder b = new Dlg(this).setTitle("가맹점 수정 암호").setView(f).setNegativeButton("취소", null).setPositiveButton("저장", (d, w) -> {
+            if (L != null && !sha256(L.optString("salt") + old.getText().toString()).equals(L.optString("hash"))) {
+                Ui.warn(this, "현재 암호가 맞지 않아요.");
+                return;
+            }
+            String nw = n1.getText().toString();
+            if (nw.length() < 4) {
+                Ui.warn(this, "암호는 4자 이상으로 해 주세요.");
+                return;
+            }
+            if (!nw.equals(n2.getText().toString())) {
+                Ui.warn(this, "새 암호가 서로 달라요.");
+                return;
+            }
+            JSONObject o = L != null ? L : store.create("config");
+            String salt = Long.toString(System.nanoTime(), 36) + Long.toString(new java.util.Random().nextLong(), 36);
+            try {
+                o.put("key", "merchant_lock");
+                o.put("salt", salt);
+                o.put("hash", sha256(salt + nw));
+                o.put("changedBy", myId());
+                o.put("changedAt", store.now());
+            } catch (Exception ignored) {
+            }
+            store.save();
+            unlockedAt = System.currentTimeMillis();
+            Ui.toast(this, "암호를 저장했어요.");
+        });
+        if (L != null) b.setNeutralButton("암호 끄기", (d, w) -> showMerchantLockOff(L));
+        b.show();
+    }
+
+    private void showMerchantLockOff(final JSONObject L) {
+        LinearLayout f = form();
+        f.addView(Ui.text(this, "현재 암호를 입력하면 잠금을 꺼요. 이후에는 권한이 있는 직원이 암호 없이 수정해요.", 13, Ui.GRAY, false));
+        final EditText old = pwField("현재 암호");
+        f.addView(old);
+        new Dlg(this).setTitle("암호 끄기").setView(f).setNegativeButton("취소", null).setPositiveButton("끄기", (d, w) -> {
+            if (!sha256(L.optString("salt") + old.getText().toString()).equals(L.optString("hash"))) {
+                Ui.warn(this, "현재 암호가 맞지 않아요.");
+                return;
+            }
+            try {
+                L.put("salt", "");
+                L.put("hash", "");
+                L.put("key", "merchant_lock_off");
+            } catch (Exception ignored) {
+            }
+            store.save();
+            Ui.toast(this, "암호를 껐어요.");
+        }).show();
+    }
+
+    /** 계약구분(임대·판매)과 금액을 한 줄로. 예) 임대 · 월 CMS 30,000원 · 36개월 약정 */
+    private static String termsText(JSONObject m) {
+        StringBuilder b = new StringBuilder();
+        String ct = m.optString("ctype");
+        String amt = m.optString("camt").replaceAll("[^0-9]", "");
+        String won = amt.isEmpty() ? "" : String.format("%,d원", Long.parseLong(amt));
+        if ("임대".equals(ct)) b.append("임대").append(won.isEmpty() ? "" : " · 월 CMS " + won);
+        else if ("판매".equals(ct)) b.append("판매").append(won.isEmpty() ? "" : " · 판매 " + won);
+        if (!m.optString("terms").isEmpty()) b.append(b.length() > 0 ? " · " : "").append(m.optString("terms"));
+        return b.toString();
+    }
+
+    private void labeled(LinearLayout f, String label, View v) {
+        f.addView(Ui.text(this, label, 12, Ui.GRAY, true), Ui.lp(this, 12));
+        f.addView(v);
+    }
+
+    private void showEditMerchant(final JSONObject existing, final java.util.function.Consumer<JSONObject> cb) {
+        if (!canEditMerchant()) {
+            Ui.toast(this, "가맹점 등록·수정 권한이 없어요. 관리자에게 요청해 주세요.");
+            return;
+        }
+        withMerchantLock(() -> showEditMerchantForm(existing, cb));
+    }
+
+    private void showEditMerchantForm(final JSONObject existing, final java.util.function.Consumer<JSONObject> cb) {
+        LinearLayout f = form();
+        final EditText name = Ui.field(this, "예: 토스단말기 전문", false);
+        final EditText bizno = Ui.field(this, "예: 123-45-67890", false);
+        bizno.setInputType(android.text.InputType.TYPE_CLASS_PHONE);
+        final EditText phone = Ui.field(this, "예: 062-123-4567", false);
         phone.setInputType(android.text.InputType.TYPE_CLASS_PHONE);
-        final EditText addr = Ui.field(this, "주소", false);
-        final EditText terms = Ui.field(this, "계약조건 (예: 렌탈 36개월, 월 3만원)", false);
-        terms.setSingleLine(false);
+        final EditText mobile = Ui.field(this, "예: 010-1234-5678", false);
+        mobile.setInputType(android.text.InputType.TYPE_CLASS_PHONE);
+        final EditText email = Ui.field(this, "예: name@example.com", false);
+        email.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
+        final EditText addr = Ui.field(this, "예: 광주 동구 …", false);
+        final Spinner van = spinner(VANS);
+        final EditText vanOther = Ui.field(this, "VAN사 이름을 적어 주세요", false);
+        final Spinner ctype = spinner(new String[]{"(선택 안 함)", "임대", "판매"});
+        final TextView amtLabel = Ui.text(this, "금액 (원, 계약구분을 먼저 골라요)", 12, Ui.GRAY, true);
+        final EditText camt = Ui.field(this, "숫자만 (예: 30000)", false);
+        camt.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        final EditText terms = Ui.field(this, "예: 36개월 약정", false);
         final EditText memo = Ui.field(this, "메모", false);
         memo.setSingleLine(false);
         String[] gl = new String[Store.GRADES.length];
         for (int i = 0; i < gl.length; i++) gl[i] = gradeLabel(i).isEmpty() ? "(사용 안 함)" : gradeLabel(i);
         final Spinner grade = spinner(gl);
         grade.setSelection(5);
+        vanOther.setVisibility(View.GONE);
+        van.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+            public void onItemSelected(android.widget.AdapterView<?> p, View v, int pos, long id) {
+                vanOther.setVisibility(pos == VANS.length - 1 ? View.VISIBLE : View.GONE);
+            }
+
+            public void onNothingSelected(android.widget.AdapterView<?> p) {
+            }
+        });
+        ctype.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+            public void onItemSelected(android.widget.AdapterView<?> p, View v, int pos, long id) {
+                amtLabel.setText(pos == 1 ? "월 CMS 금액 (원)" : pos == 2 ? "판매 금액 (원)" : "금액 (원, 계약구분을 먼저 골라요)");
+            }
+
+            public void onNothingSelected(android.widget.AdapterView<?> p) {
+            }
+        });
         if (existing != null) {
             name.setText(existing.optString("name"));
             bizno.setText(existing.optString("bizno"));
             phone.setText(existing.optString("phone"));
+            mobile.setText(existing.optString("mobile"));
+            email.setText(existing.optString("email"));
             addr.setText(existing.optString("addr"));
+            String ev = existing.optString("van");
+            int vi = 0;
+            for (int i = 1; i < VANS.length - 1; i++) if (VANS[i].equals(ev)) vi = i;
+            if (vi == 0 && !ev.isEmpty()) {
+                vi = VANS.length - 1;
+                vanOther.setText(ev);
+            }
+            van.setSelection(vi);
+            ctype.setSelection("임대".equals(existing.optString("ctype")) ? 1 : "판매".equals(existing.optString("ctype")) ? 2 : 0);
+            camt.setText(existing.optString("camt"));
             terms.setText(existing.optString("terms"));
             memo.setText(existing.optString("memo"));
             grade.setSelection(Math.max(0, Math.min(7, existing.optInt("grade", 5))));
         }
-        f.addView(name);
-        f.addView(bizno);
-        f.addView(phone);
-        f.addView(addr);
-        f.addView(terms);
-        f.addView(Ui.text(this, "등급 코드", 13, Ui.GRAY, false), Ui.lp(this, 8));
-        f.addView(grade);
-        f.addView(memo);
+        labeled(f, "상호 (필수)", name);
+        labeled(f, "사업자번호", bizno);
+        labeled(f, "전화번호", phone);
+        labeled(f, "휴대폰번호", mobile);
+        labeled(f, "이메일", email);
+        labeled(f, "주소", addr);
+        labeled(f, "VAN사", van);
+        f.addView(vanOther);
+        labeled(f, "계약구분", ctype);
+        f.addView(amtLabel, Ui.lp(this, 12));
+        f.addView(camt);
+        labeled(f, "계약 추가 조건", terms);
+        labeled(f, "등급 코드", grade);
+        labeled(f, "메모", memo);
         ScrollView sv = new ScrollView(this);
         sv.addView(f);
         AlertDialog.Builder mb = new Dlg(this).setTitle(existing == null ? "가맹점 등록" : "가맹점 정보 수정").setView(sv)
@@ -2223,7 +2420,14 @@ public class MainActivity extends Activity {
                 m.put("name", n);
                 m.put("bizno", bizno.getText().toString().trim());
                 m.put("phone", phone.getText().toString().trim());
+                m.put("mobile", mobile.getText().toString().trim());
+                m.put("email", email.getText().toString().trim());
                 m.put("addr", addr.getText().toString().trim());
+                int vp = van.getSelectedItemPosition();
+                m.put("van", vp == 0 ? "" : vp == VANS.length - 1 ? vanOther.getText().toString().trim() : VANS[vp]);
+                int cp = ctype.getSelectedItemPosition();
+                m.put("ctype", cp == 1 ? "임대" : cp == 2 ? "판매" : "");
+                m.put("camt", camt.getText().toString().replaceAll("[^0-9]", ""));
                 m.put("terms", terms.getText().toString().trim());
                 m.put("grade", grade.getSelectedItemPosition());
                 m.put("memo", memo.getText().toString().trim());
@@ -2251,9 +2455,15 @@ public class MainActivity extends Activity {
         }
         final String mph = m.optString("phone").replaceAll("[^0-9+*#]", "");
         if (!mph.isEmpty()) {
-            Button callB = Ui.button(this, "📞  " + m.optString("phone") + " 전화 걸기", Ui.TINT, Ui.DEEP);
+            Button callB = Ui.button(this, "📞  전화 " + m.optString("phone") + " 걸기", Ui.TINT, Ui.DEEP);
             callB.setOnClickListener(v -> openIntent(new Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + mph))));
             l.addView(callB, Ui.lp(this, 12));
+        }
+        final String mpm = m.optString("mobile").replaceAll("[^0-9+*#]", "");
+        if (!mpm.isEmpty()) {
+            Button callM = Ui.button(this, "📱  휴대폰 " + m.optString("mobile") + " 걸기", Ui.TINT, Ui.DEEP);
+            callM.setOnClickListener(v -> openIntent(new Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + mpm))));
+            l.addView(callM, Ui.lp(this, 8));
         }
         TextView lg = Ui.text(this, "📝 응대 기록 (" + ln + "건)" + (lastLog.isEmpty() ? "" : " · 마지막 " + lastLog) + "  — 날짜별 조회·기록 추가", 14, Ui.DEEP, true);
         lg.setPadding(0, Ui.dp(this, 14), 0, Ui.dp(this, 4));
@@ -2266,8 +2476,8 @@ public class MainActivity extends Activity {
             l.addView(hs);
         }
         AlertDialog.Builder b = new Dlg(this).setTitle("가맹점 정보").setView(l)
-                .setNegativeButton("닫기", null)
-                .setPositiveButton("수정", (d, w) -> showEditMerchant(m, x -> render()));
+                .setNegativeButton("닫기", null);
+        if (canEditMerchant()) b.setPositiveButton("수정", (d, w) -> showEditMerchant(m, x -> render()));
         if (can(Perm.STAFF_MANAGE)) b.setNeutralButton("삭제", (d, w) -> confirmDeleteMerchant(m, x -> render()));
         b.show();
     }
@@ -4059,7 +4269,7 @@ public class MainActivity extends Activity {
             {"일정 탭 (달력)", "한국 달력과 앞으로의 일정을 함께 봅니다.\n\n■ 달력\n- 일요일·공휴일은 빨간색, 토요일은 파란색, 오늘은 금색 원입니다. 공휴일 이름도 표시돼요. (2026~2028년 기준)\n- ‹ › 로 달을 넘기고 '오늘'을 누르면 오늘로 돌아옵니다.\n- 일정이나 업무 기한이 있는 날은 작은 금색 점이 찍혀요.\n- 날짜를 누르면 그날의 일정과 업무가 아래에 나옵니다.\n\n■ 일정 남기기\n1. 오른쪽 아래 + 버튼.\n2. 제목과 날짜를 적고, 시간은 선택입니다.\n3. '가맹점 조회·선택'을 누르면 등록된 가맹점 중에서 찾아 고릅니다 (초성 검색 가능). 고르면 사업자번호·연락처·주소·계약조건·등급이 불러와지고, 장소에는 가맹점 주소가 자동으로 들어갑니다.\n4. '추가'를 누르면 달력에 바로 표시되고, 달력 아래 '다가오는 일정'에도 올라갑니다.\n\n■ 다가오는 일정\n- 오늘부터 앞으로의 일정과 내 업무 기한이 날짜 순으로 나와서, 언제 어디로 가야 하는지 한눈에 확인할 수 있습니다.\n- 가맹점이 연결된 일정을 누르면 가맹점 상세 정보가 열립니다."},
             {"전체 탭", "나머지 모든 기능으로 들어가는 메뉴판입니다.\n\n■ 기능 검색\n- 맨 위 프로필 카드 아래 '🔍 기능 검색' 칸에 단어나 초성을 치면 그 기능이 바로 나옵니다. 예: '재고', 'ㅈㄱ', '문자', '수익', '바코드', '프로필'.\n- 눌러서 바로 이동해요. 지우면 원래 메뉴판으로 돌아갑니다. (업무·채팅·일정 같은 탭도 검색됩니다.)\n\n■ 메뉴\n- 맨 위 내 카드를 누르면 프로필 사진과 상태 메시지를 바꿀 수 있어요.\n- 재고: 장비 재고 관리 (바코드 스캔, 단가)\n- 가맹점: 가맹점 정보 관리\n- 신규 계약 올리기 / 계약 관리: 계약 등록과 설치 완료 처리, 만료 알림\n- 단체 문자 보내기: 가맹점에 안내 문자\n- 내 실적: 나만 보는 월별 실적과 지난달 비교\n- 전체 실적·직원별 순위 / 수익 현황 / 실적 보고서 올리기: (권한이 있는 사람만 보임)\n- 일일보고 쓰기, 일일보고 종합 보기(권한자)\n- 지난 업무 기록: 완료된 업무 검색\n- 사용설명서, 버전·업데이트 내역, 공지사항\n- 직원과 권한: (관리자만) 직원 추가·권한 설정\n- 로그아웃\n\n※ 맨 아래에 현재 앱 버전이 표시됩니다. 문의할 때 이 버전을 알려 주세요."},
             {"재고", "장비를 우리가 직접 입력해서 관리합니다. (전체 → 재고)\n\n■ 재고 추가\n1. 오른쪽 아래 + 버튼.\n2. 모델명을 적고, 시리얼은 한 줄에 하나씩 적습니다. 여러 줄을 붙여 넣으면 장비가 한꺼번에 등록돼요.\n3. 시리얼이 없는 소모품(롤지 등)은 시리얼 대신 '수량'만 적습니다.\n4. 안전재고: 이 수 아래로 내려가면 빨간색으로 '부족해요!'가 표시됩니다.\n5. 입고 단가: 실적 권한자에게만 보이는 칸입니다. 1대당 산 값을 적으면 시리얼 전체에 같이 적용돼요.\n\n■ 바코드 스캔\n- '바코드 스캔'을 누르면 카메라가 열리고, 읽으면 번호가 시리얼 칸에 한 줄 들어갑니다. 한 번 누르면 한 번만 읽어요. 다음 장비는 버튼을 다시 눌러 주세요. 같은 번호는 두 번 들어가지 않아요.\n- 재고 목록 위 '바코드로 찾기'를 누르면 바코드를 읽어 그 시리얼을 바로 검색합니다.\n- 계약에서 '+ 장비 추가'를 누르고 '바코드 스캔(한 번에 한 대)'을 누르면, 읽은 번호가 재고에 있을 때 그 장비가 바로 추가돼요. 다음 장비는 다시 '+ 장비 추가'를 눌러 같은 방식으로 넣습니다. 재고에 없는 번호면 모델명만 적어 직접 입력하게 열려요.\n\n■ 시리얼 촬영 인식\n- '시리얼 촬영'을 누르고 장비 뒷면의 S/N 라벨을 가까이서 찍으면 글자를 읽어 줍니다.\n- 시리얼처럼 보이는 글자 후보가 목록으로 나오고, 맞는 것을 체크해서 '넣기'를 누르세요. 0(영)과 O(오), 1과 I처럼 헷갈리기 쉬운 글자는 꼭 눈으로 확인해 주세요.\n- 바코드가 같이 있으면 바코드 스캔이 더 정확합니다.\n- 스캔과 촬영은 구글 서비스가 있는 폰에서 동작합니다.\n\n■ 보기·검색\n- 모델별로 묶여서 '재고 n대'가 보이고, 그 아래에 시리얼이 나열됩니다.\n- 검색창에 모델명·시리얼을 치면 찾아줘요. 'ㅌㅅㅍㅅ' 같은 초성도 됩니다.\n\n■ 수정·삭제\n- 시리얼 줄을 누르면 수정창이 열립니다. 시리얼 칸에도 스캔·촬영 버튼이 있어요. '삭제'를 누르면 목록에서 지워져요 (기록은 서버에 남아 복구 가능).\n\n■ 단가와 수익 (실적 권한자 전용)\n- 재고 줄을 누르면 입고 단가(산 값)와 출고 단가(판 값)를 적을 수 있어요.\n- 재고 화면 맨 위에 보유 재고 자산(입고 단가 합계)이 나오고, '수익 현황 보기'로 이동합니다.\n- 단가는 서버에서도 실적 권한자만 읽을 수 있게 따로 보관됩니다. 권한이 없는 직원에게는 칸 자체가 보이지 않아요.\n\n■ 상태가 바뀌는 순서\n재고 → (계약에서 선택하면) 출고중 → (설치 완료 처리하면) 재고 목록에서 사라짐"},
-            {"가맹점", "우리 거래처(가맹점) 정보를 관리합니다. (전체 → 가맹점)\n\n■ 등록\n- 오른쪽 아래 + 버튼 → 상호(필수), 사업자번호, 연락처, 주소, 계약조건, 등급 코드, 메모.\n- 계약·일정·업무 지시 화면의 '가맹점 조회'에서 바로 '새 가맹점 등록'도 가능합니다.\n\n■ 등급 코드\n밴피(VAN) 기준입니다.\n0 S · 월 5만원 이상\n1 A · 3만원 이상\n2 B · 1만원 이상\n3 C · 1만원 미만\n4 해지가맹점\n5 신규가맹점\n7 협력사\n\n■ 수정\n- 목록에서 가맹점을 누르면 정보가 보이고, '수정'으로 바꿀 수 있습니다.\n\n■ 삭제 (최고관리자만)\n- 가맹점 정보 창의 '삭제', 또는 수정 창의 '삭제'를 누르면 확인 창이 나오고 목록에서 지워집니다.\n- 그 가맹점에 연결된 계약·일정이 몇 건인지 같이 알려 드려요. 이미 올라간 계약·일정 기록은 그대로 남고, 서버에도 기록이 보관됩니다.\n- 관리자가 아닌 직원에게는 삭제 버튼이 보이지 않아요.\n\n■ 응대 기록 (AS·전화 응대 메모)\n- 가맹점을 눌러 열면 '📝 응대 기록'이 있어요. 누르면 그 가맹점의 기록이 날짜별로 쌓여 보이고, '+ 응대 기록 남기기'로 새 기록을 남깁니다.\n- 기록할 때 날짜는 달력에서 고르고(기본은 오늘, 지난 일도 날짜를 골라 남길 수 있어요), 종류(방문A/S·원격A/S·전화응대·기타)를 고른 뒤 '요청사항'(고객이 요청한 내용)과 '처리결과'(어떻게 처리했는지)를 따로 적어요. 글자 수 제한은 없어요. 예전에 남긴 기록은 내용 전체가 요청사항으로 보여요.\n- 조회: 위의 '날짜로 찾기'에서 날짜를 고르면 그날 기록만, 종류 버튼으로 방문A/S·원격A/S 등만, 검색창으로 요청사항·처리결과 속 단어(초성 가능)를 찾을 수 있어요. 날짜 칸을 길게 누르면 해제돼요.\n- 전체 → '가맹점 응대 기록 조회'(또는 전체 탭 검색창에 '응대')에서는 맨 위 '가맹점 찾기'에 상호 또는 사업자번호(숫자만 써도 돼요)를 치면 가맹점이 나와요. 눌러서 그 가맹점의 기록을 보고·추가하고·고칠 수 있어요. 아무것도 치지 않으면 모든 가맹점의 최근 기록이 날짜별로 보여요.\n- 기록을 누르면 내용이 열리고, 직원 누구나 고칠 수 있어요. 고치면 '마지막 수정 누구·언제'가 남아요. 지우기는 쓴 사람과 최고관리자만 해요. 기록은 모든 직원이 볼 수 있어요.\n\n■ 검색\n- 상호·사업자번호·전화·주소 어느 것으로든, 초성으로도 검색됩니다.\n- 가맹점이 많아도 가볍게 보이도록 목록은 50곳씩 보여 줘요. 맨 아래 '더 보기'를 누르면 더 나오고, 검색하면 전체에서 찾아요."},
+            {"가맹점", "우리 거래처(가맹점) 정보를 관리합니다. (전체 → 가맹점)\n\n■ 등록\n- 오른쪽 아래 + 버튼 → 상호(필수), 사업자번호, 전화번호, 휴대폰번호, 이메일, 주소, VAN사, 계약구분, 금액, 계약 추가 조건, 등급 코드, 메모. 칸마다 이름이 위에 적혀 있어요.\n- 계약구분을 '임대'로 고르면 '월 CMS 금액', '판매'로 고르면 '판매 금액'을 적어요. 목록·상세에는 '임대 · 월 CMS 30,000원'처럼 보여요.\n- VAN사는 목록(KICC·다우데이타·NICE·KIS·스마트로·KOCES·FDIK)에서 고르거나 '직접 입력'으로 적어요.\n\n■ 등록·수정 권한과 암호\n- 가맹점을 등록·수정하려면 '가맹점 등록·수정' 권한이 있어야 해요(관리자는 기본으로 있어요). 권한은 전체 → 직원과 권한에서 켜요.\n- 관리자가 전체 → 가맹점 수정 암호에서 암호를 정하면, 권한이 있는 사람도 관리자도 수정할 때 암호를 입력해야 해요. 한 번 맞으면 5분 동안은 다시 묻지 않아요.\n- 암호를 바꾸거나 끄려면 같은 곳에서 현재 암호를 입력해요. 암호를 정하기 전에는 권한만 있으면 암호 없이 수정돼요.\n- 계약·일정·업무 지시 화면의 '가맹점 조회'에서 바로 '새 가맹점 등록'도 가능합니다.\n\n■ 등급 코드\n밴피(VAN) 기준입니다.\n0 S · 월 5만원 이상\n1 A · 3만원 이상\n2 B · 1만원 이상\n3 C · 1만원 미만\n4 해지가맹점\n5 신규가맹점\n7 협력사\n\n■ 수정\n- 목록에서 가맹점을 누르면 정보가 보이고, '수정'으로 바꿀 수 있습니다.\n\n■ 삭제 (최고관리자만)\n- 가맹점 정보 창의 '삭제', 또는 수정 창의 '삭제'를 누르면 확인 창이 나오고 목록에서 지워집니다.\n- 그 가맹점에 연결된 계약·일정이 몇 건인지 같이 알려 드려요. 이미 올라간 계약·일정 기록은 그대로 남고, 서버에도 기록이 보관됩니다.\n- 관리자가 아닌 직원에게는 삭제 버튼이 보이지 않아요.\n\n■ 응대 기록 (AS·전화 응대 메모)\n- 가맹점을 눌러 열면 '📝 응대 기록'이 있어요. 누르면 그 가맹점의 기록이 날짜별로 쌓여 보이고, '+ 응대 기록 남기기'로 새 기록을 남깁니다.\n- 기록할 때 날짜는 달력에서 고르고(기본은 오늘, 지난 일도 날짜를 골라 남길 수 있어요), 종류(방문A/S·원격A/S·전화응대·기타)를 고른 뒤 '요청사항'(고객이 요청한 내용)과 '처리결과'(어떻게 처리했는지)를 따로 적어요. 글자 수 제한은 없어요. 예전에 남긴 기록은 내용 전체가 요청사항으로 보여요.\n- 조회: 위의 '날짜로 찾기'에서 날짜를 고르면 그날 기록만, 종류 버튼으로 방문A/S·원격A/S 등만, 검색창으로 요청사항·처리결과 속 단어(초성 가능)를 찾을 수 있어요. 날짜 칸을 길게 누르면 해제돼요.\n- 전체 → '가맹점 응대 기록 조회'(또는 전체 탭 검색창에 '응대')에서는 맨 위 '가맹점 찾기'에 상호 또는 사업자번호(숫자만 써도 돼요)를 치면 가맹점이 나와요. 눌러서 그 가맹점의 기록을 보고·추가하고·고칠 수 있어요. 아무것도 치지 않으면 모든 가맹점의 최근 기록이 날짜별로 보여요.\n- 기록을 누르면 내용이 열리고, 직원 누구나 고칠 수 있어요. 고치면 '마지막 수정 누구·언제'가 남아요. 지우기는 쓴 사람과 최고관리자만 해요. 기록은 모든 직원이 볼 수 있어요.\n\n■ 검색\n- 상호·사업자번호·전화·주소 어느 것으로든, 초성으로도 검색됩니다.\n- 가맹점이 많아도 가볍게 보이도록 목록은 50곳씩 보여 줘요. 맨 아래 '더 보기'를 누르면 더 나오고, 검색하면 전체에서 찾아요."},
             {"신규 계약 올리기", "계약이 되면 바로 올려 주세요. (전체 → 신규 계약 올리기, 또는 계약 관리 화면의 + 버튼)\n\n1. 가맹점 조회·선택: 등록된 가맹점을 고릅니다. 없으면 '새 가맹점 등록'.\n2. 결제 연동: VAN사 또는 PG사, 업체명 (예: 다우데이타).\n3. 구분을 고르면 금액 입력 이름이 바뀝니다.\n   - 판매 → 판매금액\n   - CMS → CMS 금액\n   - 렌탈 → 월 렌탈료\n4. 나가는 장비: '+ 장비 추가'를 눌러 재고에서 체크해 고릅니다. 재고에 없으면 '직접 입력'으로 모델명·시리얼을 적어요. 잘못 고른 장비는 오른쪽 − 로 뺍니다. 장비를 여러 번 + 해서 여러 대를 넣을 수 있어요.\n5. 장비 메모: 설치 조건 등 자유롭게 적습니다.\n6. 계약일과 만료일: 만료일 아래 '+12개월 / +24개월 / +36개월' 버튼을 누르면 계약일 기준으로 자동 계산됩니다.\n7. '올리기'.\n\n※ 올리면 고른 장비는 재고에서 '출고중'이 됩니다."},
             {"계약 관리 · 설치 완료 · 만료 알림", "(전체 → 계약 관리)\n\n■ 계약 보기\n- 위쪽에 '만료가 가까운 계약(3개월 이내)'이 빨간 D-숫자와 함께 먼저 나옵니다. 아래는 전체 계약입니다.\n- 일반 직원은 내가 올린 계약만, 실적 권한이 있는 사람은 전체 계약이 보입니다.\n\n■ 설치 완료\n- 계약을 누르고 '설치 완료'를 누르면 나간 장비가 재고에서 완전히 빠집니다.\n\n■ 장비 추가\n- 같은 가맹점에 장비가 더 나가면 계약을 열어 '장비 추가'를 눌러 모델명·시리얼을 이어서 추가합니다.\n\n■ 만료 알림\n- 만료가 90일 이하로 남은 계약이 있으면 '업무' 탭 위에 알림 카드가 뜨고, 전체 탭에도 숫자가 표시됩니다."},
             {"실적 (권한자 전용)", "■ 내 실적 (전체 → 내 실적)\n- 나만 볼 수 있습니다. 이번 달 신규 계약 대수, 판매금액, 올린 계약 목록, 지난달과의 비교가 나와요.\n\n■ 전체 실적·직원별 순위 (실적 보기 권한자)\n- 위 ‹ › 로 월을 바꿉니다.\n- 신규 계약 대수와 판매금액, 직원별 순위 막대 그래프, 올라온 계약 목록이 나옵니다.\n- 월별 성과: '지난달 → 선택한 달' 계약 대수와 성장률(▲ 늘어남 / ▼ 줄어듦, 지난달이 0이면 '신규')을 직원별 막대 두 개(회색 지난달, 금색 이번 달)로 보여 줍니다. 그 아래 최근 6개월 추이 그래프도 있어요.\n- 계약을 누르면 상세 정보와 장비를 볼 수 있어요.\n\n■ 수익 현황 (실적 보기 권한자, 전체 → 수익 현황)\n- 지금까지 총 수익, 선택한 달 수익(매출·매입), 최근 6개월 수익 그래프, 직원별 수익이 나옵니다.\n- 계약에 올라가 출고된 장비(출고중·설치완료)의 '출고 단가 − 입고 단가'를 합산하고, 월은 계약일 기준이에요.\n- 단가를 아직 안 적은 장비는 수익에서 빠지고, 맨 아래 목록에 나옵니다. 눌러서 단가를 적으면 바로 반영돼요."},
@@ -4107,6 +4317,7 @@ public class MainActivity extends Activity {
 
     /** {버전, 날짜, 내용}. 새 버전은 맨 위에 추가. CI 가 현재 versionName 항목이 있는지 검사한다. */
     private static final String[][] CHANGELOG = {
+            {"0.0.2", "2026-10-24", "• 가맹점 정보에 항목 추가: 전화번호·휴대폰번호·이메일·VAN사·계약구분(임대 월 CMS / 판매 금액)을 넣을 수 있고, 모든 칸에 이름이 적혀요\n• 가맹점 등록·수정은 '가맹점 등록·수정' 권한이 있는 사람만, 관리자가 정한 암호를 입력해야 할 수 있어요(전체 → 가맹점 수정 암호)\n• 웹앱: 한글로 상호를 검색하면 결과가 안 나오던 문제 수정(상호·초성·사업자번호 모두 찾아요)\n• 웹앱: 기본 화면은 업무·프로젝트·채팅·일정·가맹점 5개, 나머지는 왼쪽 위 ☰ 전체 메뉴에서. 왼쪽 위 '나인패밀리'를 누르면 홈으로 가요"},
             {"0.0.1", "2026-10-24", "• 나인패밀리 처음부터 다시 시작! 지금까지의 업데이트 내역은 정리하고 여기서부터 기록해요\n• 가맹점 응대 기록: 종류를 방문A/S·원격A/S·전화응대·기타로 바꾸고, 내용을 '요청사항'과 '처리결과' 두 칸으로 나눴어요 (글자 수 제한 없음, 예전 기록은 요청사항으로 보여요)\n• 응대 기록 조회에서 상호·사업자번호로 가맹점을 찾아 그 가맹점의 기록을 보고·추가·수정해요 (직원 누구나 수정, 수정한 사람·시각이 남아요)\n• 웹앱(PC·아이폰) 추가: 같은 주소 https://ninepayments.github.io/Work-app/"},
     };
 
@@ -5709,7 +5920,7 @@ public class MainActivity extends Activity {
                 }).show();
     }
 
-    private static final String[] MFIELDS = {"name", "상호", "bizno", "사업자번호", "ecode", "거래처코드", "owner", "대표자", "phone", "전화", "mobile", "휴대폰", "addr", "주소", "grade", "등급", "memo", "메모", "deleted", "삭제"};
+    private static final String[] MFIELDS = {"name", "상호", "bizno", "사업자번호", "ecode", "거래처코드", "owner", "대표자", "phone", "전화", "mobile", "휴대폰", "email", "이메일", "van", "VAN사", "ctype", "계약구분", "camt", "금액", "terms", "계약조건", "addr", "주소", "grade", "등급", "memo", "메모", "deleted", "삭제"};
 
     private static String diffLabel(JSONObject prev, JSONObject cur) {
         if (prev == null) return "처음 등록";

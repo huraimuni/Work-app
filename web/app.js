@@ -2,9 +2,9 @@
 /* 나인패밀리 웹앱 — 앱과 같은 Firebase(nine-family)를 쓴다. 문서는 {j: JSON문자열, u: 시각} 형식. */
 const CFG = {apiKey: 'AIzaSyCsA-M6QGGGk0owyDXzziv1X79TqF5NptI', authDomain: 'nine-family.firebaseapp.com', projectId: 'nine-family',
   storageBucket: 'nine-family.firebasestorage.app', messagingSenderId: '48232341344', appId: '1:48232341344:web:19be016c9c1c1de5a34805'};
-const VERSION = '웹 0.0.1';
+const VERSION = '웹 0.0.2';
 const DEMO = location.hash === '#demo';
-const COLLS = ['users', 'tasks', 'notices', 'projects', 'events', 'merchants', 'rooms', 'msgs', 'profiles', 'mlogs'];
+const COLLS = ['users', 'tasks', 'notices', 'projects', 'events', 'merchants', 'rooms', 'msgs', 'profiles', 'mlogs', 'config'];
 const TYPES = ['신규 설치', 'AS', '영업 방문', '서류 접수', '카드사 서류', '기타'];
 const KINDS = ['방문A/S', '원격A/S', '전화응대', '기타'];
 const logKind = k => (k === 'AS' || k === '방문' || k === '방문 A/S') ? '방문A/S' : k === '원격 A/S' ? '원격A/S' : k === '전화 응대' ? '전화응대' : k;
@@ -155,10 +155,8 @@ async function logout() {
 }
 
 // ---------- 화면 틀 ----------
-const NAVS = [['task', '업무'], ['project', '프로젝트'], ['chat', '채팅'], ['calendar', '일정'], ['all', '전체']];
-// 넓은 화면(PC·태블릿)은 왼쪽에 메뉴를 모두 펼쳐 둔다: [키, 이름, 탭, 하위]
-const NAVW = [['task', '업무', 'task', ''], ['project', '프로젝트', 'project', ''], ['chat', '채팅', 'chat', ''], ['calendar', '일정', 'calendar', ''],
-  ['merchants', '가맹점', 'all', 'merchants'], ['logs', '가맹점 응대 기록', 'all', 'logs'], ['notice', '공지사항', 'all', 'notice']];
+// 기본 화면에는 핵심 5개만 보이고, 나머지는 왼쪽 위 ☰ 를 누르면 나오는 전체 메뉴에 있다 (토스포스 방식)
+const NAVMAIN = [['task', '업무', 'task', ''], ['project', '프로젝트', 'project', ''], ['chat', '채팅', 'chat', ''], ['calendar', '일정', 'calendar', ''], ['merchants', '가맹점', 'all', 'merchants']];
 const isWide = () => window.innerWidth >= 900;
 function newTaskCount() { return list('tasks').filter(t => t.assignee === S.uid && t.status === '지시됨').length; }
 function render() {
@@ -174,12 +172,16 @@ function render() {
   let body = '';
   if (S.tab === 'chat' && !S.sub) body = viewChat();
   else body = '<div class="scroll"><div class="col">' + viewBody(k) + '</div></div>';
+  const mainBtn = ([key, lb, tab, sub]) => { const n = badges[key]; return '<button data-nav="' + tab + '" data-sub="' + sub + '" class="' + (k === key ? 'on' : '') + '"><span class="t">' + lb + '</span>' + (n ? '<span class="badge">' + n + '</span>' : '') + '</button>'; };
+  const menuBadge = badges.all ? '<span class="badge">' + badges.all + '</span>' : '';
   const nb = isWide()
-    ? '<div class="nav w"><div class="logo"><img src="icon-192.png" alt="">나인패밀리</div>' +
-      NAVW.map(([key, lb, tab, sub]) => { const n = key === 'notice' ? badges.all : badges[key]; return '<button data-nav="' + tab + '" data-sub="' + sub + '" class="' + (k === key ? 'on' : '') + '"><span class="t">' + lb + '</span>' + (n ? '<span class="badge">' + n + '</span>' : '') + '</button>'; }).join('') +
-      '<div class="grow"></div><div class="me">' + esc(S.me.name) + '<br><span>' + (can('staff_manage') ? '관리자' : '직원') + '</span></div><button data-act="installApp" class="inst" style="display:none">PC에 설치하기</button><button data-act="logout">로그아웃</button></div>'
-    : '<div class="nav">' + NAVS.map(([key, lb]) => '<button data-nav="' + key + '" class="' + (S.tab === key ? 'on' : '') + '"><span class="t">' + lb + '</span>' + (badges[key] ? '<span class="badge">' + badges[key] + '</span>' : '') + '</button>').join('') + '</div>';
-  root.innerHTML = '<div class="app"><div class="main">' + body + '</div>' + nb + '</div>' + fab();
+    ? '<div class="nav w"><div class="logo" data-act="home" title="홈으로"><img src="icon-192.png" alt="">나인패밀리</div>' +
+      '<button class="hamb' + (S.menu ? ' on' : '') + '" data-act="menu"><span class="t">☰ 전체 메뉴</span>' + menuBadge + '</button><div class="sep"></div>' +
+      NAVMAIN.map(mainBtn).join('') +
+      '<div class="grow"></div><div class="me">' + esc(S.me.name) + '<br><span>' + (can('staff_manage') ? '관리자' : '직원') + '</span></div><button data-act="installApp" class="inst" style="display:none">PC에 설치하기</button></div>'
+    : '<div class="nav">' + NAVMAIN.map(mainBtn).join('') + '</div>';
+  const top = isWide() ? '' : '<div class="top"><button class="hamb" data-act="menu" aria-label="전체 메뉴">☰' + menuBadge + '</button><div class="ttl" data-act="home"><img src="icon-192.png" alt="">나인패밀리</div></div>';
+  root.innerHTML = '<div class="app">' + top + '<div class="main">' + body + '</div>' + nb + '</div>' + (S.menu ? menuOverlay() : fab());
   syncInstall();
   bind(root);
   const sc = $('.scroll'); if (sc) sc.scrollTop = keepScroll;
@@ -194,30 +196,25 @@ function viewBody(k) {
     case 'merchants': return viewMerchants();
     case 'notice': return viewNotices();
     case 'logs': return viewAllLogs();
-    default: return viewAll();
+    default: return viewTasks();
   }
 }
 function fab() {
   const k = S.sub || S.tab;
-  const map = {task: 'newTask', project: 'newProject', merchants: 'newMerchant', calendar: can('staff_manage') ? 'newEvent' : '', notice: can('notice_write') ? 'newNotice' : ''};
+  const map = {task: 'newTask', project: 'newProject', merchants: canEditMerchant() ? 'newMerchant' : '', calendar: can('staff_manage') ? 'newEvent' : '', notice: can('notice_write') ? 'newNotice' : ''};
   return map[k] ? '<button class="fab" data-act="' + map[k] + '">+</button>' : '';
 }
 function bind(root) {
   root.onclick = ev => {
-    const n = ev.target.closest('[data-nav]'); if (n) { S.tab = n.dataset.nav; S.sub = n.dataset.sub || ''; S.room = 0; return render(); }
+    const n = ev.target.closest('[data-nav]'); if (n) { S.tab = n.dataset.nav; S.sub = n.dataset.sub || ''; S.room = 0; S.menu = false; return render(); }
     const a = ev.target.closest('[data-act]'); if (a) { ACT[a.dataset.act] && ACT[a.dataset.act](a.dataset.arg, a, ev); }
   };
   // 한글은 글자를 조합하는 동안 입력칸을 다시 그리면 'ㅌㅗㅅㅡ' 처럼 쪼개진다 → 조합이 끝난 뒤에만 다시 그린다
-  root.oninput = ev => {
-    const t = ev.target;
-    if (ev.isComposing || S.comp) return;
-    if (t.dataset.q) { S[t.dataset.q] = t.value; if (t.dataset.q === 'mq') S.mlimit = 50; render(); }
-  };
-  root.oncompositionstart = () => { S.comp = true; };
-  root.oncompositionend = ev => {
-    S.comp = false; const t = ev.target;
-    if (t.dataset && t.dataset.q) { S[t.dataset.q] = t.value; if (t.dataset.q === 'mq') S.mlimit = 50; render(); }
-  };
+  if (root.__bound) return; root.__bound = true; // 이벤트 위임은 한 번만 건다 (render 때마다 다시 걸면 중복됨)
+  const apply = t => { if (t && t.dataset && t.dataset.q) { S[t.dataset.q] = t.value; if (t.dataset.q === 'mq') S.mlimit = 50; render(); } };
+  root.addEventListener('input', ev => { if (ev.isComposing || S.comp) return; apply(ev.target); });
+  root.addEventListener('compositionstart', () => { S.comp = true; });
+  root.addEventListener('compositionend', ev => { S.comp = false; apply(ev.target); });
 }
 const ACT = {};
 
@@ -427,11 +424,11 @@ ACT.newGroup = () => {
 // ---------- 가맹점 ----------
 function viewMerchants() {
   const all = list('merchants').sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-  const hits = all.filter(m => kmatch((m.name || '') + ' ' + (m.bizno || '') + ' ' + (m.phone || '') + ' ' + (m.addr || ''), S.mq));
+  const hits = all.filter(m => kmatch((m.name || '') + ' ' + (m.bizno || '') + ' ' + (m.phone || '') + ' ' + (m.mobile || '') + ' ' + (m.addr || ''), S.mq));
   const shown = hits.slice(0, S.mlimit);
   return '<h1>가맹점</h1><div class="sub">눌러서 보고, 오른쪽 아래 + 로 새로 등록해요.</div><input id="mq" data-q="mq" placeholder="상호·번호·주소 검색 (초성도 돼요)" value="' + esc(S.mq) + '">' +
     '<div class="sub" style="margin-top:8px;font-weight:700">' + (S.mq.trim() ? '검색 결과 ' : '전체 ') + hits.length + '곳</div>' +
-    shown.map(m => '<div class="card" data-act="merchant" data-arg="' + m.id + '"><div class="t1">' + esc(m.name) + '</div><div class="t2">' + esc((m.phone ? m.phone + ' · ' : '') + (m.addr || '')) + '</div></div>').join('') +
+    shown.map(m => '<div class="card" data-act="merchant" data-arg="' + m.id + '"><div class="t1">' + esc(m.name) + '</div><div class="t2">' + esc((m.phone || m.mobile ? (m.phone || m.mobile) + ' · ' : '') + (m.addr || '')) + '</div></div>').join('') +
     (hits.length > shown.length ? '<button class="btn full" data-act="mmore">더 보기 (' + (hits.length - shown.length) + '곳 남음)</button>' : '') +
     (!hits.length ? '<div class="empty">' + (S.mq.trim() ? '찾는 가맹점이 없어요.' : '등록된 가맹점이 없습니다.') + '</div>' : '');
 }
@@ -442,11 +439,13 @@ ACT.merchant = id => {
   const logs = list('mlogs').filter(g => g.merchant === m.id).sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.created || '').localeCompare(a.created || ''));
   const ln = (k, v) => v ? '<div class="line"><b>' + k + '</b><div>' + esc(v) + '</div></div>' : '';
   const ph = (m.phone || '').replace(/[^0-9+*#]/g, '');
-  modal('<h3>' + esc(m.name) + '</h3>' + ln('사업자번호', m.bizno) + ln('주소', m.addr) + ln('계약조건', m.terms) + ln('메모', m.memo) +
-    (ph ? '<a class="btn tint full" style="display:block;text-align:center;text-decoration:none" href="tel:' + ph + '">📞 ' + esc(m.phone) + ' 전화 걸기</a>' : '') +
+  const mp = (m.mobile || '').replace(/[^0-9+*#]/g, '');
+  const callBtn = (num, raw, lb) => num ? '<a class="btn tint full" style="display:block;text-align:center;text-decoration:none;margin-top:6px" href="tel:' + num + '">📞 ' + lb + ' ' + esc(raw) + ' 전화 걸기</a>' : '';
+  modal('<h3>' + esc(m.name) + '</h3>' + ln('사업자번호', m.bizno) + ln('전화번호', m.phone) + ln('휴대폰번호', m.mobile) + ln('이메일', m.email) + ln('주소', m.addr) + ln('VAN사', m.van) + ln('계약조건', termsText(m)) + ln('메모', m.memo) +
+    callBtn(ph, m.phone, '전화') + callBtn(mp, m.mobile, '휴대폰') +
     '<h2>📝 응대 기록 (' + logs.length + '건)</h2><button class="btn gold full" data-act="newLog" data-arg="' + m.id + '">+ 응대 기록 남기기</button>' +
     logs.slice(0, S.logLimit).map(g => logCard(g, 'editLog|' + g.id + '|' + m.id)).join('') + (logs.length > S.logLimit ? '<button class="btn full" data-act="logmore" data-arg="' + m.id + '">더 보기 (' + (logs.length - S.logLimit) + '건 남음)</button>' : '') +
-    '<div class="btns" style="margin-top:10px"><button class="btn" data-act="editMerchant" data-arg="' + m.id + '">정보 수정</button><button class="btn" data-act="close">닫기</button></div>');
+    '<div class="btns" style="margin-top:10px">' + (canEditMerchant() ? '<button class="btn" data-act="editMerchant" data-arg="' + m.id + '">정보 수정</button>' : '') + '<button class="btn" data-act="close">닫기</button></div>');
 };
 function logCard(g, act) {
   const [a, id, mid] = act.split('|');
@@ -467,19 +466,69 @@ ACT.newLog = mid => formModal('응대 기록', '<input id="f_d" type="date" valu
   const d = $('#f_d').value, t = $('#f_m').value.trim(), r = $('#f_r').value.trim(); if (!d || (!t && !r)) return warn('날짜와 요청사항(또는 처리결과)을 적어 주세요.');
   const m = byId('merchants', mid); put('mlogs', create('mlogs', {merchant: m.id, mname: m.name, date: d, kind: $('#f_k').value, req: t, res: r, text: t + (r ? (t ? '\n' : '') + '→ 처리: ' + r : ''), who: S.uid})); render(); ACT.merchant(mid); toast('기록을 남겼어요.'); return true;
 }, '저장');
-const mfield = (id, ph, v, t) => '<input id="' + id + '" placeholder="' + ph + '" value="' + esc(v || '') + '"' + (t ? ' type="' + t + '"' : '') + '>';
-function merchantForm(m) {
-  return mfield('f_n', '상호 (필수)', m && m.name) + mfield('f_b', '사업자번호 (예: 123-45-67890)', m && m.bizno) + mfield('f_p', '연락처', m && m.phone, 'tel') + mfield('f_a', '주소', m && m.addr) + mfield('f_t', '계약조건 (예: 렌탈 36개월, 월 3만원)', m && m.terms) + '<textarea id="f_m" placeholder="메모">' + esc((m && m.memo) || '') + '</textarea>';
+const VANS = ['KICC(한국정보통신)', '다우데이타', 'NICE정보통신', 'KIS정보통신', '스마트로', 'KOCES', 'FDIK', '기타'];
+const won = v => { const n = String(v || '').replace(/[^0-9]/g, ''); return n ? Number(n).toLocaleString('ko-KR') + '원' : ''; };
+const amtLabel = ct => ct === '임대' ? '월 CMS 금액 (원)' : ct === '판매' ? '판매 금액 (원)' : '금액 (원, 계약구분을 먼저 골라요)';
+function termsText(m) {
+  const p = [];
+  if (m.ctype === '임대') p.push('임대' + (m.camt ? ' · 월 CMS ' + won(m.camt) : ''));
+  else if (m.ctype === '판매') p.push('판매' + (m.camt ? ' · 판매 ' + won(m.camt) : ''));
+  if (m.terms) p.push(m.terms);
+  return p.join(' · ');
 }
-function readMerchant(o) { o.name = $('#f_n').value.trim(); o.bizno = $('#f_b').value.trim(); o.phone = $('#f_p').value.trim(); o.addr = $('#f_a').value.trim(); o.terms = $('#f_t').value.trim(); o.memo = $('#f_m').value.trim(); return o; }
-ACT.newMerchant = () => formModal('가맹점 등록', merchantForm(null), () => {
+const mfield = (id, label, ph, v, t) => '<label class="fl" for="' + id + '">' + label + '</label><input id="' + id + '" placeholder="' + ph + '" value="' + esc(v || '') + '"' + (t ? ' type="' + t + '"' : '') + '>';
+function merchantForm(m) {
+  m = m || {};
+  return mfield('f_n', '상호 (필수)', '예: 토스단말기 전문', m.name) + mfield('f_b', '사업자번호', '예: 123-45-67890', m.bizno) +
+    mfield('f_p', '전화번호', '예: 062-123-4567', m.phone, 'tel') + mfield('f_mo', '휴대폰번호', '예: 010-1234-5678', m.mobile, 'tel') +
+    mfield('f_e', '이메일', '예: name@example.com', m.email, 'email') + mfield('f_a', '주소', '예: 광주 동구 …', m.addr) +
+    '<label class="fl" for="f_v">VAN사</label><input id="f_v" list="vanlist" placeholder="목록에서 고르거나 직접 입력" value="' + esc(m.van || '') + '"><datalist id="vanlist">' + VANS.map(v => '<option value="' + esc(v) + '">').join('') + '</datalist>' +
+    '<label class="fl" for="f_ct">계약구분</label><select id="f_ct">' + ['', '임대', '판매'].map(v => '<option value="' + v + '"' + ((m.ctype || '') === v ? ' selected' : '') + '>' + (v || '(선택 안 함)') + '</option>').join('') + '</select>' +
+    '<label class="fl" for="f_ca" id="f_cal">' + amtLabel(m.ctype) + '</label><input id="f_ca" inputmode="numeric" placeholder="숫자만 (예: 30000)" value="' + esc(m.camt || '') + '">' +
+    mfield('f_t', '계약 추가 조건', '예: 36개월 약정', m.terms) + '<label class="fl" for="f_m">메모</label><textarea id="f_m" placeholder="메모">' + esc(m.memo || '') + '</textarea>';
+}
+function wireMerchantForm() { const ct = $('#f_ct'); if (ct) ct.onchange = () => { $('#f_cal').textContent = amtLabel(ct.value); }; }
+function readMerchant(o) {
+  o.name = $('#f_n').value.trim(); o.bizno = $('#f_b').value.trim(); o.phone = $('#f_p').value.trim(); o.mobile = $('#f_mo').value.trim(); o.email = $('#f_e').value.trim();
+  o.addr = $('#f_a').value.trim(); o.van = $('#f_v').value.trim(); o.ctype = $('#f_ct').value; o.camt = $('#f_ca').value.replace(/[^0-9]/g, ''); o.terms = $('#f_t').value.trim(); o.memo = $('#f_m').value.trim(); return o;
+}
+// ---------- 가맹점 수정 암호 (화면 잠금) ----------
+const LOCK_MS = 5 * 60 * 1000; let unlockedAt = 0;
+const lockDoc = () => list('config').filter(c => c.key === 'merchant_lock' && c.hash).sort((a, b) => (b.created || '').localeCompare(a.created || ''))[0];
+const canEditMerchant = () => can('merchant_edit') || can('staff_manage');
+async function sha(t) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
+function needLock(then) {
+  if (!canEditMerchant()) { toast('가맹점 수정 권한이 없어요. 관리자에게 요청해 주세요.'); return; }
+  const L = lockDoc(); if (!L || Date.now() - unlockedAt < LOCK_MS) return then();
+  formModal('암호 확인', '<div class="sub">가맹점 정보를 고치려면 암호가 필요해요.</div><input id="f_pw" type="password" autocomplete="off" placeholder="암호">', () => {
+    const v = $('#f_pw').value; sha(L.salt + v).then(h => { if (h === L.hash) { unlockedAt = Date.now(); closeModal(); then(); } else { toast('암호가 맞지 않아요.'); } }); return false;
+  }, '확인');
+}
+ACT.mlockSet = () => {
+  if (!can('staff_manage')) return toast('관리자만 설정할 수 있어요.');
+  const L = lockDoc();
+  formModal('가맹점 수정 암호', '<div class="sub">' + (L ? '암호가 설정돼 있어요. 바꾸려면 현재 암호도 입력해 주세요.' : '아직 암호가 없어서 누구나(권한이 있으면) 수정할 수 있어요. 암호를 정하면 수정할 때마다 물어봐요.') + '</div>' +
+    (L ? '<input id="f_old" type="password" autocomplete="off" placeholder="현재 암호">' : '') + '<input id="f_new" type="password" autocomplete="off" placeholder="새 암호 (4자 이상)"><input id="f_new2" type="password" autocomplete="off" placeholder="새 암호 한 번 더">', () => {
+    const nw = $('#f_new').value; if (nw.length < 4) return warn('암호는 4자 이상으로 해 주세요.'); if (nw !== $('#f_new2').value) return warn('새 암호가 서로 달라요.');
+    const done = () => { const salt = Math.random().toString(36).slice(2) + Date.now().toString(36); sha(salt + nw).then(h => { const o = L || create('config', {key: 'merchant_lock'}); o.salt = salt; o.hash = h; o.changedBy = S.uid; o.changedAt = nowStr(); put('config', o); unlockedAt = Date.now(); closeModal(); render(); toast('암호를 저장했어요.'); }); };
+    if (L) sha(L.salt + $('#f_old').value).then(h => { if (h === L.hash) done(); else toast('현재 암호가 맞지 않아요.'); }); else done();
+    return false;
+  }, '저장');
+};
+ACT.mlockOff = () => {
+  if (!can('staff_manage')) return; const L = lockDoc(); if (!L) return;
+  formModal('암호 끄기', '<div class="sub">현재 암호를 입력하면 잠금을 꺼요. (이후 권한이 있는 직원은 암호 없이 수정해요)</div><input id="f_old" type="password" autocomplete="off" placeholder="현재 암호">', () => {
+    sha(L.salt + $('#f_old').value).then(h => { if (h === L.hash) { L.salt = ''; L.hash = ''; L.key = 'merchant_lock_off'; put('config', L); closeModal(); render(); toast('암호를 껐어요.'); } else toast('현재 암호가 맞지 않아요.'); }); return false;
+  }, '끄기');
+};
+ACT.newMerchant = () => needLock(() => { formModal('가맹점 등록', merchantForm(null), () => {
   if (!$('#f_n').value.trim()) return warn('상호를 입력해 주세요.');
   const o = readMerchant(create('merchants', {grade: 5})); put('merchants', o); render(); toast('저장했어요.'); return true;
-}, '저장');
-ACT.editMerchant = id => formModal('가맹점 정보 수정', merchantForm(byId('merchants', id)), () => {
+}, '저장'); wireMerchantForm(); });
+ACT.editMerchant = id => needLock(() => { formModal('가맹점 정보 수정', merchantForm(byId('merchants', id)), () => {
   if (!$('#f_n').value.trim()) return warn('상호를 입력해 주세요.');
   const o = readMerchant(byId('merchants', id)); put('merchants', o); render(); toast('저장했어요.'); return true;
-}, '저장');
+}, '저장'); wireMerchantForm(); });
 function viewAllLogs() {
   const mq = (S.lmq || '').trim(); const q = S.lq || '';
   let found = '';
@@ -510,17 +559,26 @@ ACT.newNotice = () => formModal('공지 작성', '<input id="f_t1" placeholder="
 }, '올리기');
 
 // ---------- 전체 ----------
-function viewAll() {
-  const items = [['merchants', '가맹점', ''], ['logs', '가맹점 응대 기록 조회', ''], ['notice', '공지사항', unreadNotices() ? unreadNotices() + '건 안 읽음' : '']];
-  const q = S.allQ;
-  return '<h1>' + esc(S.me.name) + '님, 안녕하세요</h1><div class="sub">' + (can('staff_manage') ? '관리자' : '직원') + ' · ' + esc(S.phone) + '</div>' +
-    '<input id="aq" data-q="allQ" placeholder="🔍 기능 검색 (예: 가맹점, ㄱㅁㅈ)" value="' + esc(q) + '">' +
-    '<h2>일</h2>' + items.filter(i => kmatch(i[1], q)).map(i => '<div class="menu" data-act="go" data-arg="' + i[0] + '">' + i[1] + (i[2] ? '<span>' + i[2] + '</span>' : '') + '</div>').join('') +
-    '<h2>계정</h2><div class="menu" data-act="logout">로그아웃</div>' +
-    '<h2>설치하기</h2><div class="sub">아이폰: Safari 아래 공유 버튼 → <b>홈 화면에 추가</b>.<br>안드로이드: 크롬 메뉴 → <b>홈 화면에 추가</b>.<br>PC: 크롬·엣지 주소창 오른쪽의 설치 아이콘(또는 아래 버튼).</div><button class="btn tint full inst" data-act="installApp" style="display:none">PC·폰에 설치하기</button>' +
-    '<div class="sub" style="margin-top:22px">재고·계약·실적·보고·문자 발송·자료실 등은 아직 앱에서만 쓸 수 있어요. 웹은 계속 늘려 가고 있어요.</div><div class="sub" style="text-align:center;margin-top:20px">나인패밀리 ' + VERSION + ' · 주식회사 나인페이먼츠</div>';
+function menuOverlay() {
+  const q = S.allQ || '';
+  const nu = unreadNotices(), ch = unreadTotal(), lk = lockDoc();
+  const item = (lb, tab, sub, badge) => '<button class="mi" data-nav="' + tab + '" data-sub="' + sub + '"><span>' + lb + '</span>' + (badge ? '<b class="badge">' + badge + '</b>' : '') + '</button>';
+  const act = (lb, a, note) => '<button class="mi" data-act="' + a + '"><span>' + lb + '</span>' + (note ? '<i>' + note + '</i>' : '') + '</button>';
+  const sec = (title, items) => { const rows = items.filter(i => kmatch(i[0], q)); return rows.length ? '<div class="msec"><h2>' + title + '</h2>' + rows.map(i => i[1]).join('') + '</div>' : ''; };
+  const sections = [
+    sec('계정', [['로그아웃', act('로그아웃', 'logout')], ['PC에 설치하기 앱 설치', '<button data-act="installApp" class="mi inst" style="display:none"><span>앱으로 설치하기</span></button>'], ['설치 방법', '<div class="sub" style="margin:6px 4px 10px">아이폰: Safari 공유 버튼 → <b>홈 화면에 추가</b><br>PC: 크롬·엣지 주소창 오른쪽의 설치 아이콘</div>']]),
+    sec('회사', [['공지사항', item('공지사항', 'all', 'notice', nu)]]),
+    sec('일', [['업무', item('업무', 'task', '', newTaskCount())], ['프로젝트', item('프로젝트', 'project', '', 0)], ['채팅', item('채팅', 'chat', '', ch)], ['일정', item('일정', 'calendar', '', 0)], ['가맹점', item('가맹점', 'all', 'merchants', 0)], ['가맹점 응대 기록 조회', item('가맹점 응대 기록 조회', 'all', 'logs', 0)]]),
+    can('staff_manage') ? sec('관리자', [['가맹점 수정 암호 설정', act('가맹점 수정 암호 설정', 'mlockSet', lk ? '설정됨' : '아직 없음')]].concat(lk ? [['가맹점 수정 암호 끄기', act('가맹점 수정 암호 끄기', 'mlockOff')]] : [])) : ''
+  ].join('');
+  return '<div class="menuov"><div class="mhead"><button class="mx" data-act="menuClose" aria-label="닫기">✕</button><div class="mtitle">' + esc(S.me.name) + '님 <span>' + (can('staff_manage') ? '관리자' : '직원') + ' · ' + esc(S.phone) + '</span></div></div>' +
+    '<div class="mbody"><input id="aq" data-q="allQ" placeholder="🔍 기능 검색 (예: 가맹점, ㄱㅁㅈ)" value="' + esc(q) + '"><div class="mgrid">' + (sections || '<div class="empty">찾는 기능이 없어요.</div>') + '</div>' +
+    '<div class="sub" style="margin-top:22px">재고·계약·실적·보고·문자 발송·자료실 등은 아직 앱에서만 쓸 수 있어요. 웹은 계속 늘려 가고 있어요.</div><div class="sub" style="text-align:center;margin:14px 0 30px">나인패밀리 ' + VERSION + '</div></div></div>';
 }
-ACT.go = k => { S.sub = k; render(); };
+ACT.go = k => { S.tab = 'all'; S.sub = k; S.menu = false; render(); };
+ACT.menu = () => { S.menu = !S.menu; render(); };
+ACT.menuClose = () => { S.menu = false; render(); };
+ACT.home = () => { S.tab = 'task'; S.sub = ''; S.room = 0; S.menu = false; render(); };
 ACT.logout = () => { if (confirm('로그아웃할까요?')) logout(); };
 
 // ---------- 팝업 ----------
