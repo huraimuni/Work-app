@@ -2,7 +2,7 @@
 /* 나인패밀리 웹앱 — 앱과 같은 Firebase(nine-family)를 쓴다. 문서는 {j: JSON문자열, u: 시각} 형식. */
 const CFG = {apiKey: 'AIzaSyCsA-M6QGGGk0owyDXzziv1X79TqF5NptI', authDomain: 'nine-family.firebaseapp.com', projectId: 'nine-family',
   storageBucket: 'nine-family.firebasestorage.app', messagingSenderId: '48232341344', appId: '1:48232341344:web:19be016c9c1c1de5a34805'};
-const VERSION = '웹 0.1.0';
+const VERSION = '웹 0.1.1';
 const DEMO = location.hash === '#demo';
 const COLLS = ['users', 'tasks', 'notices', 'projects', 'events', 'merchants', 'rooms', 'msgs', 'profiles', 'mlogs'];
 const TYPES = ['신규 설치', 'AS', '영업 방문', '서류 접수', '카드사 서류', '기타'];
@@ -152,6 +152,10 @@ async function logout() {
 
 // ---------- 화면 틀 ----------
 const NAVS = [['task', '업무'], ['project', '프로젝트'], ['chat', '채팅'], ['calendar', '일정'], ['all', '전체']];
+// 넓은 화면(PC·태블릿)은 왼쪽에 메뉴를 모두 펼쳐 둔다: [키, 이름, 탭, 하위]
+const NAVW = [['task', '업무', 'task', ''], ['project', '프로젝트', 'project', ''], ['chat', '채팅', 'chat', ''], ['calendar', '일정', 'calendar', ''],
+  ['merchants', '가맹점', 'all', 'merchants'], ['logs', '가맹점 응대 기록', 'all', 'logs'], ['notice', '공지사항', 'all', 'notice']];
+const isWide = () => window.innerWidth >= 900;
 function newTaskCount() { return list('tasks').filter(t => t.assignee === S.uid && t.status === '지시됨').length; }
 function render() {
   if (!S.me) { refreshMe(); if (!S.me) return; }
@@ -165,8 +169,13 @@ function render() {
   let body = '';
   if (S.tab === 'chat' && !S.sub) body = viewChat();
   else body = '<div class="scroll"><div class="col">' + viewBody(k) + '</div></div>';
-  root.innerHTML = '<div class="app"><div class="main">' + body + '</div><div class="nav"><div class="logo" style="display:none">나인패밀리</div>' +
-    NAVS.map(([key, lb]) => '<button data-nav="' + key + '" class="' + (S.tab === key ? 'on' : '') + '"><span class="t">' + lb + '</span>' + (badges[key] ? '<span class="badge">' + badges[key] + '</span>' : '') + '</button>').join('') + '</div></div>' + fab();
+  const nb = isWide()
+    ? '<div class="nav w"><div class="logo"><img src="icon-192.png" alt="">나인패밀리</div>' +
+      NAVW.map(([key, lb, tab, sub]) => { const n = key === 'notice' ? badges.all : badges[key]; return '<button data-nav="' + tab + '" data-sub="' + sub + '" class="' + (k === key ? 'on' : '') + '"><span class="t">' + lb + '</span>' + (n ? '<span class="badge">' + n + '</span>' : '') + '</button>'; }).join('') +
+      '<div class="grow"></div><div class="me">' + esc(S.me.name) + '<br><span>' + (can('staff_manage') ? '관리자' : '직원') + '</span></div><button data-act="installApp" class="inst" style="display:none">PC에 설치하기</button><button data-act="logout">로그아웃</button></div>'
+    : '<div class="nav">' + NAVS.map(([key, lb]) => '<button data-nav="' + key + '" class="' + (S.tab === key ? 'on' : '') + '"><span class="t">' + lb + '</span>' + (badges[key] ? '<span class="badge">' + badges[key] + '</span>' : '') + '</button>').join('') + '</div>';
+  root.innerHTML = '<div class="app"><div class="main">' + body + '</div>' + nb + '</div>' + fab();
+  syncInstall();
   bind(root);
   const sc = $('.scroll'); if (sc) sc.scrollTop = keepScroll;
   const ms = $('#msgbox'); if (ms) ms.scrollTop = ms.scrollHeight;
@@ -190,7 +199,7 @@ function fab() {
 }
 function bind(root) {
   root.onclick = ev => {
-    const n = ev.target.closest('[data-nav]'); if (n) { S.tab = n.dataset.nav; S.sub = ''; S.room = 0; return render(); }
+    const n = ev.target.closest('[data-nav]'); if (n) { S.tab = n.dataset.nav; S.sub = n.dataset.sub || ''; S.room = 0; return render(); }
     const a = ev.target.closest('[data-act]'); if (a) { ACT[a.dataset.act] && ACT[a.dataset.act](a.dataset.arg, a, ev); }
   };
   root.oninput = ev => {
@@ -354,7 +363,7 @@ function viewChat() {
       const l = x.last; const c = un[x.r.id] || 0;
       return '<div class="card" data-act="room" data-arg="' + x.r.id + '"><div class="row"><div class="tile">' + esc((roomTitle(x.r) || '?').slice(0, 1)) + '</div><div class="grow"><div class="t1">' + esc(roomTitle(x.r)) + '</div><div class="t2">' + esc(l ? (l.who === S.uid ? '나' : uname(l.who)) + ': ' + msgText(l) : '아직 대화가 없어요') + '</div></div><div style="text-align:right;font-size:11px;color:var(--gray)">' + (l ? new Date(l.ts).toLocaleString('ko-KR', {month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false}) : '') + (c ? '<br><span class="badge">' + c + '</span>' : '') + '</div></div></div>';
     }).join('') + (rooms.length ? '' : '<div class="empty">아직 채팅방이 없어요.</div>') + '<div style="height:90px"></div></div>';
-  const wide = window.innerWidth >= 900;
+  const wide = isWide();
   if (!S.room) return wide ? '<div class="chatwrap">' + lst + '<div class="chatroom"><div class="empty" style="margin:auto">대화방을 골라 주세요.</div></div></div>' : lst;
   const room = byId('rooms', S.room) || (S.dmDraft && S.dmDraft.id === S.room ? S.dmDraft : null);
   if (!room) { S.room = 0; return lst; }
@@ -473,6 +482,7 @@ function viewAll() {
     '<input id="aq" data-q="allQ" placeholder="🔍 기능 검색 (예: 가맹점, ㄱㅁㅈ)" value="' + esc(q) + '">' +
     '<h2>일</h2>' + items.filter(i => kmatch(i[1], q)).map(i => '<div class="menu" data-act="go" data-arg="' + i[0] + '">' + i[1] + (i[2] ? '<span>' + i[2] + '</span>' : '') + '</div>').join('') +
     '<h2>계정</h2><div class="menu" data-act="logout">로그아웃</div>' +
+    '<h2>설치하기</h2><div class="sub">아이폰: Safari 아래 공유 버튼 → <b>홈 화면에 추가</b>.<br>안드로이드: 크롬 메뉴 → <b>홈 화면에 추가</b>.<br>PC: 크롬·엣지 주소창 오른쪽의 설치 아이콘(또는 아래 버튼).</div><button class="btn tint full inst" data-act="installApp" style="display:none">PC·폰에 설치하기</button>' +
     '<div class="sub" style="margin-top:22px">재고·계약·실적·보고·문자 발송·자료실 등은 아직 앱에서만 쓸 수 있어요. 웹은 계속 늘려 가고 있어요.</div><div class="sub" style="text-align:center;margin-top:20px">나인패밀리 ' + VERSION + ' · 주식회사 나인페이먼츠</div>';
 }
 ACT.go = k => { S.sub = k; render(); };
@@ -495,6 +505,13 @@ function formModal(title, inner, onOk, okLabel) {
   $('#m_ok').onclick = () => { rej = false; const r = onOk(); if (r === true) closeModal(); };
   const f = $('#modal input, #modal textarea'); if (f && !f.readOnly && f.type !== 'date') f.focus();
 }
+
+// ---------- 설치(PWA) ----------
+let installEv = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEv = e; syncInstall(); });
+window.addEventListener('appinstalled', () => { installEv = null; syncInstall(); toast('설치했어요. 바탕화면·시작 메뉴에서 열 수 있어요.'); });
+function syncInstall() { document.querySelectorAll('.inst').forEach(b => b.style.display = installEv ? '' : 'none'); }
+ACT.installApp = async () => { if (!installEv) return toast('이미 설치됐거나 이 브라우저는 주소창 메뉴에서 설치해야 해요.'); installEv.prompt(); await installEv.userChoice; installEv = null; syncInstall(); };
 
 // ---------- 시작 ----------
 function demoSeed() {
@@ -521,5 +538,6 @@ if (DEMO) { demoSeed(); render(); } else {
   loginView('phone');
   auth.onAuthStateChanged(u => { if (u && !S.uid) afterLogin(u); });
 }
-window.addEventListener('resize', () => { if (S.me && S.tab === 'chat') later(); });
-if ('serviceWorker' in navigator) { /* 오프라인 보관은 아직 쓰지 않는다 */ }
+let wasWide = isWide();
+window.addEventListener('resize', () => { if (S.me && wasWide !== isWide()) { wasWide = isWide(); later(); } });
+if ('serviceWorker' in navigator && !DEMO) navigator.serviceWorker.register('sw.js').catch(() => {});
