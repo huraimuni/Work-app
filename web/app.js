@@ -2,7 +2,7 @@
 /* 나인패밀리 웹앱 — 앱과 같은 Firebase(nine-family)를 쓴다. 문서는 {j: JSON문자열, u: 시각} 형식. */
 const CFG = {apiKey: 'AIzaSyCsA-M6QGGGk0owyDXzziv1X79TqF5NptI', authDomain: 'nine-family.firebaseapp.com', projectId: 'nine-family',
   storageBucket: 'nine-family.firebasestorage.app', messagingSenderId: '48232341344', appId: '1:48232341344:web:19be016c9c1c1de5a34805'};
-const VERSION = '웹 0.0.11';
+const VERSION = '웹 0.0.12';
 const DEMO = location.hash === '#demo';
 const COLLS = ['users', 'tasks', 'notices', 'projects', 'events', 'merchants', 'rooms', 'msgs', 'profiles', 'mlogs', 'config', 'stock', 'contracts', 'deposits', 'costs', 'reports', 'library', 'contacts'];
 const TYPES = ['신규 설치', 'AS', '영업 방문', '서류 접수', '카드사 서류', '기타'];
@@ -182,6 +182,7 @@ function loginView(step, msg) {
       ? '<input id="code" inputmode="numeric" maxlength="6" placeholder="문자로 받은 인증번호 6자리" autocomplete="one-time-code"><button class="btn gold full" id="go">확인</button><button class="btn full" id="again" disabled>인증번호 다시 받기</button><button class="btn full" id="back">번호 다시 입력</button>'
       : '<input id="ph" type="tel" inputmode="tel" placeholder="휴대폰 번호 (예: 01012345678)" value="' + esc(S.pendingPhone || '') + '"><button class="btn gold full" id="go">인증번호 받기</button>') +
     '<div class="sub" id="msg" style="color:#b3261e;margin-top:12px">' + esc(msg || '') + '</div><div class="sub" style="margin-top:30px">나인패밀리 ' + VERSION + '</div></div>';
+  setTimeout(prepVerifier, 0);
   if (step === 'code') {
     const code = $('#code'); code.focus();
     code.oninput = () => { if (code.value.length === 6) $('#go').click(); };
@@ -212,14 +213,21 @@ function authMsg(e) {
   if (c.includes('network')) return '인터넷 연결이 불안정해요. 다시 시도해 주세요.';
   return '인증에 실패했어요. 잠시 뒤 다시 시도해 주세요. (' + (c || e.message) + ')';
 }
+// 사람 확인(보이지 않는 reCAPTCHA)은 로그인 화면이 열릴 때 미리 준비해 둔다 → '인증번호 받기'를 누른 뒤 기다리는 시간이 줄어든다
+let verifierReady = null;
+function prepVerifier() {
+  if (DEMO || !auth || verifier) return;
+  $('#recaptcha').innerHTML = '';
+  verifier = new firebase.auth.RecaptchaVerifier('recaptcha', {size: 'invisible'});
+  verifierReady = verifier.render().catch(() => resetVerifier());
+}
+function resetVerifier() { if (verifier) { try { verifier.clear(); } catch (e) {} } verifier = null; verifierReady = null; } // 한 번 쓴 확인은 다시 못 쓴다
 async function sendCode(raw) {
   try {
-    if (verifier) { try { verifier.clear(); } catch (e) {} }
-    $('#recaptcha').innerHTML = '';
-    verifier = new firebase.auth.RecaptchaVerifier('recaptcha', {size: 'invisible'});
+    prepVerifier(); await verifierReady; if (!verifier) prepVerifier();
     confirmation = await auth.signInWithPhoneNumber(e164(raw), verifier);
-    loginView('code');
-  } catch (e) { loginView('phone', authMsg(e)); }
+    resetVerifier(); loginView('code');
+  } catch (e) { resetVerifier(); loginView('phone', authMsg(e)); }
 }
 async function afterLogin(fu) {
   const phone = fu.phoneNumber; S.phone = phone;
@@ -1750,6 +1758,7 @@ function viewHome() {
 
 // ---------- 사용설명서 · 버전 내역 (웹) ----------
 const WEB_CHANGES = [
+  ['웹 0.0.12', '2026-10-24', ['로그인: 인증번호 받기를 누른 뒤 기다리는 시간 줄임(사람 확인을 화면이 열릴 때 미리 준비)']],
   ['웹 0.0.11', '2026-10-24', ['윈도우 PC용 설치 프로그램(나인패밀리 설치 .exe) — 전체 → 계정 → PC 프로그램 설치 파일 받기. 토스포스처럼 설치해서 쓰고, 화면·기능은 웹앱과 같아요']],
   ['웹 0.0.10', '2026-10-24', ['직원과 권한(최고관리자): 직원 추가(권한 묶음), 항목별 권한 켜고 끄기, 사용 중지·다시 사용 — 로그인 번호와 서버 권한도 같이 맞춰요', '가맹점 보호·복원(최고관리자): 삭제한 가맹점 복원, 가맹점별 변경 이력과 그 시점으로 되돌리기, 백업 파일로 복원, 되돌리기 기준점(위험한 작업 직전에 자동 저장)', '가맹점 일괄 가져오기: 엑셀(.xlsx)·CSV, 미리보기 후 등록·갱신(거래처코드·사업자번호·상호로 같은 곳 찾기)', '단체 문자: 내용({상호} 자동 바꿈)·등급별·검색으로 가맹점 고르기, 휴대폰에서 한 곳씩 문자 앱 열기 (PC는 알리고 연동 후 바로 발송 예정)', '이제 안드로이드 앱의 전체 메뉴 기능이 웹에도 모두 들어왔어요']],
   ['웹 0.0.9', '2026-10-24', ['일일보고 쓰기: 날짜별로 쓰고 제출(완료 업무·올린 계약 자동 집계), 내가 낸 보고', '일일보고 종합 보기(보고 열람 권한자): 직원별 제출·미제출', '실적 보고서: 실적 권한자는 이달 실적 자동 집계를 고쳐서 대표님께 보고, 보고 열람 권한자는 올라온 보고서 보기', '자료실: 분류·검색, 자료 올리기(파일 5개·3MB, 사진은 자동으로 줄여서), 받기, 수정·삭제(올린 사람·관리자)', '비상연락망: 구분별 목록, 눌러서 전화, 추가·수정·삭제', '내 프로필: 사진 변경·상태 메시지, 다른 직원 프로필에서 1:1 대화·전화, 채팅 직원 줄에 프로필 사진']],
