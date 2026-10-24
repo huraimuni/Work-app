@@ -783,13 +783,45 @@ final class Store {
         }
     }
 
+    /** 재고 이력 한 줄(입고·출고·계약 출고·정정)을 그 재고 문서의 log 에 남긴다 — 웹과 같은 형식 {d, by, k, q, m}.
+     *  수량을 바꾸기 '전에' 부른다. 이력 기능 전에 등록된 재고는 그때 수량을 첫 입고로 먼저 남긴다. */
+    void slog(JSONObject r, String k, int q, String m) {
+        try {
+            if (!r.has("log")) {
+                JSONArray l0 = new JSONArray();
+                JSONObject first = new JSONObject();
+                first.put("d", r.optString("created"));
+                first.put("by", 0);
+                first.put("k", "입고");
+                first.put("q", r.optInt("qty", 1));
+                first.put("m", "이력 기능 전 등록");
+                l0.put(first);
+                r.put("log", l0);
+            }
+            JSONArray l = r.getJSONArray("log");
+            JSONObject e = new JSONObject();
+            e.put("d", now());
+            e.put("by", actor);
+            e.put("k", k);
+            e.put("q", q);
+            e.put("m", m == null ? "" : m);
+            l.put(e);
+            while (l.length() > 60) l.remove(0);
+        } catch (JSONException ignored) {
+        }
+    }
+
     /** 재고 한 줄을 출고 처리(수량 여러 개짜리는 1개만 떼어 낸다). 쓰인 줄을 돌려준다. */
     JSONObject takeStock(JSONObject row, int merchant, int contract) {
         try {
             JSONObject use = row;
+            JSONObject mer = byId("merchants", merchant);
+            String mn = mer == null ? "" : mer.optString("name");
             if (row.optString("serial").isEmpty() && row.optInt("qty", 1) > 1) {
+                slog(row, "계약 출고", -1, mn + " (1개 떼어 냄)");
                 row.put("qty", row.optInt("qty", 1) - 1);
                 use = create("stock");
+                use.put("log", new JSONArray());
                 use.put("model", row.optString("model"));
                 use.put("serial", "");
                 use.put("safe", row.optInt("safe"));
@@ -804,6 +836,7 @@ final class Store {
                     nc.put("sell", rc.optLong("sell"));
                 }
             }
+            if (use == row) slog(use, "계약 출고", -1, mn);
             use.put("qty", 1);
             use.put("status", "출고중");
             use.put("merchant", merchant);

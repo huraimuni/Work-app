@@ -76,6 +76,7 @@ public class MainActivity extends Activity {
         store.attach(store.sessionId(), store.cachedPerf(), store.cachedReport(), this::onRemote);
         me = store.sessionUser();
         new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(this::autoBackup, 25000);
+        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> checkAppUpdate(false), 8000);
         if (me != null) buildMain();
         else showLoading();
     }
@@ -641,6 +642,7 @@ public class MainActivity extends Activity {
         else if ("staff".equals(k)) renderStaff();
         else if ("merchants".equals(k)) renderMerchants();
         else if ("stock".equals(k)) renderStock();
+        else if ("stocklog".equals(k)) renderStockLog();
         else if ("contracts".equals(k)) renderContracts();
         else if ("manual".equals(k)) renderManual();
         else if ("about".equals(k)) renderAbout();
@@ -704,7 +706,7 @@ public class MainActivity extends Activity {
             fab.setOnClickListener(v -> showEditLibrary(null));
         } else if ("stock".equals(k)) {
             fab.setVisibility(View.VISIBLE);
-            fab.setContentDescription("재고 추가");
+            fab.setContentDescription("입고 (재고 추가)");
             fab.setOnClickListener(v -> showAddStock());
         } else if ("merchants".equals(k)) {
             fab.setVisibility(canEditMerchant() ? View.VISIBLE : View.GONE);
@@ -966,6 +968,10 @@ public class MainActivity extends Activity {
         timePickField(dueT, "⏰ 시간 (선택, 눌러서 고르기)");
         final EditText memo = Ui.field(this, "메모", false);
         memo.setSingleLine(false);
+        final EditText req = Ui.field(this, "가맹점 요청사항 (선택 — 완료하면 처리결과와 함께 응대 기록에 남아요)", false);
+        req.setSingleLine(false);
+        req.setMinLines(2);
+        final JSONObject[] picked = new JSONObject[1];
         final List<JSONObject> staff = new ArrayList<>();
         for (JSONObject u : store.list(store.users())) {
             if (!u.optBoolean("active", true)) continue;
@@ -979,6 +985,7 @@ public class MainActivity extends Activity {
         f.addView(type);
         Button mp = Ui.button(this, "가맹점 조회 (정보 자동 입력)", Ui.TINT, Ui.DEEP);
         mp.setOnClickListener(v -> pickMerchant(m -> {
+            picked[0] = m;
             client.setText(m.optString("name"));
             phone.setText(m.optString("phone"));
             addr.setText(m.optString("addr"));
@@ -987,6 +994,7 @@ public class MainActivity extends Activity {
         f.addView(client);
         f.addView(phone);
         f.addView(addr);
+        f.addView(req);
         f.addView(due);
         f.addView(dueT);
         f.addView(Ui.text(this, "날짜를 고르면 일정 달력에도 자동으로 표시돼요.", 12, Ui.GRAY, false), Ui.lp(this, 4));
@@ -1006,9 +1014,18 @@ public class MainActivity extends Activity {
                     int assignee = staff.get(who.getSelectedItemPosition()).optInt("id");
                     String dd = due.getText().toString().trim();
                     final String dueStr = dd.isEmpty() ? "" : dd + (dueT.getText().toString().trim().isEmpty() ? "" : " " + dueT.getText().toString().trim());
-                    store.addTask(ti, TYPES[type.getSelectedItemPosition()], client.getText().toString().trim(),
+                    JSONObject nt = store.addTask(ti, TYPES[type.getSelectedItemPosition()], client.getText().toString().trim(),
                             phone.getText().toString().trim(), addr.getText().toString().trim(),
                             dueStr, memo.getText().toString().trim(), assignee, myId());
+                    if (nt != null) {
+                        try {
+                            nt.put("req", req.getText().toString().trim());
+                            boolean same = picked[0] != null && picked[0].optString("name").trim().equals(client.getText().toString().trim());
+                            nt.put("merchant", same ? picked[0].optInt("id") : 0);
+                        } catch (Exception ignored) {
+                        }
+                        store.save();
+                    }
                     if (dd.matches("\\d{4}-\\d{2}-\\d{2}")) {
                         calSel = dd;
                         calY = Integer.parseInt(dd.substring(0, 4));
@@ -1038,8 +1055,11 @@ public class MainActivity extends Activity {
         addLine(l, "담당", store.userName(t.optInt("assignee")));
         addLine(l, "지시한 사람", store.userName(t.optInt("creator")));
         if (!t.optString("seenAt").isEmpty()) addLine(l, "열어본 시각", t.optString("seenAt"));
+        addLine(l, "가맹점 요청사항", t.optString("req"));
         addLine(l, "메모", t.optString("memo"));
-        if (t.has("doneMsg")) addLine(l, "완료 메시지", t.optString("doneMsg"));
+        if (t.has("doneMsg")) addLine(l, t.optString("req").isEmpty() && t.optInt("merchant") == 0 ? "완료 메시지" : "처리결과", t.optString("doneMsg"));
+        JSONObject linked = store.byId("mlogs", t.optInt("mlog"));
+        if (linked != null && !linked.optBoolean("deleted")) l.addView(Ui.text(this, "✔ 가맹점 응대 기록에도 남았어요.", 12, Ui.GREEN, false), Ui.lp(this, 4));
         l.addView(Ui.text(this, "처리 이력", 14, Ui.NAVY, true), Ui.lp(this, 12));
         JSONArray h = t.optJSONArray("history");
         for (int i = 0; h != null && i < h.length(); i++) {
@@ -1159,20 +1179,86 @@ public class MainActivity extends Activity {
                 }).show();
     }
 
+    /** 업무에 걸린 가맹점 (가맹점을 골라 올린 업무, 또는 거래처 이름이 가맹점 상호와 똑같은 업무) */
+    private JSONObject taskMerchant(JSONObject t) {
+        JSONObject m = store.byId("merchants", t.optInt("merchant"));
+        if (m != null && !m.optBoolean("deleted")) return m;
+        String cl = t.optString("client").trim();
+        if (cl.isEmpty()) return null;
+        for (JSONObject x : store.list(store.arr("merchants"))) if (x.optString("name").trim().equals(cl)) return x;
+        return null;
+    }
+
+    private static String kindOfTask(JSONObject t) {
+        String ty = t.optString("type"), ti = t.optString("title");
+        if ((ty + ti).contains("원격")) return "원격A/S";
+        if (ti.contains("전화")) return "전화응대";
+        if (ty.contains("AS") || ty.contains("A/S") || ty.contains("설치") || ty.contains("방문")) return "방문A/S";
+        return "기타";
+    }
+
+    /** 처리 완료: 처리결과를 받고, 가맹점이 걸린 업무면 그 가맹점 응대 기록에도 남긴다 (다시 완료하면 같은 기록을 고침) — 웹과 같다. */
     private void askComplete(final JSONObject t) {
-        final EditText msg = Ui.field(this, "처리 완료 메시지 (필수)", false);
+        LinearLayout f = form();
+        final JSONObject mer = taskMerchant(t);
+        if (!t.optString("req").isEmpty()) {
+            f.addView(Ui.text(this, "가맹점 요청사항", 12, Ui.DEEP, true));
+            f.addView(Ui.text(this, t.optString("req"), 14, Ui.INK, false), Ui.lp(this, 2));
+        }
+        f.addView(Ui.text(this, "처리결과 (필수)", 12, Ui.GREEN, true), Ui.lp(this, 10));
+        final EditText msg = Ui.field(this, "어떻게 처리했는지 (예: 포스 프로그램 재설치, 정상 결제 확인)", false);
         msg.setSingleLine(false);
-        FrameLayoutWrap w = new FrameLayoutWrap(this, msg);
-        new Dlg(this).setTitle("처리 완료").setView(w)
+        msg.setMinLines(3);
+        f.addView(msg, Ui.lp(this, 2));
+        final Spinner kind = new Spinner(this);
+        final JSONObject old = store.byId("mlogs", t.optInt("mlog"));
+        if (mer != null) {
+            kind.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, LOG_KINDS));
+            String k0 = old != null ? logKind(old.optString("kind")) : kindOfTask(t);
+            for (int i = 0; i < LOG_KINDS.length; i++) if (LOG_KINDS[i].equals(k0)) kind.setSelection(i);
+            f.addView(Ui.text(this, "응대 종류", 12, Ui.GRAY, true), Ui.lp(this, 10));
+            f.addView(kind);
+            f.addView(Ui.text(this, "'" + mer.optString("name") + "' 응대 기록에도 같이 남아요.", 12, Ui.GRAY, false), Ui.lp(this, 4));
+        } else {
+            f.addView(Ui.text(this, "가맹점이 연결되지 않은 업무라 응대 기록에는 남지 않아요.", 12, Ui.GRAY, false), Ui.lp(this, 8));
+        }
+        ScrollView sv = new ScrollView(this);
+        sv.addView(f);
+        new Dlg(this).setTitle("처리 완료").setView(sv)
                 .setNegativeButton("취소", null)
                 .setPositiveButton("완료 처리", (d, x) -> {
                     String m = msg.getText().toString().trim();
                     if (m.isEmpty()) {
-                        Ui.warn(this, "완료 메시지를 입력해 주세요.");
+                        Ui.warn(this, "처리결과를 입력해 주세요.");
                         return;
                     }
+                    if (mer != null) {
+                        try {
+                            String rq = t.optString("req").isEmpty() ? t.optString("title") : t.optString("req");
+                            JSONObject g = old;
+                            if (g == null) {
+                                g = store.create("mlogs");
+                                g.put("merchant", mer.optInt("id"));
+                                g.put("mname", mer.optString("name"));
+                                g.put("who", myId());
+                                g.put("task", t.optInt("id"));
+                                t.put("mlog", g.optInt("id"));
+                                t.put("merchant", mer.optInt("id"));
+                            } else {
+                                g.put("editedBy", myId());
+                                g.put("editedAt", Store.now());
+                                g.put("deleted", false);
+                            }
+                            g.put("date", todayStr());
+                            g.put("kind", LOG_KINDS[kind.getSelectedItemPosition()]);
+                            g.put("req", rq);
+                            g.put("res", m);
+                            g.put("text", rq + "\n→ 처리: " + m);
+                        } catch (Exception ignored) {
+                        }
+                    }
                     store.setStatus(t, myId(), "완료", m);
-                    Ui.toast(this, "완료 처리했습니다. 이력에 보관됩니다.");
+                    Ui.toast(this, mer != null ? "완료 처리하고 응대 기록에도 남겼어요." : "완료 처리했습니다. 이력에 보관됩니다.");
                     render();
                 }).show();
     }
@@ -1764,7 +1850,8 @@ public class MainActivity extends Activity {
             sub = null;
             render();
         }));
-        e.add(new Entry("일", "재고", "재고 장비 바코드 시리얼 단가 입고 출고 스캔", () -> goSub("stock")));
+        e.add(new Entry("일", "재고", "재고 장비 바코드 시리얼 단가 입고 출고 정정 스캔", () -> goSub("stock")));
+        e.add(new Entry("일", "재고 이력 (입고·출고·정정)", "재고 이력 입고 출고 정정 실사 조사 반품 불량", () -> goSub("stocklog")));
         e.add(new Entry("일", "가맹점", "가맹점 거래처 상호 사업자 등급 삭제", () -> goSub("merchants")));
         e.add(new Entry("일", "가맹점 응대 기록 조회", "응대 기록 AS 전화 응대 방문 메모 이력 날짜 가맹점", () -> showMerchantLogs(null)));
         e.add(new Entry("일", "가맹점 일괄 가져오기 (엑셀·이카운트)", "가맹점 일괄 가져오기 업로드 엑셀 csv 이카운트 거래처 등록", () -> {
@@ -1794,6 +1881,7 @@ public class MainActivity extends Activity {
         e.add(new Entry("일", "지난 업무 기록", "지난 업무 기록 이력 완료 검색", () -> goSub("history")));
         e.add(new Entry("회사", "사용설명서", "사용설명서 매뉴얼 도움말 사용법", () -> goSub("manual")));
         e.add(new Entry("회사", "버전·업데이트 내역", "버전 업데이트 내역 변경 이력", () -> goSub("about")));
+        e.add(new Entry("회사", "앱 업데이트 확인 (새 버전 받기)", "업데이트 확인 새 버전 apk 받기 최신", () -> checkAppUpdate(true)));
         Entry n = new Entry("회사", "공지사항", "공지사항 공지 알림", () -> goSub("notice"));
         int un = unreadNotices();
         n.badge = un > 0 ? String.valueOf(un) : "";
@@ -2465,6 +2553,19 @@ public class MainActivity extends Activity {
             callM.setOnClickListener(v -> openIntent(new Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + mpm))));
             l.addView(callM, Ui.lp(this, 8));
         }
+        int openN = 0;
+        for (final JSONObject ot : store.list(store.tasks())) {
+            if ("완료".equals(ot.optString("status"))) continue;
+            boolean mine = ot.optInt("merchant") == m.optInt("id") || (ot.optInt("merchant") == 0 && !ot.optString("client").trim().isEmpty() && ot.optString("client").trim().equals(m.optString("name").trim()));
+            if (!mine) continue;
+            if (openN++ == 0) l.addView(Ui.text(this, "📋 진행 중인 업무", 14, Ui.DEEP, true), Ui.lp(this, 14));
+            TextView tv = Ui.text(this, "[" + ot.optString("type") + "] " + ot.optString("title") + "\n" + store.userName(ot.optInt("assignee")) + " · " + stLabel(ot.optString("status"))
+                    + (ot.optString("due").isEmpty() ? "" : " · " + ot.optString("due")) + (ot.optString("req").isEmpty() ? "" : "\n요청: " + ot.optString("req")), 13, Ui.INK, false);
+            tv.setPadding(Ui.dp(this, 10), Ui.dp(this, 8), Ui.dp(this, 10), Ui.dp(this, 8));
+            tv.setBackground(Ui.round(Ui.CARD, 10, this));
+            tv.setOnClickListener(v -> showTask(ot.optInt("id")));
+            l.addView(tv, Ui.lp(this, 6));
+        }
         TextView lg = Ui.text(this, "📝 응대 기록 (" + ln + "건)" + (lastLog.isEmpty() ? "" : " · 마지막 " + lastLog) + "  — 날짜별 조회·기록 추가", 14, Ui.DEEP, true);
         lg.setPadding(0, Ui.dp(this, 14), 0, Ui.dp(this, 4));
         lg.setOnClickListener(v -> showMerchantLogs(m));
@@ -2632,7 +2733,7 @@ public class MainActivity extends Activity {
                     rs.setLineSpacing(0, 1.25f);
                     c.addView(rs, Ui.lp(this, 2));
                 }
-                c.addView(Ui.text(this, store.userName(g.optInt("who")) + (g.has("editedBy") ? "  ·  수정 " + store.userName(g.optInt("editedBy")) + " " + g.optString("editedAt") : ""), 11, Ui.GRAY, false), Ui.lp(this, 4));
+                c.addView(Ui.text(this, (g.has("task") ? "📋 업무에서 · " : "") + store.userName(g.optInt("who")) + (g.has("editedBy") ? "  ·  수정 " + store.userName(g.optInt("editedBy")) + " " + g.optString("editedAt") : ""), 11, Ui.GRAY, false), Ui.lp(this, 4));
                 c.setOnClickListener(v -> showEditLog(g, null, fill[0]));
                 list.addView(c, Ui.lp(this, 6));
             }
@@ -2854,7 +2955,23 @@ public class MainActivity extends Activity {
     // ---------- 재고 ----------
     private void renderStock() {
         content.addView(title("재고"));
-        content.addView(Ui.text(this, "장비를 직접 입력해 관리해요. 계약에서 장비를 고르면 '출고중'이 되고, 설치 완료하면 재고에서 빠집니다.", 13, Ui.GRAY, false));
+        content.addView(Ui.text(this, "입고·출고·수량 정정을 하면 이력이 남아요. 계약에서 장비를 고르면 '출고중'이 되고, 설치 완료하면 재고에서 빠집니다.", 13, Ui.GRAY, false));
+        LinearLayout sa = new LinearLayout(this);
+        String[] saL = {"＋ 입고", "− 출고", "± 정정", "이력"};
+        for (int i = 0; i < saL.length; i++) {
+            final int si = i;
+            Button bt = Ui.button(this, saL[i], i == 0 ? Ui.GOLD : i == 3 ? Ui.FIELD : Ui.TINT, i == 0 ? Ui.DARK : i == 3 ? Ui.INK : Ui.DEEP);
+            bt.setOnClickListener(v -> {
+                if (si == 0) showAddStock();
+                else if (si == 1) showStockOut(null);
+                else if (si == 2) showStockAdjust();
+                else goSub("stocklog");
+            });
+            LinearLayout.LayoutParams lpp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            lpp.setMargins(i == 0 ? 0 : Ui.dp(this, 4), 0, 0, 0);
+            sa.addView(bt, lpp);
+        }
+        content.addView(sa, Ui.lp(this, 10));
         if (canPerf()) {
             long asset = 0;
             int noPrice = 0;
@@ -2945,16 +3062,25 @@ public class MainActivity extends Activity {
         safe.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
         final EditText buy = Ui.field(this, "입고 단가 (1대당 산 값, 원, 선택)", false);
         buy.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        final EditText memo = Ui.field(this, "입고처·메모 (선택, 예: 토스 본사 10/24 배송분)", false);
         f.addView(model);
+        List<String> models = stockModels();
+        if (!models.isEmpty()) {
+            Button pickM = Ui.button(this, "있던 모델에서 고르기", Ui.TINT, Ui.DEEP);
+            pickM.setOnClickListener(v -> new Dlg(this).setTitle("모델 고르기").setItems(models.toArray(new String[0]), (d, w) -> model.setText(models.get(w))).setNegativeButton("닫기", null).show());
+            f.addView(pickM, Ui.lp(this, 6));
+        }
         f.addView(serials);
         f.addView(scanButtons(serials, true));
+        f.addView(Ui.text(this, "시리얼이 없는 물품은 같은 모델이 있으면 그 수량에 더해져요.", 12, Ui.GRAY, false), Ui.lp(this, 6));
         f.addView(qty);
+        f.addView(memo);
         f.addView(safe);
         if (canPerf()) f.addView(buy);
         ScrollView sv = new ScrollView(this);
         sv.addView(f);
-        final AlertDialog dlg = new Dlg(this).setTitle("재고 추가").setView(sv)
-                .setNegativeButton("취소", null).setPositiveButton("추가", null).create();
+        final AlertDialog dlg = new Dlg(this).setTitle("입고 (재고 추가)").setView(sv)
+                .setNegativeButton("취소", null).setPositiveButton("입고", null).create();
         dlg.show();
         dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
             String m = model.getText().toString().trim();
@@ -2980,32 +3106,47 @@ public class MainActivity extends Activity {
             java.util.Set<String> seen = new java.util.HashSet<>();
             for (String s : ss) {
                 boolean dupe = !seen.add(s.toLowerCase(Locale.ROOT));
-                for (JSONObject x : store.list(store.arr("stock"))) if (x.optString("serial").trim().equalsIgnoreCase(s)) dupe = true;
+                for (JSONObject x : store.list(store.arr("stock"))) if (!"설치완료".equals(x.optString("status")) && x.optString("serial").trim().equalsIgnoreCase(s)) dupe = true;
                 if (dupe) {
-                    Ui.toast(this, "이미 있는 시리얼이에요: " + s);
+                    Ui.toast(this, "이미 재고에 있는 시리얼이에요: " + s);
                     return;
                 }
             }
             long by = canPerf() ? parseWon(buy) : 0;
+            String mm = memo.getText().toString().trim();
             try {
                 if (ss.isEmpty()) {
-                    JSONObject r = store.create("stock");
-                    r.put("model", m);
-                    r.put("serial", "");
-                    r.put("qty", qn);
-                    r.put("safe", sf);
-                    r.put("status", "재고");
-                    r.put("deleted", false);
-                    if (by > 0) store.costDoc(r.optInt("id"), true).put("buy", by);
+                    JSONObject same = null;
+                    for (JSONObject x : store.list(store.arr("stock")))
+                        if ("재고".equals(x.optString("status")) && x.optString("serial").isEmpty() && x.optString("model").trim().equals(m)) same = x;
+                    if (same != null) {
+                        store.slog(same, "입고", qn, mm);
+                        same.put("qty", same.optInt("qty", 1) + qn);
+                        if (sf > 0) same.put("safe", sf);
+                        if (by > 0) store.costDoc(same.optInt("id"), true).put("buy", by);
+                    } else {
+                        JSONObject r = store.create("stock");
+                        r.put("log", new JSONArray());
+                        r.put("model", m);
+                        r.put("serial", "");
+                        r.put("qty", qn);
+                        r.put("safe", sf);
+                        r.put("status", "재고");
+                        r.put("deleted", false);
+                        store.slog(r, "입고", qn, mm);
+                        if (by > 0) store.costDoc(r.optInt("id"), true).put("buy", by);
+                    }
                 } else {
                     for (String s : ss) {
                         JSONObject r = store.create("stock");
+                        r.put("log", new JSONArray());
                         r.put("model", m);
                         r.put("serial", s);
                         r.put("qty", 1);
                         r.put("safe", sf);
                         r.put("status", "재고");
                         r.put("deleted", false);
+                        store.slog(r, "입고", 1, mm);
                         if (by > 0) store.costDoc(r.optInt("id"), true).put("buy", by);
                     }
                 }
@@ -3013,9 +3154,378 @@ public class MainActivity extends Activity {
             }
             store.save();
             dlg.dismiss();
-            Ui.toast(this, "재고에 추가했어요.");
+            Ui.toast(this, "입고했어요: " + m);
             render();
         });
+    }
+
+    // ---------- 재고 출고·수량 정정·이력 (웹 0.0.14 와 같은 방식) ----------
+    // 계약 없이 나간 것(반품·불량·A/S 교체·분실·정정)은 status '설치완료' + gone(사유) 로 둔다 → 목록·수익 계산에서 빠진다.
+    private static final String[] OUT_KINDS = {"반품 (공급처로)", "불량·폐기", "A/S 교체", "분실", "기타"};
+
+    private List<String> stockModels() {
+        java.util.TreeSet<String> s = new java.util.TreeSet<>();
+        for (JSONObject r : store.list(store.arr("stock"))) if (!r.optString("model").trim().isEmpty()) s.add(r.optString("model").trim());
+        return new ArrayList<>(s);
+    }
+
+    private List<JSONObject> inStock() {
+        List<JSONObject> out = new ArrayList<>();
+        for (JSONObject r : store.list(store.arr("stock"))) if ("재고".equals(r.optString("status"))) out.add(r);
+        Collections.sort(out, (x, y) -> {
+            int c = x.optString("model").compareTo(y.optString("model"));
+            return c != 0 ? c : x.optString("serial").compareTo(y.optString("serial"));
+        });
+        return out;
+    }
+
+    private static String stockState(JSONObject r) {
+        if ("설치완료".equals(r.optString("status"))) return r.optString("gone").isEmpty() ? "설치 완료" : "출고 완료 (" + r.optString("gone") + ")";
+        return r.optString("status", "재고");
+    }
+
+    private String moveLine(JSONObject x) {
+        int q = x.optInt("q");
+        String d = x.optString("d");
+        return (d.length() > 2 ? d.substring(2) : "예전 자료") + " · " + x.optString("k") + " " + (q > 0 ? "+" : "") + q
+                + (x.optString("m").isEmpty() ? "" : " · " + x.optString("m")) + (x.optInt("by") > 0 ? " · " + store.userName(x.optInt("by")) : "");
+    }
+
+    /** 계약 없이 n개 내보내기. 일부만 나가면 새 줄로 떼어 낸다. */
+    private void goneStock(JSONObject row, int n, String kind, String memo, int merchant) {
+        try {
+            boolean all = !row.optString("serial").isEmpty() || n >= row.optInt("qty", 1);
+            String m = kind + (memo.isEmpty() ? "" : " · " + memo);
+            JSONObject use = row;
+            if (!all) {
+                store.slog(row, "출고", -n, m);
+                row.put("qty", row.optInt("qty", 1) - n);
+                use = store.create("stock");
+                use.put("log", new JSONArray());
+                use.put("model", row.optString("model"));
+                use.put("serial", "");
+                use.put("qty", n);
+                use.put("safe", row.optInt("safe"));
+                use.put("deleted", false);
+            } else {
+                store.slog(use, "출고", -use.optInt("qty", 1), m);
+            }
+            use.put("status", "설치완료");
+            use.put("gone", kind);
+            use.put("goneAt", Store.now());
+            if (merchant > 0) use.put("merchant", merchant);
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void showStockOut(final JSONObject pre) {
+        final List<JSONObject> rows = inStock();
+        if (rows.isEmpty()) {
+            Ui.toast(this, "재고에 남은 장비가 없어요.");
+            return;
+        }
+        LinearLayout f = form();
+        f.addView(Ui.text(this, "가맹점에 계약으로 나가는 장비는 '계약'에서 고르세요. 여기는 반품·불량·A/S 교체처럼 계약 없이 나가는 것만 처리해요.", 12, Ui.GRAY, false));
+        f.addView(Ui.text(this, "출고 사유", 12, Ui.GRAY, true), Ui.lp(this, 10));
+        final Spinner kind = new Spinner(this);
+        kind.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, OUT_KINDS));
+        f.addView(kind);
+        final EditText q = Ui.field(this, "재고에서 찾기 (모델·시리얼, 초성)", false);
+        f.addView(q, Ui.lp(this, 10));
+        Button sc = Ui.button(this, "바코드로 찾기 (찾으면 바로 체크)", Ui.TINT, Ui.DEEP);
+        sc.setOnClickListener(v -> scanBarcode(q, false));
+        f.addView(sc, Ui.lp(this, 6));
+        final List<CheckBox> cbs = new ArrayList<>();
+        final List<EditText> qs = new ArrayList<>();
+        final List<View> lines = new ArrayList<>();
+        for (JSONObject r : rows) {
+            LinearLayout line = new LinearLayout(this);
+            line.setGravity(Gravity.CENTER_VERTICAL);
+            CheckBox cb = new CheckBox(this);
+            cb.setText(r.optString("model") + " / " + (r.optString("serial").isEmpty() ? "시리얼 없음 · " + r.optInt("qty", 1) + "개 보유" : r.optString("serial")));
+            cb.setChecked(pre != null && pre.optInt("id") == r.optInt("id"));
+            line.addView(cb, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            EditText n = null;
+            if (r.optString("serial").isEmpty()) {
+                n = Ui.field(this, "수량", false);
+                n.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+                n.setText("1");
+                line.addView(n, new LinearLayout.LayoutParams(Ui.dp(this, 72), ViewGroup.LayoutParams.WRAP_CONTENT));
+            }
+            cbs.add(cb);
+            qs.add(n);
+            lines.add(line);
+            f.addView(line);
+        }
+        final int[] mer = {0};
+        final Button mb = Ui.button(this, "가맹점 연결 (A/S 교체 등, 선택)", Ui.FIELD, Ui.INK);
+        mb.setOnClickListener(v -> pickMerchant(m -> {
+            mer[0] = m.optInt("id");
+            mb.setText("가맹점: " + m.optString("name"));
+        }));
+        f.addView(mb, Ui.lp(this, 10));
+        final EditText memo = Ui.field(this, "메모 (선택, 예: 액정 불량, 토스 본사로 반품)", false);
+        f.addView(memo, Ui.lp(this, 6));
+        q.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            public void onTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            public void afterTextChanged(Editable s) {
+                String v = s.toString().trim();
+                for (int i = 0; i < rows.size(); i++) {
+                    JSONObject r = rows.get(i);
+                    boolean hit = Kor.match(r.optString("model") + " " + r.optString("serial"), v);
+                    lines.get(i).setVisibility(hit || cbs.get(i).isChecked() ? View.VISIBLE : View.GONE);
+                    if (!v.isEmpty() && r.optString("serial").trim().equalsIgnoreCase(v) && !cbs.get(i).isChecked()) {
+                        cbs.get(i).setChecked(true);
+                        Ui.toast(MainActivity.this, "체크했어요: " + r.optString("serial"));
+                    }
+                }
+            }
+        });
+        ScrollView sv = new ScrollView(this);
+        sv.addView(f);
+        final AlertDialog dlg = new Dlg(this).setTitle("출고 (계약 없이 내보내기)").setView(sv)
+                .setNegativeButton("취소", null).setPositiveButton("출고", null).create();
+        dlg.show();
+        dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            String k = OUT_KINDS[kind.getSelectedItemPosition()].replaceAll(" \\(.*\\)", "");
+            int cnt = 0;
+            for (int i = 0; i < rows.size(); i++) {
+                if (!cbs.get(i).isChecked()) continue;
+                JSONObject r = rows.get(i);
+                int n = 1;
+                if (qs.get(i) != null) {
+                    try {
+                        n = Integer.parseInt(qs.get(i).getText().toString().trim());
+                    } catch (Exception e) {
+                        n = 0;
+                    }
+                    if (n < 1 || n > r.optInt("qty", 1)) {
+                        Ui.toast(this, r.optString("model") + " 수량은 1~" + r.optInt("qty", 1) + " 사이로 적어 주세요.");
+                        return;
+                    }
+                }
+                cnt++;
+            }
+            if (cnt == 0) {
+                Ui.toast(this, "나갈 장비를 체크해 주세요.");
+                return;
+            }
+            String mm = memo.getText().toString().trim();
+            for (int i = 0; i < rows.size(); i++) {
+                if (!cbs.get(i).isChecked()) continue;
+                int n = 1;
+                if (qs.get(i) != null) n = Integer.parseInt(qs.get(i).getText().toString().trim());
+                goneStock(rows.get(i), n, k, mm, mer[0]);
+            }
+            store.save();
+            dlg.dismiss();
+            Ui.toast(this, "출고했어요 (" + k + ").");
+            render();
+        });
+    }
+
+    /** 재고 조사(실사): 실제로 센 수량을 적으면 차이만큼 정정, 시리얼 장비는 없는 것만 체크를 끈다(분실). */
+    private void showStockAdjust() {
+        final List<JSONObject> rows = inStock();
+        if (rows.isEmpty()) {
+            Ui.toast(this, "정정할 재고가 없어요.");
+            return;
+        }
+        LinearLayout f = form();
+        f.addView(Ui.text(this, "창고에서 실제로 센 수량을 적으세요. 시리얼 장비는 실제로 없는 것만 체크를 끄면 '분실'로 빠져요. 바뀐 것만 이력에 남습니다.", 12, Ui.GRAY, false));
+        final EditText q = Ui.field(this, "시리얼 스캔하면 '확인' 표시 (선택)", false);
+        f.addView(q, Ui.lp(this, 8));
+        Button sc = Ui.button(this, "바코드로 확인", Ui.TINT, Ui.DEEP);
+        sc.setOnClickListener(v -> scanBarcode(q, false));
+        f.addView(sc, Ui.lp(this, 6));
+        final List<CheckBox> cbs = new ArrayList<>();
+        final List<EditText> qs = new ArrayList<>();
+        String lastModel = null;
+        for (JSONObject r : rows) {
+            if (!r.optString("model").equals(lastModel)) {
+                lastModel = r.optString("model");
+                f.addView(Ui.text(this, lastModel, 14, Ui.INK, true), Ui.lp(this, 12));
+            }
+            if (!r.optString("serial").isEmpty()) {
+                CheckBox cb = new CheckBox(this);
+                cb.setText(r.optString("serial"));
+                cb.setChecked(true);
+                f.addView(cb);
+                cbs.add(cb);
+                qs.add(null);
+            } else {
+                LinearLayout line = new LinearLayout(this);
+                line.setGravity(Gravity.CENTER_VERTICAL);
+                line.addView(Ui.text(this, "시리얼 없음 · 장부 " + r.optInt("qty", 1) + "개 → 실제", 14, Ui.INK, false), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+                EditText n = Ui.field(this, "실제", false);
+                n.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+                n.setText(String.valueOf(r.optInt("qty", 1)));
+                line.addView(n, new LinearLayout.LayoutParams(Ui.dp(this, 80), ViewGroup.LayoutParams.WRAP_CONTENT));
+                f.addView(line);
+                cbs.add(null);
+                qs.add(n);
+            }
+        }
+        final EditText memo = Ui.field(this, "정정 사유 (필수, 예: 10월 재고 조사)", false);
+        f.addView(memo, Ui.lp(this, 12));
+        q.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            public void onTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            public void afterTextChanged(Editable s) {
+                String v = s.toString().trim();
+                if (v.isEmpty()) return;
+                for (int i = 0; i < rows.size(); i++) {
+                    if (cbs.get(i) != null && rows.get(i).optString("serial").trim().equalsIgnoreCase(v)) {
+                        cbs.get(i).setChecked(true);
+                        cbs.get(i).setTextColor(Ui.GREEN);
+                        Ui.toast(MainActivity.this, "확인: " + v);
+                    }
+                }
+            }
+        });
+        ScrollView sv = new ScrollView(this);
+        sv.addView(f);
+        final AlertDialog dlg = new Dlg(this).setTitle("수량 정정 (재고 조사)").setView(sv)
+                .setNegativeButton("취소", null).setPositiveButton("정정 저장", null).create();
+        dlg.show();
+        dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            List<int[]> ch = new ArrayList<>(); // {행 번호, 새 수량}
+            for (int i = 0; i < rows.size(); i++) {
+                if (cbs.get(i) != null) {
+                    if (!cbs.get(i).isChecked()) ch.add(new int[]{i, 0});
+                } else {
+                    int n;
+                    try {
+                        n = Integer.parseInt(qs.get(i).getText().toString().trim());
+                    } catch (Exception e) {
+                        continue;
+                    }
+                    if (n >= 0 && n != rows.get(i).optInt("qty", 1)) ch.add(new int[]{i, n});
+                }
+            }
+            if (ch.isEmpty()) {
+                Ui.toast(this, "바뀐 수량이 없어요.");
+                return;
+            }
+            String mm = memo.getText().toString().trim();
+            if (mm.isEmpty()) {
+                Ui.toast(this, "정정 사유를 적어 주세요.");
+                return;
+            }
+            for (int[] c : ch) {
+                JSONObject r = rows.get(c[0]);
+                try {
+                    if (c[1] == 0) {
+                        store.slog(r, "정정", -r.optInt("qty", 1), mm);
+                        r.put("status", "설치완료");
+                        r.put("gone", r.optString("serial").isEmpty() ? "정정" : "분실");
+                        r.put("goneAt", Store.now());
+                    } else {
+                        store.slog(r, "정정", c[1] - r.optInt("qty", 1), mm);
+                        r.put("qty", c[1]);
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+            store.save();
+            dlg.dismiss();
+            Ui.toast(this, ch.size() + "건 정정했어요.");
+            render();
+        });
+    }
+
+    private String slogF = "전체";
+
+    private void renderStockLog() {
+        content.addView(title("재고 이력"));
+        content.addView(Ui.text(this, "입고·출고(계약 출고 포함)·수량 정정이 시간 순으로 남아요. 눌러서 그 장비를 열어요.", 13, Ui.GRAY, false));
+        LinearLayout chips = new LinearLayout(this);
+        for (final String k : new String[]{"전체", "입고", "출고", "정정"}) {
+            TextView c = Ui.chip(this, k, k.equals(slogF) ? Ui.NAVY : Ui.FIELD, k.equals(slogF) ? Color.WHITE : Ui.INK);
+            c.setPadding(Ui.dp(this, 14), Ui.dp(this, 8), Ui.dp(this, 14), Ui.dp(this, 8));
+            c.setOnClickListener(v -> {
+                slogF = k;
+                render();
+            });
+            LinearLayout.LayoutParams lpp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lpp.setMargins(0, 0, Ui.dp(this, 6), 0);
+            chips.addView(c, lpp);
+        }
+        content.addView(chips, Ui.lp(this, 10));
+        final EditText q = Ui.field(this, "모델·시리얼·메모·직원 검색 (초성)", false);
+        content.addView(q, Ui.lp(this, 8));
+        final List<Object[]> moves = new ArrayList<>(); // {재고, 이력 한 줄}
+        for (JSONObject r : store.list(store.arr("stock"))) {
+            JSONArray lg = r.optJSONArray("log");
+            try {
+                if (lg != null) {
+                    for (int i = 0; i < lg.length(); i++) moves.add(new Object[]{r, lg.optJSONObject(i)});
+                    continue;
+                }
+                if (!r.optString("serial").isEmpty() || r.optInt("contract") == 0) {
+                    JSONObject x = new JSONObject();
+                    x.put("d", r.optString("created"));
+                    x.put("k", "입고");
+                    x.put("q", r.optInt("qty", 1));
+                    moves.add(new Object[]{r, x});
+                }
+                if (r.optInt("contract") > 0) {
+                    JSONObject x = new JSONObject();
+                    JSONObject mm = store.byId("merchants", r.optInt("merchant"));
+                    x.put("d", "");
+                    x.put("k", "계약 출고");
+                    x.put("q", -r.optInt("qty", 1));
+                    x.put("m", mm == null ? "" : mm.optString("name"));
+                    moves.add(new Object[]{r, x});
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        Collections.sort(moves, (x, y) -> ((JSONObject) y[1]).optString("d").compareTo(((JSONObject) x[1]).optString("d")));
+        final LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        content.addView(list);
+        final Runnable fill = () -> {
+            list.removeAllViews();
+            int n = 0;
+            for (Object[] mv : moves) {
+                final JSONObject r = (JSONObject) mv[0];
+                JSONObject x = (JSONObject) mv[1];
+                String k = x.optString("k");
+                if (!"전체".equals(slogF) && !k.endsWith(slogF)) continue;
+                if (!Kor.match(r.optString("model") + " " + r.optString("serial") + " " + x.optString("m") + " " + (x.optInt("by") > 0 ? store.userName(x.optInt("by")) : ""), q.getText().toString())) continue;
+                if (++n > 300) break;
+                int col = "입고".equals(k) ? Ui.GREEN : "정정".equals(k) ? Ui.AMBER : Ui.RED;
+                LinearLayout c = Ui.card(this);
+                c.addView(Ui.text(this, r.optString("model") + (r.optString("serial").isEmpty() ? "" : " / " + r.optString("serial")), 14, Ui.INK, true));
+                c.addView(Ui.text(this, k + " " + (x.optInt("q") > 0 ? "+" : "") + x.optInt("q"), 14, col, true), Ui.lp(this, 2));
+                c.addView(Ui.text(this, moveLine(x), 12, Ui.GRAY, false), Ui.lp(this, 2));
+                c.setOnClickListener(v -> showStockRow(r));
+                list.addView(c, Ui.lp(this, 8));
+            }
+            if (n == 0) list.addView(Ui.text(this, "이력이 없어요.", 14, Ui.GRAY, false), Ui.lp(this, 16));
+        };
+        q.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            public void onTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            public void afterTextChanged(Editable s) {
+                fill.run();
+            }
+        });
+        fill.run();
     }
 
     private void showStockRow(final JSONObject r) {
@@ -3042,14 +3552,29 @@ public class MainActivity extends Activity {
             f.addView(buy);
             f.addView(sell);
         }
-        if ("출고중".equals(r.optString("status"))) {
-            JSONObject mer = store.byId("merchants", r.optInt("merchant"));
-            f.addView(Ui.text(this, "출고중 · " + (mer == null ? "" : mer.optString("name")), 13, Ui.GRAY, false), Ui.lp(this, 8));
+        JSONObject mer = store.byId("merchants", r.optInt("merchant"));
+        f.addView(Ui.text(this, "상태: " + stockState(r) + (mer == null ? "" : " · " + mer.optString("name")), 13, Ui.GRAY, false), Ui.lp(this, 8));
+        if (r.optString("serial").isEmpty()) f.addView(Ui.text(this, "수량은 '정정' 또는 '입고'·'출고'로 바꿔 주세요 (지금 " + r.optInt("qty", 1) + "개).", 12, Ui.GRAY, false), Ui.lp(this, 4));
+        JSONArray hl = r.optJSONArray("log");
+        if (hl != null && hl.length() > 0) {
+            f.addView(Ui.text(this, "이 장비 이력", 12, Ui.DEEP, true), Ui.lp(this, 10));
+            for (int i = hl.length() - 1, n = 0; i >= 0 && n < 8; i--, n++) f.addView(Ui.text(this, moveLine(hl.optJSONObject(i)), 12, Ui.GRAY, false), Ui.lp(this, 2));
         }
-        new Dlg(this).setTitle("재고 수정").setView(f)
+        final AlertDialog[] rd = new AlertDialog[1];
+        if ("재고".equals(r.optString("status"))) {
+            Button ob = Ui.button(this, "이 장비 출고 (반품·불량 등)", Ui.TINT, Ui.DEEP);
+            ob.setOnClickListener(v -> {
+                if (rd[0] != null) rd[0].dismiss();
+                showStockOut(r);
+            });
+            f.addView(ob, Ui.lp(this, 10));
+        }
+        ScrollView rsv = new ScrollView(this);
+        rsv.addView(f);
+        rd[0] = new Dlg(this).setTitle("재고 수정").setView(rsv)
                 .setNegativeButton("닫기", null)
                 .setNeutralButton("삭제", (d, w) -> new Dlg(this).setTitle("삭제할까요?")
-                        .setMessage(r.optString("model") + " " + r.optString("serial") + "\n목록에서 지워집니다.")
+                        .setMessage(r.optString("model") + " " + r.optString("serial") + "\n잘못 넣은 것을 지울 때만 쓰세요. 실제로 나간 것은 '출고', 수가 안 맞으면 '정정'을 써야 이력이 남아요.")
                         .setNegativeButton("취소", null).setPositiveButton("삭제", (d2, w2) -> {
                             try {
                                 r.put("deleted", true);
@@ -4263,12 +4788,12 @@ public class MainActivity extends Activity {
     // ---------- 사용설명서 ----------
     private static final String[][] MANUAL = {
             {"처음 시작하기 · 로그인", "1. 앱을 켜면 잠깐 시작 화면이 나오고, 처음에는 로그인 화면이 나옵니다.\n2. 관리자가 등록해 둔 내 휴대폰 번호(예: 01012345678)를 입력하고 '인증번호 받기'를 누릅니다.\n3. 문자로 온 인증번호 6자리를 입력하고 '확인'을 누릅니다.\n4. 한 번 로그인하면 계속 유지됩니다. 다시 묻지 않아요.\n\n※ '등록되지 않은 번호입니다'가 나오면 관리자에게 내 번호 등록을 요청하세요.\n※ 로그아웃은 맨 아래 탭 '전체' → 맨 아래 '로그아웃'입니다. 폰을 바꾸면 같은 번호로 다시 인증하면 됩니다."},
-            {"업무 탭", "내게 지시된 업무를 확인하고 처리하는 곳입니다.\n\n■ 화면 구성\n- 맨 위 금색 카드와 상태 필터는 위에 고정되어 있고, 그 아래 업무 목록만 위아래로 움직여요. 카드: 남은 업무 수, 미확인·진행·보류·오늘 완료 수와 진행 막대\n- 계약 만료 알림: 만료가 3개월 안으로 남은 계약이 있으면 카드가 나타납니다. 누르면 계약 관리로 이동합니다.\n- 업무 카드: 종류(설치·AS·영업·서류·카드), 제목, 거래처, 기한, 상태\n\n■ 업무 처리\n1. 카드를 누르면 상세가 열립니다.\n2. 아래 버튼으로 상태를 바꿉니다: 진행중 / 보류, 끝나면 '처리 완료'.\n3. '완료'를 누르면 완료 메시지를 적을 수 있어요. 모든 처리 기록은 이력으로 남습니다.\n\n■ 업무 지시하기 (업무 지시 권한이 있는 사람)\n- 오른쪽 아래 + 버튼 → 제목, 종류, 거래처, 전화, 주소, 기한, 메모, 담당 직원 입력 후 '지시하기'.\n- 기한 날짜 칸을 누르면 달력이, 시간 칸을 누르면 시계가 떠서 고를 수 있어요(시간은 선택, 길게 누르면 지워져요). 고른 업무는 일정 탭 달력(점·그날 목록·다가오는 일정)에 자동으로 나타나고, 시간이 있으면 같이 보여요. 일정 추가·프로젝트 마감일도 같은 방식으로 고릅니다.\n- '가맹점 조회'를 누르면 등록된 가맹점을 검색해 선택할 수 있고, 거래처·전화·주소가 자동으로 채워집니다.\n- '전체 업무' 보기 권한이 있으면 위쪽 '내 업무 / 전체 업무' 버튼이 보입니다.\n\n■ 필터 · 일정 다시 잡기\n- 업무 상태는 미확인 → 진행중 → 완료(또는 보류) 순서예요. 지시된 업무는 '미확인'이고, 담당자가 '진행중'을 누르면 확인한 것으로 봅니다. (담당자가 업무를 처음 열어본 시각은 상세에 '열어본 시각'으로 남아요.) 예전의 '확인함'은 '진행중'으로 합쳐졌어요.\n- 업무 목록 위 '상태별로 보기' 줄에서 미완료(완료 빼고 전부) / 미확인 / 진행중 / 보류 / 완료를 눌러 골라 볼 수 있어요. 칸마다 건수가 크게 보이고, 고른 칸은 금색이에요. 내 업무·전체 업무 모두 적용됩니다. (미확인+진행중+보류 = 미완료)\n- 업무를 열면 지금 상태 버튼에 ✔ 가 붙어 어디까지 왔는지 알 수 있어요.\n- 업무를 '보류'하면 새 일정을 지금 잡을지 물어요. 업무를 열어 '📅 일정 다시 잡기'를 눌러도 되고, 날짜(달력)·시간(시계)을 고르면 기한이 바뀌면서 일정 탭 달력(점·그날 목록·다가오는 일정)도 같이 바뀝니다. 바뀐 내용은 처리 이력에 남아요."},
+            {"업무 탭", "내게 지시된 업무를 확인하고 처리하는 곳입니다.\n\n■ 화면 구성\n- 맨 위 금색 카드와 상태 필터는 위에 고정되어 있고, 그 아래 업무 목록만 위아래로 움직여요. 카드: 남은 업무 수, 미확인·진행·보류·오늘 완료 수와 진행 막대\n- 계약 만료 알림: 만료가 3개월 안으로 남은 계약이 있으면 카드가 나타납니다. 누르면 계약 관리로 이동합니다.\n- 업무 카드: 종류(설치·AS·영업·서류·카드), 제목, 거래처, 기한, 상태\n\n■ 업무 처리\n1. 카드를 누르면 상세가 열립니다.\n2. 아래 버튼으로 상태를 바꿉니다: 진행중 / 보류, 끝나면 '처리 완료'.\n3. '완료'를 누르면 완료 메시지를 적을 수 있어요. 모든 처리 기록은 이력으로 남습니다.\n\n■ 업무 지시하기 (업무 지시 권한이 있는 사람)\n- 오른쪽 아래 + 버튼 → 제목, 종류, 거래처, 전화, 주소, 기한, 메모, 담당 직원 입력 후 '지시하기'.\n- 기한 날짜 칸을 누르면 달력이, 시간 칸을 누르면 시계가 떠서 고를 수 있어요(시간은 선택, 길게 누르면 지워져요). 고른 업무는 일정 탭 달력(점·그날 목록·다가오는 일정)에 자동으로 나타나고, 시간이 있으면 같이 보여요. 일정 추가·프로젝트 마감일도 같은 방식으로 고릅니다.\n- '가맹점 조회'를 누르면 등록된 가맹점을 검색해 선택할 수 있고, 거래처·전화·주소가 자동으로 채워집니다.\n- '전체 업무' 보기 권한이 있으면 위쪽 '내 업무 / 전체 업무' 버튼이 보입니다.\n\n■ 필터 · 일정 다시 잡기\n- 업무 상태는 미확인 → 진행중 → 완료(또는 보류) 순서예요. 지시된 업무는 '미확인'이고, 담당자가 '진행중'을 누르면 확인한 것으로 봅니다. (담당자가 업무를 처음 열어본 시각은 상세에 '열어본 시각'으로 남아요.) 예전의 '확인함'은 '진행중'으로 합쳐졌어요.\n- 업무 목록 위 '상태별로 보기' 줄에서 미완료(완료 빼고 전부) / 미확인 / 진행중 / 보류 / 완료를 눌러 골라 볼 수 있어요. 칸마다 건수가 크게 보이고, 고른 칸은 금색이에요. 내 업무·전체 업무 모두 적용됩니다. (미확인+진행중+보류 = 미완료)\n- 업무를 열면 지금 상태 버튼에 ✔ 가 붙어 어디까지 왔는지 알 수 있어요.\n- 업무를 '보류'하면 새 일정을 지금 잡을지 물어요. 업무를 열어 '📅 일정 다시 잡기'를 눌러도 되고, 날짜(달력)·시간(시계)을 고르면 기한이 바뀌면서 일정 탭 달력(점·그날 목록·다가오는 일정)도 같이 바뀝니다. 바뀐 내용은 처리 이력에 남아요.\n\n■ 가맹점 업무와 응대 기록\n- 업무를 올릴 때 '가맹점 조회'로 가맹점을 고르고 '가맹점 요청사항'을 적어 두세요.\n- '처리 완료'를 누르면 처리결과(필수)와 응대 종류를 적어요. 그러면 그 가맹점 응대 기록에 요청사항·처리결과가 자동으로 남아요(📋 업무에서 표시). 다시 완료하면 같은 기록이 고쳐져요.\n- 가맹점 정보 화면에 그 가맹점의 진행 중인 업무가 보여요."},
             {"프로젝트 탭", "여러 사람이 오래 진행하는 일을 관리합니다.\n\n1. 오른쪽 아래 + 로 프로젝트를 만듭니다 (제목, 기한, 메모, 책임자).\n2. 프로젝트를 누르면 체크리스트·진행률(%)·'점검 필요' 체크·메모를 수정할 수 있습니다.\n3. 체크리스트: 프로젝트를 만들 때 한 줄에 항목 하나씩 적거나, 열어서 '+ 항목 추가'(여러 줄 가능)로 필요한 만큼 늘려요. 개수 제한은 없어요. 항목을 체크하면 완료/전체 비율대로 진행률(%)과 막대가 자동으로 계산되고 바로 저장돼요. ✕ 로 항목을 지울 수 있어요. 체크리스트가 없으면 예전처럼 슬라이더로 직접 조절합니다.\n4. 프로젝트 목록 위 버튼으로 전체 / 진행중 / 완료(100%)를 나눠 볼 수 있어요. 100%가 된 프로젝트는 열어서 '↩ 완료 되돌리기'를 누르면 진행중으로 돌아가요(체크리스트면 마지막으로 체크한 항목이 풀리고, 직접 조절형이면 90%가 돼요). 항목 체크를 직접 풀어도 됩니다.\n5. 저장할 때마다 진행 기록이 쌓여서 누가 언제 무엇을 바꿨는지 볼 수 있어요."},
             {"채팅 탭", "직원끼리 대화하는 곳이에요. 원하는 만큼 채팅방을 만들 수 있습니다.\n\n■ 새 채팅 만들기\n- 채팅 탭 직원 줄에는 '직원 총 N명'이 보이고, 직원이 많으면 좌우로 밀어서 화면 밖 직원도 볼 수 있어요.\n- 맨 위 '+ 새 채팅방 만들기'를 누르면 두 가지가 나와요.\n  ① 그룹 채팅방: 그룹 이름을 적고 '다음' → 초대할 직원을 체크('전체 선택'도 있어요) → '만들기'. 초대한 사람들끼리만 보이는 방이 열려요.\n  ② 1:1 채팅: 직원 한 명을 고르면 바로 대화창이 열려요. (첫 메시지를 보내야 목록에 생겨요)\n- 방이 하나도 없으면 '기본 채팅방 만들기'로 전체방·서류접수·입금확인·신규계약·AS설치·공지 방을 한 번에 만들 수 있어요.\n\n■ 대화방\n- 방을 누르면 전체 화면 대화방이 열리고, 입력줄은 맨 아래에 고정됩니다. 왼쪽 위 ‹ 또는 폰의 뒤로가기로 목록에 돌아갑니다.\n- 내 말풍선은 금색·오른쪽, 다른 사람은 흰색·왼쪽이고 옆에 이름과 프로필 사진이 나옵니다. 같은 사람이 같은 분에 이어 보내면 사진·이름은 한 번만 나와요.\n- 사람 사진을 누르면 그 직원의 프로필(이름·상태 메시지·전화번호)이 나오고, '전화하기'로 바로 걸 수 있어요.\n\n■ 답장 · 반응 · 삭제 (텔레그램처럼)\n- 말풍선을 두 번 빠르게 누르면 ❤️ 좋아요가 붙습니다. 같은 걸 다시 두 번 누르면 취소돼요.\n- 말풍선을 길게 누르면 맨 위에 이모티콘 줄(👍 ❤️ 😂 😮 😢 🙏 🔥 👏)이 뜨고, 그 아래에 답장 / 복사(글만) / 삭제(내 메시지만)가 있어요. 이모티콘을 한 번 누르면 바로 붙습니다.\n- 답장을 고르면 입력줄 위에 '○○에게 답장' 띠가 생기고, 그 상태로 보내면 말풍선 위에 인용이 붙어요. 띠의 ✕ 로 취소합니다.\n- 이미 붙은 이모티콘을 누르면 같은 목록이 떠서 다른 이모티콘으로 바꾸거나, 내 이모티콘을 한 번 더 눌러 지울 수 있어요(텔레그램처럼).\n- 삭제한 내 메시지는 대화에서 사라지고, 서버에는 기록이 보관됩니다.\n\n■ 링크\n- 글에 웹 주소(예: https://… 또는 naver.com)를 적어 보내면 파란 밑줄로 표시되고, 말풍선을 한 번 누르면 브라우저로 열립니다. 주소가 여러 개면 목록에서 고르세요. 길게 누르기·두 번 누르기는 그대로 됩니다.\n\n■ 사진·파일·이모지·스티커\n- 입력줄 왼쪽 '+' → 사진 보내기(앨범) / 사진 찍어 보내기 / 파일 보내기.\n- 사진은 자동으로 줄여서 올라가요. 대화 속 사진을 누르면 크게 보이고, '다른 앱으로 열기·저장'으로 저장할 수 있습니다.\n- 파일은 3MB까지 보낼 수 있어요(문서·엑셀·PDF용). 더 큰 파일은 지금은 보낼 수 없습니다. 파일 말풍선을 누르면 내려받아 열립니다.\n- 입력줄 오른쪽 ☺ 를 누르면 판이 열려요. 맨 위 탭: 이모지(글 사이에 들어감) / 나인이 / 복이 / 호야 / 깍이 / 도리. 스티커는 누르면 바로 전송됩니다.\n- '나인이 프렌즈'는 우리 회사 캐릭터 5마리예요(아홉꼬리 여우 나인이, 복두꺼비 복이, 아기 호랑이 호야, 까치 깍이, 다람쥐 도리). 마리당 16종, 모두 80종으로 신규계약 성공·축하·대단해·빡쳐·정신 차려·힘내와 우리 일(POS 설치, 현장 AS, 랜선 공사, 단말기 수리·도색, 토스 영업, 테이블오더, 회의, 서류, 보고서, 차에서 꿀잠 등)이 들어 있어요.\n- 예전에 보낸 나인이 스티커 메시지는 그대로 보입니다.\n\n■ 보내는 중 안내\n- 사진·파일은 인터넷이 연결돼야 올라가요. '보내는 중…'이 뜬 뒤 대화에 나타납니다. 안 나타나면 인터넷을 확인하고 다시 보내 주세요.\n\n■ 방 안 메뉴 · 검색\n- 방 위쪽 이름(또는 사진)을 누르면: 1:1은 상대 프로필, 그룹은 참여자 목록(누르면 프로필)과 '초대하기'·'이름 변경'이 나와요. 나중에 초대한 사람은 들어온 뒤의 대화부터 볼 수 있어요.\n- 오른쪽 위 🔍 는 방 안 대화 검색이에요. 단어(초성도 가능)를 치면 찾은 글이 노랗게 표시되고, ▲ ▼ 로 이전·다음 글로 넘어가요. ✕ 로 닫습니다.\n- 오른쪽 위 ⋮ 는 채팅방 설정이에요: 대화 검색 · 프로필/참여자 · 음소거 · 배경화면 변경 · 이름 변경(그룹) · 대화 내용 비우기 · 대화방 삭제.\n- 음소거는 이 폰에서 그 방 알림만 꺼요. 비우기·삭제는 '내 화면에서만' 적용돼서 다른 사람 대화에는 영향이 없고, 삭제한 방도 새 메시지가 오면 다시 나타나요. 배경화면도 내 폰에서만 바뀌어요.\n- 채팅 탭 위쪽 🔍 검색창(엔터)에 단어를 치면 직원·대화방 이름과 함께 '대화 내용 검색' 결과가 나와요. 누르면 그 방의 그 글로 바로 이동합니다.\n\n■ 안 읽은 글 표시\n- 방 목록 오른쪽에 안 읽은 글 수가 빨간 숫자로 나오고, 아래 '채팅' 탭에도 전체 합계가 나와요. 방을 열면 읽은 것으로 바뀝니다. 음소거한 방은 회색 숫자이고 탭 합계에는 넣지 않아요. 이 표시는 내 폰에서만 계산돼요.\n\n■ 1:1 비공개 대화\n- 채팅 탭 맨 위 직원 목록에서 직원을 누르거나, 🔍 검색창에 이름(초성 가능)을 적어 찾은 직원을 누르거나, 채팅에서 직원 사진을 눌러 '1:1 대화'를 누르면 대화창이 열려요.\n- 텔레그램처럼 직원을 눌렀다고 방이 바로 생기지는 않아요. 첫 메시지를 보내야 대화 목록에 나타납니다. 같은 사람과는 항상 같은 방이 열려요.\n- 이 방은 두 사람 사이의 대화라서 다른 직원에게는 내려가지 않아요(최고관리자 포함). 목록에는 상대 이름으로 보여요.\n- 답장·반응·스티커·사진·파일은 일반 방과 같이 쓸 수 있어요. (사진·파일 자체는 보관 주소를 아는 사람만 열 수 있어 사실상 두 사람만 열어요.)\n- 이 방은 이름을 바꿀 수 없고, 업데이트 전의 앱에는 보이지 않아요.\n\n※ 1:1 대화와 초대한 그룹방을 뺀 나머지 기본 채팅방(전체방 등)은 모든 직원이 볼 수 있습니다. 민감한 개인 이야기·개인정보 파일은 1:1 대화나 그룹방으로 나누세요."},
             {"일정 탭 (달력)", "한국 달력과 앞으로의 일정을 함께 봅니다.\n\n■ 달력\n- 일요일·공휴일은 빨간색, 토요일은 파란색, 오늘은 금색 원입니다. 공휴일 이름도 표시돼요. (2026~2028년 기준)\n- ‹ › 로 달을 넘기고 '오늘'을 누르면 오늘로 돌아옵니다.\n- 일정이나 업무 기한이 있는 날은 작은 금색 점이 찍혀요.\n- 날짜를 누르면 그날의 일정과 업무가 아래에 나옵니다.\n\n■ 일정 남기기\n1. 오른쪽 아래 + 버튼.\n2. 제목과 날짜를 적고, 시간은 선택입니다.\n3. '가맹점 조회·선택'을 누르면 등록된 가맹점 중에서 찾아 고릅니다 (초성 검색 가능). 고르면 사업자번호·연락처·주소·계약조건·등급이 불러와지고, 장소에는 가맹점 주소가 자동으로 들어갑니다.\n4. '추가'를 누르면 달력에 바로 표시되고, 달력 아래 '다가오는 일정'에도 올라갑니다.\n\n■ 다가오는 일정\n- 오늘부터 앞으로의 일정과 내 업무 기한이 날짜 순으로 나와서, 언제 어디로 가야 하는지 한눈에 확인할 수 있습니다.\n- 가맹점이 연결된 일정을 누르면 가맹점 상세 정보가 열립니다."},
             {"전체 탭", "나머지 모든 기능으로 들어가는 메뉴판입니다.\n\n■ 기능 검색\n- 맨 위 프로필 카드 아래 '🔍 기능 검색' 칸에 단어나 초성을 치면 그 기능이 바로 나옵니다. 예: '재고', 'ㅈㄱ', '문자', '수익', '바코드', '프로필'.\n- 눌러서 바로 이동해요. 지우면 원래 메뉴판으로 돌아갑니다. (업무·채팅·일정 같은 탭도 검색됩니다.)\n\n■ 메뉴\n- 맨 위 내 카드를 누르면 프로필 사진과 상태 메시지를 바꿀 수 있어요.\n- 재고: 장비 재고 관리 (바코드 스캔, 단가)\n- 가맹점: 가맹점 정보 관리\n- 신규 계약 올리기 / 계약 관리: 계약 등록과 설치 완료 처리, 만료 알림\n- 단체 문자 보내기: 가맹점에 안내 문자\n- 내 실적: 나만 보는 월별 실적과 지난달 비교\n- 전체 실적·직원별 순위 / 수익 현황 / 실적 보고서 올리기: (권한이 있는 사람만 보임)\n- 일일보고 쓰기, 일일보고 종합 보기(권한자)\n- 지난 업무 기록: 완료된 업무 검색\n- 사용설명서, 버전·업데이트 내역, 공지사항\n- 직원과 권한: (관리자만) 직원 추가·권한 설정\n- 로그아웃\n\n※ 맨 아래에 현재 앱 버전이 표시됩니다. 문의할 때 이 버전을 알려 주세요."},
-            {"재고", "장비를 우리가 직접 입력해서 관리합니다. (전체 → 재고)\n\n■ 재고 추가\n1. 오른쪽 아래 + 버튼.\n2. 모델명을 적고, 시리얼은 한 줄에 하나씩 적습니다. 여러 줄을 붙여 넣으면 장비가 한꺼번에 등록돼요.\n3. 시리얼이 없는 소모품(롤지 등)은 시리얼 대신 '수량'만 적습니다.\n4. 안전재고: 이 수 아래로 내려가면 빨간색으로 '부족해요!'가 표시됩니다.\n5. 입고 단가: 실적 권한자에게만 보이는 칸입니다. 1대당 산 값을 적으면 시리얼 전체에 같이 적용돼요.\n\n■ 바코드 스캔\n- '바코드 스캔'을 누르면 카메라가 열리고, 읽으면 번호가 시리얼 칸에 한 줄 들어갑니다. 한 번 누르면 한 번만 읽어요. 다음 장비는 버튼을 다시 눌러 주세요. 같은 번호는 두 번 들어가지 않아요.\n- 재고 목록 위 '바코드로 찾기'를 누르면 바코드를 읽어 그 시리얼을 바로 검색합니다.\n- 계약에서 '+ 장비 추가'를 누르고 '바코드 스캔(한 번에 한 대)'을 누르면, 읽은 번호가 재고에 있을 때 그 장비가 바로 추가돼요. 다음 장비는 다시 '+ 장비 추가'를 눌러 같은 방식으로 넣습니다. 재고에 없는 번호면 모델명만 적어 직접 입력하게 열려요.\n\n■ 시리얼 촬영 인식\n- '시리얼 촬영'을 누르고 장비 뒷면의 S/N 라벨을 가까이서 찍으면 글자를 읽어 줍니다.\n- 시리얼처럼 보이는 글자 후보가 목록으로 나오고, 맞는 것을 체크해서 '넣기'를 누르세요. 0(영)과 O(오), 1과 I처럼 헷갈리기 쉬운 글자는 꼭 눈으로 확인해 주세요.\n- 바코드가 같이 있으면 바코드 스캔이 더 정확합니다.\n- 스캔과 촬영은 구글 서비스가 있는 폰에서 동작합니다.\n\n■ 보기·검색\n- 모델별로 묶여서 '재고 n대'가 보이고, 그 아래에 시리얼이 나열됩니다.\n- 검색창에 모델명·시리얼을 치면 찾아줘요. 'ㅌㅅㅍㅅ' 같은 초성도 됩니다.\n\n■ 수정·삭제\n- 시리얼 줄을 누르면 수정창이 열립니다. 시리얼 칸에도 스캔·촬영 버튼이 있어요. '삭제'를 누르면 목록에서 지워져요 (기록은 서버에 남아 복구 가능).\n\n■ 단가와 수익 (실적 권한자 전용)\n- 재고 줄을 누르면 입고 단가(산 값)와 출고 단가(판 값)를 적을 수 있어요.\n- 재고 화면 맨 위에 보유 재고 자산(입고 단가 합계)이 나오고, '수익 현황 보기'로 이동합니다.\n- 단가는 서버에서도 실적 권한자만 읽을 수 있게 따로 보관됩니다. 권한이 없는 직원에게는 칸 자체가 보이지 않아요.\n\n■ 상태가 바뀌는 순서\n재고 → (계약에서 선택하면) 출고중 → (설치 완료 처리하면) 재고 목록에서 사라짐"},
+            {"재고", "장비를 우리가 직접 입력해서 관리합니다. (전체 → 재고)\n\n■ 재고 추가\n1. 오른쪽 아래 + 버튼.\n2. 모델명을 적고, 시리얼은 한 줄에 하나씩 적습니다. 여러 줄을 붙여 넣으면 장비가 한꺼번에 등록돼요.\n3. 시리얼이 없는 소모품(롤지 등)은 시리얼 대신 '수량'만 적습니다.\n4. 안전재고: 이 수 아래로 내려가면 빨간색으로 '부족해요!'가 표시됩니다.\n5. 입고 단가: 실적 권한자에게만 보이는 칸입니다. 1대당 산 값을 적으면 시리얼 전체에 같이 적용돼요.\n\n■ 바코드 스캔\n- '바코드 스캔'을 누르면 카메라가 열리고, 읽으면 번호가 시리얼 칸에 한 줄 들어갑니다. 한 번 누르면 한 번만 읽어요. 다음 장비는 버튼을 다시 눌러 주세요. 같은 번호는 두 번 들어가지 않아요.\n- 재고 목록 위 '바코드로 찾기'를 누르면 바코드를 읽어 그 시리얼을 바로 검색합니다.\n- 계약에서 '+ 장비 추가'를 누르고 '바코드 스캔(한 번에 한 대)'을 누르면, 읽은 번호가 재고에 있을 때 그 장비가 바로 추가돼요. 다음 장비는 다시 '+ 장비 추가'를 눌러 같은 방식으로 넣습니다. 재고에 없는 번호면 모델명만 적어 직접 입력하게 열려요.\n\n■ 시리얼 촬영 인식\n- '시리얼 촬영'을 누르고 장비 뒷면의 S/N 라벨을 가까이서 찍으면 글자를 읽어 줍니다.\n- 시리얼처럼 보이는 글자 후보가 목록으로 나오고, 맞는 것을 체크해서 '넣기'를 누르세요. 0(영)과 O(오), 1과 I처럼 헷갈리기 쉬운 글자는 꼭 눈으로 확인해 주세요.\n- 바코드가 같이 있으면 바코드 스캔이 더 정확합니다.\n- 스캔과 촬영은 구글 서비스가 있는 폰에서 동작합니다.\n\n■ 보기·검색\n- 모델별로 묶여서 '재고 n대'가 보이고, 그 아래에 시리얼이 나열됩니다.\n- 검색창에 모델명·시리얼을 치면 찾아줘요. 'ㅌㅅㅍㅅ' 같은 초성도 됩니다.\n\n■ 수정·삭제\n- 시리얼 줄을 누르면 수정창이 열립니다. 시리얼 칸에도 스캔·촬영 버튼이 있어요. '삭제'를 누르면 목록에서 지워져요 (기록은 서버에 남아 복구 가능).\n\n■ 단가와 수익 (실적 권한자 전용)\n- 재고 줄을 누르면 입고 단가(산 값)와 출고 단가(판 값)를 적을 수 있어요.\n- 재고 화면 맨 위에 보유 재고 자산(입고 단가 합계)이 나오고, '수익 현황 보기'로 이동합니다.\n- 단가는 서버에서도 실적 권한자만 읽을 수 있게 따로 보관됩니다. 권한이 없는 직원에게는 칸 자체가 보이지 않아요.\n\n■ 상태가 바뀌는 순서\n재고 → (계약에서 선택하면) 출고중 → (설치 완료 처리하면) 재고 목록에서 사라짐\n\n■ 입고·출고·정정·이력 (재고 화면 위 버튼)\n- ＋ 입고: 있던 모델은 '있던 모델에서 고르기'로 고르고, 시리얼 없는 물품은 같은 모델 수량에 더해져요. 입고처·메모를 남길 수 있어요.\n- − 출고: 계약 없이 나가는 것(반품·불량·폐기·A/S 교체·분실·기타). 사유를 고르고 나갈 장비를 체크해요. 시리얼 없는 물품은 수량을 적어요. 바코드로 찾으면 바로 체크돼요. A/S 교체는 가맹점을 연결할 수 있어요.\n- ± 정정(재고 조사): 실제로 센 수량을 적고, 시리얼 장비는 없는 것만 체크를 꺼요. 사유를 적으면 차이만큼 바로잡혀요.\n- 이력: 입고·출고·계약 출고·정정이 날짜·직원·메모와 함께 남아요. 장비를 눌러도 그 장비 이력이 보여요.\n- 삭제는 잘못 넣은 것을 지울 때만 쓰세요(이력이 안 남아요)."},
             {"가맹점", "우리 거래처(가맹점) 정보를 관리합니다. (전체 → 가맹점)\n\n■ 등록\n- 오른쪽 아래 + 버튼 → 상호(필수), 사업자번호, 전화번호, 휴대폰번호, 이메일, 주소, VAN사, 계약구분, 금액, 계약 추가 조건, 등급 코드, 메모. 칸마다 이름이 위에 적혀 있어요.\n- 계약구분을 '임대'로 고르면 '월 CMS 금액', '판매'로 고르면 '판매 금액'을 적어요. 목록·상세에는 '임대 · 월 CMS 30,000원'처럼 보여요.\n- VAN사는 목록(KICC·다우데이타·NICE·KIS·스마트로·KOCES·FDIK)에서 고르거나 '직접 입력'으로 적어요.\n\n■ 등록·수정 권한과 암호\n- 가맹점을 등록·수정하려면 '가맹점 등록·수정' 권한이 있어야 해요(관리자는 기본으로 있어요). 권한은 전체 → 직원과 권한에서 켜요.\n- 관리자가 전체 → 가맹점 수정 암호에서 암호를 정하면, 권한이 있는 사람도 관리자도 수정할 때 암호를 입력해야 해요. 한 번 맞으면 5분 동안은 다시 묻지 않아요.\n- 암호를 바꾸거나 끄려면 같은 곳에서 현재 암호를 입력해요. 암호를 정하기 전에는 권한만 있으면 암호 없이 수정돼요.\n- 계약·일정·업무 지시 화면의 '가맹점 조회'에서 바로 '새 가맹점 등록'도 가능합니다.\n\n■ 등급 코드\n밴피(VAN) 기준입니다.\n0 S · 월 5만원 이상\n1 A · 3만원 이상\n2 B · 1만원 이상\n3 C · 1만원 미만\n4 해지가맹점\n5 신규가맹점\n7 협력사\n\n■ 수정\n- 목록에서 가맹점을 누르면 정보가 보이고, '수정'으로 바꿀 수 있습니다.\n\n■ 삭제 (최고관리자만)\n- 가맹점 정보 창의 '삭제', 또는 수정 창의 '삭제'를 누르면 확인 창이 나오고 목록에서 지워집니다.\n- 그 가맹점에 연결된 계약·일정이 몇 건인지 같이 알려 드려요. 이미 올라간 계약·일정 기록은 그대로 남고, 서버에도 기록이 보관됩니다.\n- 관리자가 아닌 직원에게는 삭제 버튼이 보이지 않아요.\n\n■ 응대 기록 (AS·전화 응대 메모)\n- 가맹점을 눌러 열면 '📝 응대 기록'이 있어요. 누르면 그 가맹점의 기록이 날짜별로 쌓여 보이고, '+ 응대 기록 남기기'로 새 기록을 남깁니다.\n- 기록할 때 날짜는 달력에서 고르고(기본은 오늘, 지난 일도 날짜를 골라 남길 수 있어요), 종류(방문A/S·원격A/S·전화응대·기타)를 고른 뒤 '요청사항'(고객이 요청한 내용)과 '처리결과'(어떻게 처리했는지)를 따로 적어요. 글자 수 제한은 없어요. 예전에 남긴 기록은 내용 전체가 요청사항으로 보여요.\n- 조회: 위의 '날짜로 찾기'에서 날짜를 고르면 그날 기록만, 종류 버튼으로 방문A/S·원격A/S 등만, 검색창으로 요청사항·처리결과 속 단어(초성 가능)를 찾을 수 있어요. 날짜 칸을 길게 누르면 해제돼요.\n- 전체 → '가맹점 응대 기록 조회'(또는 전체 탭 검색창에 '응대')에서는 맨 위 '가맹점 찾기'에 상호 또는 사업자번호(숫자만 써도 돼요)를 치면 가맹점이 나와요. 눌러서 그 가맹점의 기록을 보고·추가하고·고칠 수 있어요. 아무것도 치지 않으면 모든 가맹점의 최근 기록이 날짜별로 보여요.\n- 기록을 누르면 내용이 열리고, 직원 누구나 고칠 수 있어요. 고치면 '마지막 수정 누구·언제'가 남아요. 지우기는 쓴 사람과 최고관리자만 해요. 기록은 모든 직원이 볼 수 있어요.\n\n■ 검색\n- 상호·사업자번호·전화·주소 어느 것으로든, 초성으로도 검색됩니다.\n- 가맹점이 많아도 가볍게 보이도록 목록은 50곳씩 보여 줘요. 맨 아래 '더 보기'를 누르면 더 나오고, 검색하면 전체에서 찾아요."},
             {"신규 계약 올리기", "계약이 되면 바로 올려 주세요. (전체 → 신규 계약 올리기, 또는 계약 관리 화면의 + 버튼)\n\n1. 가맹점 조회·선택: 등록된 가맹점을 고릅니다. 없으면 '새 가맹점 등록'.\n2. 결제 연동: VAN사 또는 PG사, 업체명 (예: 다우데이타).\n3. 구분을 고르면 금액 입력 이름이 바뀝니다.\n   - 판매 → 판매금액\n   - CMS → CMS 금액\n   - 렌탈 → 월 렌탈료\n4. 나가는 장비: '+ 장비 추가'를 눌러 재고에서 체크해 고릅니다. 재고에 없으면 '직접 입력'으로 모델명·시리얼을 적어요. 잘못 고른 장비는 오른쪽 − 로 뺍니다. 장비를 여러 번 + 해서 여러 대를 넣을 수 있어요.\n5. 장비 메모: 설치 조건 등 자유롭게 적습니다.\n6. 계약일과 만료일: 만료일 아래 '+12개월 / +24개월 / +36개월' 버튼을 누르면 계약일 기준으로 자동 계산됩니다.\n7. '올리기'.\n\n※ 올리면 고른 장비는 재고에서 '출고중'이 됩니다."},
             {"계약 관리 · 설치 완료 · 만료 알림", "(전체 → 계약 관리)\n\n■ 계약 보기\n- 위쪽에 '만료가 가까운 계약(3개월 이내)'이 빨간 D-숫자와 함께 먼저 나옵니다. 아래는 전체 계약입니다.\n- 일반 직원은 내가 올린 계약만, 실적 권한이 있는 사람은 전체 계약이 보입니다.\n\n■ 설치 완료\n- 계약을 누르고 '설치 완료'를 누르면 나간 장비가 재고에서 완전히 빠집니다.\n\n■ 장비 추가\n- 같은 가맹점에 장비가 더 나가면 계약을 열어 '장비 추가'를 눌러 모델명·시리얼을 이어서 추가합니다.\n\n■ 만료 알림\n- 만료가 90일 이하로 남은 계약이 있으면 '업무' 탭 위에 알림 카드가 뜨고, 전체 탭에도 숫자가 표시됩니다."},
@@ -4315,8 +4840,73 @@ public class MainActivity extends Activity {
         }
     }
 
+    // ---------- 새 버전 알림: GitHub 릴리스에서 더 높은 APK 가 있으면 받기 안내 (웹의 '지금 업데이트' 띠와 같은 역할) ----------
+    private static int[] verNums(String v) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d+)\\.(\\d+)\\.(\\d+)").matcher(v == null ? "" : v);
+        return m.find() ? new int[]{Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)), Integer.parseInt(m.group(3))} : new int[]{0, 0, 0};
+    }
+
+    private static boolean newer(int[] a, int[] b) {
+        for (int i = 0; i < 3; i++) if (a[i] != b[i]) return a[i] > b[i];
+        return false;
+    }
+
+    private void checkAppUpdate(final boolean manual) {
+        final String cur;
+        try {
+            cur = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Exception e) {
+            return;
+        }
+        new Thread(() -> {
+            String tag = null, url = null;
+            try {
+                java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL("https://api.github.com/repos/ninepayments/Work-app/releases?per_page=15").openConnection();
+                c.setConnectTimeout(8000);
+                c.setReadTimeout(8000);
+                c.setRequestProperty("Accept", "application/vnd.github+json");
+                java.io.BufferedReader rd = new java.io.BufferedReader(new java.io.InputStreamReader(c.getInputStream(), "UTF-8"));
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = rd.readLine()) != null) sb.append(line);
+                rd.close();
+                JSONArray rs = new JSONArray(sb.toString());
+                int[] best = verNums(cur);
+                for (int i = 0; i < rs.length(); i++) {
+                    JSONObject r = rs.optJSONObject(i);
+                    String tg = r.optString("tag_name");
+                    if (!tg.matches("v\\d+\\.\\d+\\.\\d+.*")) continue; // pc-v… 는 PC 프로그램
+                    JSONArray as = r.optJSONArray("assets");
+                    String apk = null;
+                    for (int k = 0; as != null && k < as.length(); k++) if (as.optJSONObject(k).optString("name").endsWith(".apk")) apk = as.optJSONObject(k).optString("browser_download_url");
+                    if (apk != null && newer(verNums(tg), best)) {
+                        best = verNums(tg);
+                        tag = tg;
+                        url = apk;
+                    }
+                }
+            } catch (Exception e) {
+                if (manual) runOnUiThread(() -> Ui.toast(this, "인터넷 연결을 확인해 주세요."));
+                return;
+            }
+            final String fTag = tag, fUrl = url;
+            runOnUiThread(() -> {
+                if (isFinishing()) return;
+                if (fUrl == null) {
+                    if (manual) Ui.toast(this, "지금이 최신 버전이에요 (v" + cur + ").");
+                    return;
+                }
+                new Dlg(this).setTitle("새 버전이 나왔어요")
+                        .setMessage("지금 v" + cur + " → 새 버전 " + fTag.replace("-test", "") + "\n\n'받기'를 누르면 새 APK 를 내려받아요. 받은 파일을 열어 설치하면 자료는 그대로 두고 앱만 바뀝니다.")
+                        .setNegativeButton("나중에", null)
+                        .setPositiveButton("받기", (d, w) -> openIntent(new Intent(Intent.ACTION_VIEW, Uri.parse(fUrl)))).show();
+            });
+        }).start();
+    }
+
     /** {버전, 날짜, 내용}. 새 버전은 맨 위에 추가. CI 가 현재 versionName 항목이 있는지 검사한다. */
     private static final String[][] CHANGELOG = {
+            {"0.0.3", "2026-10-24", "• 업무 ↔ 응대 기록 연결: 업무를 올릴 때 가맹점을 고르고 '가맹점 요청사항'을 적으면, 처리 완료 때 적는 '처리결과'와 함께 그 가맹점 응대 기록에 자동으로 남아요(📋 업무에서 표시, 응대 종류 선택)\n• 가맹점 정보에 그 가맹점의 진행 중인 업무가 보여요\n• 재고: 입고(같은 모델 수량에 더하기·입고처 메모·있던 모델 고르기), 출고(반품·불량·A/S 교체·분실 — 계약 없이), 수량 정정(재고 조사, 바코드 확인), 재고 이력(입고·출고·계약 출고·정정)\n• 새 버전 알림: 새 APK 가 나오면 앱을 열 때 '받기' 안내가 떠요 (전체 → 회사 → 앱 업데이트 확인으로 직접 확인도 돼요)\n• 웹앱(웹 0.0.17)과 같은 자료·같은 방식으로 맞췄어요"},
             {"0.0.2", "2026-10-24", "• 가맹점 정보에 항목 추가: 전화번호·휴대폰번호·이메일·VAN사·계약구분(임대 월 CMS / 판매 금액)을 넣을 수 있고, 모든 칸에 이름이 적혀요\n• 가맹점 등록·수정은 '가맹점 등록·수정' 권한이 있는 사람만, 관리자가 정한 암호를 입력해야 할 수 있어요(전체 → 가맹점 수정 암호)\n• 웹앱: 한글로 상호를 검색하면 결과가 안 나오던 문제 수정(상호·초성·사업자번호 모두 찾아요)\n• 웹앱: 기본 화면은 업무·프로젝트·채팅·일정·가맹점 5개, 나머지는 왼쪽 위 ☰ 전체 메뉴에서. 왼쪽 위 '나인패밀리'를 누르면 홈으로 가요"},
             {"0.0.1", "2026-10-24", "• 나인패밀리 처음부터 다시 시작! 지금까지의 업데이트 내역은 정리하고 여기서부터 기록해요\n• 가맹점 응대 기록: 종류를 방문A/S·원격A/S·전화응대·기타로 바꾸고, 내용을 '요청사항'과 '처리결과' 두 칸으로 나눴어요 (글자 수 제한 없음, 예전 기록은 요청사항으로 보여요)\n• 응대 기록 조회에서 상호·사업자번호로 가맹점을 찾아 그 가맹점의 기록을 보고·추가·수정해요 (직원 누구나 수정, 수정한 사람·시각이 남아요)\n• 웹앱(PC·아이폰) 추가: 같은 주소 https://ninepayments.github.io/Work-app/"},
     };
