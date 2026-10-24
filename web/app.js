@@ -2,9 +2,9 @@
 /* 나인패밀리 웹앱 — 앱과 같은 Firebase(nine-family)를 쓴다. 문서는 {j: JSON문자열, u: 시각} 형식. */
 const CFG = {apiKey: 'AIzaSyCsA-M6QGGGk0owyDXzziv1X79TqF5NptI', authDomain: 'nine-family.firebaseapp.com', projectId: 'nine-family',
   storageBucket: 'nine-family.firebasestorage.app', messagingSenderId: '48232341344', appId: '1:48232341344:web:19be016c9c1c1de5a34805'};
-const VERSION = '웹 0.0.8';
+const VERSION = '웹 0.0.9';
 const DEMO = location.hash === '#demo';
-const COLLS = ['users', 'tasks', 'notices', 'projects', 'events', 'merchants', 'rooms', 'msgs', 'profiles', 'mlogs', 'config', 'stock', 'contracts', 'deposits', 'costs'];
+const COLLS = ['users', 'tasks', 'notices', 'projects', 'events', 'merchants', 'rooms', 'msgs', 'profiles', 'mlogs', 'config', 'stock', 'contracts', 'deposits', 'costs', 'reports', 'library', 'contacts'];
 const TYPES = ['신규 설치', 'AS', '영업 방문', '서류 접수', '카드사 서류', '기타'];
 const KINDS = ['방문A/S', '원격A/S', '전화응대', '기타'];
 const logKind = k => (k === 'AS' || k === '방문' || k === '방문 A/S') ? '방문A/S' : k === '원격 A/S' ? '원격A/S' : k === '전화 응대' ? '전화응대' : k;
@@ -73,7 +73,7 @@ function put(coll, o) {
   const m = {j, u: Date.now()}; let target = coll, priv = false;
   if ((coll === 'rooms' || coll === 'msgs') && o.mem && o.mem.length) { m.mem = o.mem; target = coll === 'rooms' ? 'prooms' : 'pmsgs'; priv = true; }
   if (coll === 'profiles') m.who = o.id;
-  if (coll === 'contracts') { m.who = o.who; m.date = o.date || ''; }
+  if (coll === 'contracts' || coll === 'reports') { m.who = o.who; m.date = o.date || ''; } // 서버 규칙이 '내 것만'을 이걸로 판단
   S.pend = (S.pend || 0) + 1; syncBadge();
   fs.collection(target).doc(String(o.id)).set(m).then(() => { S.pend--; syncBadge(); }).catch(e => { S.pend--; syncBadge(); toast('저장하지 못했어요: ' + (e.code || e.message)); });
   if (!(priv || coll === 'msgs' || coll === 'profiles')) fs.collection('audit').add({c: coll, id: o.id, by: S.uid, u: Date.now(), j}).catch(() => {});
@@ -100,6 +100,7 @@ function attach() {
     let q = fs.collection(srv);
     if (priv) q = q.where('mem', 'array-contains', S.phone);
     if (coll === 'contracts' && !canPerf()) q = q.where('who', '==', S.uid); // 실적 권한이 없으면 내 계약만
+    if (coll === 'reports' && !canReport()) q = q.where('who', '==', S.uid); // 보고 열람 권한이 없으면 내 보고만
     if (srv === 'msgs') q = q.orderBy('u', 'desc').limit(400);
     let first = true;
     unsubs.push(q.onSnapshot(snap => {
@@ -226,7 +227,7 @@ async function afterLogin(fu) {
   try {
     const pd = await fs.collection('phones').doc(phone).get();
     if (!pd.exists || pd.get('active') !== true) { await auth.signOut(); return loginView('phone', '등록되지 않은 번호입니다. 관리자에게 등록을 요청해 주세요.'); }
-    S.uid = Number(pd.get('uid')); S.caps = {perf: !!pd.get('perf'), admin: !!pd.get('admin')};
+    S.uid = Number(pd.get('uid')); S.caps = {perf: !!pd.get('perf'), admin: !!pd.get('admin'), report: !!pd.get('report')};
     attach(); render();
     setTimeout(() => { if (!S.me && !S.noProfile) { $('#root').innerHTML = '<div class="login"><h1>불러오는 중…</h1><div class="sub">인터넷이 느려서 시간이 걸리고 있어요. 잠시만 기다려 주세요.</div><button class="btn full" id="rl">다시 불러오기</button></div>'; $('#rl').onclick = () => location.reload(); } }, 12000);
   } catch (e) { toast('내 정보를 불러오지 못했어요.'); loginView('phone', '내 정보를 불러오지 못했어요. 다시 시도해 주세요.'); }
@@ -303,6 +304,11 @@ function viewBody(k) {
     case 'perf': return canPerf() ? viewPerf(false) : '<div class="empty">실적 보기 권한이 있어야 볼 수 있어요.</div>';
     case 'profit': return viewProfit();
     case 'history': return viewHistory();
+    case 'daily': return viewDaily();
+    case 'reportview': return viewReportView();
+    case 'perfreport': return viewPerfReport();
+    case 'library': return viewLibrary();
+    case 'contacts': return viewContacts();
     case 'manual': return viewManual();
     case 'about': return viewAbout();
     default: return viewTasks();
@@ -310,7 +316,7 @@ function viewBody(k) {
 }
 function fab() {
   const k = S.sub || S.tab;
-  const map = {task: 'newTask', project: 'newProject', merchants: canEditMerchant() ? 'newMerchant' : '', calendar: can('staff_manage') ? 'newEvent' : '', notice: can('notice_write') ? 'newNotice' : '', stock: 'newStock', contracts: 'newContract', deposit: 'newDeposit'};
+  const map = {task: 'newTask', project: 'newProject', merchants: canEditMerchant() ? 'newMerchant' : '', calendar: can('staff_manage') ? 'newEvent' : '', notice: can('notice_write') ? 'newNotice' : '', stock: 'newStock', contracts: 'newContract', deposit: 'newDeposit', library: 'newLib', contacts: 'newContact'};
   return map[k] ? '<button class="fab" data-act="' + map[k] + '">+</button>' : '';
 }
 function bind(root) {
@@ -323,6 +329,8 @@ function bind(root) {
   };
   // 한글은 글자를 조합하는 동안 입력칸을 다시 그리면 'ㅌㅗㅅㅡ' 처럼 쪼개진다 → 화면 전체는 조합이 끝난 뒤에만 다시 그린다
   if (root.__bound) return; root.__bound = true; // 이벤트 위임은 한 번만 건다 (render 때마다 다시 걸면 중복됨)
+  const keep = t => { if (t && t.dataset && t.dataset.keep) (S.keep = S.keep || {})[t.dataset.keep] = t.value; };
+  root.addEventListener('input', ev => keep(ev.target));
   const apply = t => { if (t && t.dataset && t.dataset.q) { S[t.dataset.q] = t.value; if (t.dataset.q === 'mq') S.mlimit = 50; refreshResults(); } };
   root.addEventListener('input', ev => apply(ev.target));
   root.addEventListener('compositionstart', () => { S.comp = true; });
@@ -527,7 +535,7 @@ function viewChat() {
   const un = unreadMap();
   const staff = list('users').filter(u => u.id !== S.uid && u.active !== false).sort((a, b) => a.name.localeCompare(b.name));
   const lst = '<div class="chatlist"><h1>채팅</h1><button class="btn gold full" data-act="newGroup">+ 새 그룹 채팅방</button>' +
-    '<div class="sub" style="margin-top:12px;font-weight:700">직원 총 ' + (staff.length + 1) + '명 · 눌러서 1:1 대화</div><div class="avs">' + staff.map(u => '<div class="av" data-act="dm" data-arg="' + u.id + '"><b>' + esc(u.name.slice(0, 1)) + '</b>' + esc(u.name) + '</div>').join('') + '</div>' +
+    '<div class="sub" style="margin-top:12px;font-weight:700">직원 총 ' + (staff.length + 1) + '명 · 눌러서 1:1 대화</div><div class="avs">' + staff.map(u => '<div class="av" data-act="dm" data-arg="' + u.id + '">' + avatarHTML(u.id, 52) + esc(u.name) + '</div>').join('') + '</div>' +
     '<input id="chq" data-q="chatQ" placeholder="🔍 대화방 검색 (초성 가능)" value="' + esc(S.chatQ) + '">' +
     '<div class="qres" data-for="chatQ">' + rooms.filter(x => kmatch(roomTitle(x.r), S.chatQ)).map(x => {
       const l = x.last; const c = un[x.r.id] || 0;
@@ -623,12 +631,15 @@ function ensureRoom() {
 }
 ACT.attach = () => { const f = $('#fpick'); f.value = ''; f.onchange = () => { if (f.files[0]) sendFile(f.files[0]); }; f.click(); };
 function b64of(u8) { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); }
-function shrinkImage(file) { // 앱과 같이 긴 쪽 1280px, 600KB 이하 JPEG 으로 줄인다
+function shrinkImage(file, max, limit, square) { // 앱과 같이 줄인다: 채팅 사진 긴 쪽 1280px·600KB, 자료실 1600px·900KB, 프로필 256px 정사각·40KB
+  max = max || 1280; limit = limit || 600 * 1024;
   return new Promise((ok, no) => {
     const img = new Image(); img.onload = () => {
-      const k = Math.min(1, 1280 / Math.max(img.width, img.height)); const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
-      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(img.src);
-      const go = q => c.toBlob(b => { if (!b) return no(new Error('jpeg')); if (b.size > 600 * 1024 && q > 0.4) return go(q - 0.1); b.arrayBuffer().then(x => ok(new Uint8Array(x))); }, 'image/jpeg', q);
+      const c = document.createElement('canvas'); let sx = 0, sy = 0, sw = img.width, sh = img.height;
+      if (square) { const m = Math.min(sw, sh); sx = (sw - m) / 2; sy = (sh - m) / 2; sw = sh = m; }
+      const k = Math.min(1, max / Math.max(sw, sh)); c.width = Math.round(sw * k); c.height = Math.round(sh * k);
+      c.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height); URL.revokeObjectURL(img.src);
+      const go = q => c.toBlob(b => { if (!b) return no(new Error('jpeg')); if (b.size > limit && q > 0.35) return go(q - 0.1); b.arrayBuffer().then(x => ok(new Uint8Array(x))); }, 'image/jpeg', q);
       go(0.85);
     }; img.onerror = () => no(new Error('img')); img.src = URL.createObjectURL(file);
   });
@@ -643,9 +654,8 @@ async function sendFile(file) {
     const data = isImg ? await shrinkImage(file) : new Uint8Array(await file.arrayBuffer());
     const d = new Date(), name = isImg ? '사진_' + pad(d.getMonth() + 1) + pad(d.getDate()) + '_' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds()) + '.jpg' : file.name;
     const mime = isImg ? 'image/jpeg' : (file.type || 'application/octet-stream');
-    const id = String(nextId()), CH = 600 * 1024, n = Math.max(1, Math.ceil(data.length / CH));
-    await Promise.all([...Array(n).keys()].map(i => fs.collection('blobs').doc(id + '_' + i).set({d: b64of(data.subarray(i * CH, (i + 1) * CH)), mime, name, i, n, u: Date.now(), by: S.uid})));
-    const m = create('msgs', {room: room.id, who: S.uid, text: isImg ? '사진' : name, ts: Date.now(), kind: isImg ? 'img' : 'file', blob: id, fname: name, size: data.length, chunks: n});
+    const up = await uploadBlob(data, mime, name);
+    const m = create('msgs', {room: room.id, who: S.uid, text: isImg ? '사진' : name, ts: Date.now(), kind: isImg ? 'img' : 'file', blob: up.blob, fname: name, size: data.length, chunks: up.chunks});
     if (room.mem && room.mem.length) m.mem = room.mem.slice();
     put('msgs', m); render();
   } catch (e) { toast('보내지 못했어요. 인터넷을 확인해 주세요.'); }
@@ -1145,6 +1155,157 @@ function historyList() {
   return '<div class="sub" style="font-weight:700">' + ls.length + '건</div>' + (ls.length ? ls.slice(0, 200).map(t => '<div class="card" data-act="task" data-arg="' + t.id + '"><div class="t1">[' + esc(t.type) + '] ' + esc(t.title) + '</div><div class="t2">' + esc((t.client ? t.client + ' · ' : '') + uname(t.assignee) + ' · 완료 ' + (t.doneAt || '')) + '</div>' + (t.doneMsg ? '<div style="color:var(--green);font-size:13px;margin-top:4px">' + esc(t.doneMsg) + '</div>' : '') + '</div>').join('') : '<div class="empty">완료된 업무 이력이 없습니다.</div>');
 }
 
+// ---------- 일일보고 · 실적 보고서 (앱과 같은 reports 문서: kind daily/perf, who, date, text) ----------
+const canReport = () => !!(S.caps && S.caps.report); // 서버 규칙과 같은 기준(phones 문서의 report)
+const findReport = (kind, who, date) => list('reports').find(r => r.kind === kind && r.who === who && r.date === date);
+function addDays(ymd, n) { const d = new Date(ymd + 'T00:00:00'); d.setDate(d.getDate() + n); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+function dailyAuto(date, who) {
+  const lines = []; let n = 0, cn = 0;
+  list('tasks').forEach(t => { if (t.assignee === who && (t.doneAt || '').startsWith(date)) { n++; lines.push('· 완료 업무: [' + t.type + '] ' + t.title + (t.client ? ' (' + t.client + ')' : '')); } });
+  list('contracts').forEach(c => { if (c.who === who && c.date === date) { cn++; lines.push('· 신규 계약: ' + c.client + ' / ' + c.kind); } });
+  return !n && !cn ? '(자동 집계: 오늘 완료한 업무·올린 계약 없음)' : '(자동 집계) 완료 업무 ' + n + '건 · 신규 계약 ' + cn + '건\n' + lines.join('\n');
+}
+function dateNavHTML() { if (!S.dailyDate) S.dailyDate = todayStr(); return '<div class="row" style="margin-top:12px"><button class="btn" style="margin:0" data-act="dd" data-arg="-1" aria-label="전날">‹</button><div class="grow t1" style="text-align:center;font-size:18px">' + S.dailyDate + '</div><button class="btn" style="margin:0" data-act="dd" data-arg="1" aria-label="다음 날">›</button><button class="btn" style="margin:0" data-act="dd" data-arg="0">오늘</button></div>'; }
+ACT.dd = a => { S.dailyDate = Number(a) ? addDays(S.dailyDate || todayStr(), Number(a)) : todayStr(); render(); };
+const keepVal = (k, def) => (S.keep && S.keep[k] != null) ? S.keep[k] : def; // 쓰는 중인 글은 화면이 다시 그려져도 남긴다
+function viewDaily() {
+  if (!S.dailyDate) S.dailyDate = todayStr();
+  const old = findReport('daily', S.uid, S.dailyDate), k = 'daily_' + S.dailyDate;
+  const mine = list('reports').filter(r => r.kind === 'daily' && r.who === S.uid).sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, 14);
+  return '<h1>일일보고 쓰기</h1><div class="sub">오늘 한 일과 특이사항을 적어 제출해요. 완료한 업무와 올린 계약은 자동으로 같이 들어갑니다.</div>' + dateNavHTML() +
+    '<div class="card flat mtext">' + esc(dailyAuto(S.dailyDate, S.uid)) + '</div>' +
+    '<label class="fl" for="f_daily">오늘 한 일 · 특이사항 · 내일 계획</label><textarea id="f_daily" data-keep="' + k + '" style="min-height:150px">' + esc(keepVal(k, old ? old.text : '')) + '</textarea>' +
+    '<button class="btn gold full" data-act="dailySave">' + (old ? '수정해서 다시 제출' : '제출하기') + '</button>' +
+    '<h2>내가 낸 보고</h2>' + (mine.length ? mine.map(r => '<div class="card" data-act="ddGo" data-arg="' + r.date + '"><b style="color:var(--deep);font-size:13px">' + esc(r.date) + '</b><div class="mtext" style="margin-top:2px">' + esc(r.text) + '</div></div>').join('') : '<div class="empty">아직 낸 보고가 없습니다.</div>');
+}
+ACT.ddGo = d => { S.dailyDate = d; render(); };
+ACT.dailySave = () => {
+  const t = $('#f_daily').value.trim(); if (!t) return toast('내용을 적어 주세요.');
+  const r = findReport('daily', S.uid, S.dailyDate) || create('reports', {kind: 'daily', date: S.dailyDate, who: S.uid});
+  r.text = t; r.auto = dailyAuto(S.dailyDate, S.uid); r.ts = Date.now(); put('reports', r);
+  if (S.keep) delete S.keep['daily_' + S.dailyDate]; render(); toast('일일보고를 제출했어요.');
+};
+function viewReportView() {
+  if (!canReport()) return '<h1>일일보고 종합</h1><div class="empty">일일보고·실적보고 종합 보기 권한이 있어야 볼 수 있어요.</div>';
+  if (!S.dailyDate) S.dailyDate = todayStr();
+  const staff = activeStaff(); const done = staff.filter(u => findReport('daily', u.id, S.dailyDate)).length;
+  return '<h1>일일보고 종합</h1><div class="sub">직원별 일일보고를 한 화면에 모아 봐요.</div>' + dateNavHTML() + '<div class="t1" style="color:var(--deep);margin-top:12px">제출 ' + done + ' / ' + staff.length + '명</div>' +
+    staff.map(u => { const r = findReport('daily', u.id, S.dailyDate);
+      return '<div class="card flat"><div class="row"><div class="grow t1">' + esc(u.name) + '</div><span class="chip"' + (r ? '' : ' style="background:#fdecea;color:var(--red)"') + '>' + (r ? '제출' : '미제출') + '</span></div>' + (r ? (r.auto ? '<div class="sub mtext">' + esc(r.auto) + '</div>' : '') + '<div class="mtext">' + esc(r.text) + '</div>' : '') + '</div>'; }).join('');
+}
+function perfSnapshot(ym) {
+  const st = perfStats(ym, false); const total = Object.values(st).reduce((s, a) => s + a[0], 0);
+  return ym + ' 신규 계약 합계 ' + total + '대\n' + rankedStaff(st).map((u, i) => { const a = st[u.id] || [0, 0, 0, 0, 0]; return (i + 1) + '위 ' + u.name + ' - ' + a[0] + '대 (판매 ' + a[1] + ' · CMS ' + a[2] + ' · 렌탈 ' + a[3] + ')' + (a[4] ? ' 판매금액 ' + wonFmt(a[4]) : ''); }).join('\n');
+}
+function viewPerfReport() {
+  const ym = perfYM(); let h = '<h1>실적 보고서</h1>' + monthNavHTML();
+  if (canPerf()) {
+    const old = findReport('perf', S.uid, ym), k = 'perf_' + ym;
+    h += '<div class="sub">본부장이 이달 실적을 최종 정리해서 대표님께 올리는 곳이에요. 아래 내용은 자동 집계이며 고쳐서 올릴 수 있어요.</div><label class="fl" for="f_perf">실적 보고 내용</label><textarea id="f_perf" data-keep="' + k + '" style="min-height:200px">' + esc(keepVal(k, old ? old.text : perfSnapshot(ym))) + '</textarea><button class="btn gold full" data-act="perfSave">' + (old ? '수정해서 다시 보고' : '대표님께 보고하기') + '</button>';
+  }
+  if (canReport()) {
+    const rs = list('reports').filter(r => r.kind === 'perf' && r.date === ym);
+    h += '<h2>올라온 실적 보고서</h2>' + (rs.length ? rs.map(r => '<div class="card flat"><b style="color:var(--deep);font-size:12px">' + esc(uname(r.who) + ' · ' + (r.ts ? new Date(r.ts).toLocaleString('ko-KR', {month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false}) : '')) + '</b><div class="mtext">' + esc(r.text) + '</div></div>').join('') : '<div class="empty">이 달에 올라온 보고서가 없습니다.</div>');
+  }
+  return h;
+}
+ACT.perfSave = () => {
+  const ym = perfYM(), t = $('#f_perf').value.trim(); if (!t) return;
+  const r = findReport('perf', S.uid, ym) || create('reports', {kind: 'perf', date: ym, who: S.uid});
+  r.text = t; r.ts = Date.now(); put('reports', r); if (S.keep) delete S.keep['perf_' + ym]; render(); toast('대표님께 보고했어요.');
+};
+
+// ---------- 자료실 (앱과 같은 library 문서, 파일은 blobs 조각) ----------
+const LIB_CATS = ['양식·서식', '계약·약정', '가맹점 안내', '교육·매뉴얼', '사진·홍보물', '기타'];
+const kb = n => n >= 1048576 ? (n / 1048576).toFixed(1) + 'MB' : Math.max(1, Math.round(n / 1024)) + 'KB';
+function viewLibrary() {
+  return '<h1>자료실</h1><div class="sub">양식·계약서·안내문 같은 파일을 올려 두고 직원 모두가 내려받아 쓰는 곳이에요. 오른쪽 아래 + 로 올립니다.</div>' +
+    '<input id="libq" data-q="libq" placeholder="🔍 제목·설명·파일 이름 (초성 가능)" value="' + esc(S.libq || '') + '">' +
+    '<div class="pills">' + [''].concat(LIB_CATS).map(c => '<button class="pill ' + ((S.libCat || '') === c ? 'on' : '') + '" data-act="libCat" data-arg="' + c + '">' + (c || '전체') + '</button>').join('') + '</div><div class="qres" data-for="libq">' + libList() + '</div>';
+}
+function libList() {
+  const all = list('library').sort((a, b) => (b.created || '').localeCompare(a.created || ''));
+  const ls = all.filter(p => (!S.libCat || p.cat === S.libCat) && kmatch((p.title || '') + ' ' + (p.desc || '') + ' ' + (p.files || []).map(f => f.fname).join(' ') + ' ' + uname(p.who), S.libq || ''));
+  return ls.length ? ls.map(p => '<div class="card" data-act="libPost" data-arg="' + p.id + '"><div class="t1">' + esc(p.title) + '</div><div class="t2">' + esc((p.cat || '') + ' · ' + uname(p.who) + ' · ' + (p.created || '')) + '</div>' + (p.desc ? '<div class="clamp2">' + esc(p.desc) + '</div>' : '') + ((p.files || []).length ? '<div style="color:var(--deep);font-weight:700;font-size:13px;margin-top:4px">📎 파일 ' + p.files.length + '개</div>' : '') + '</div>').join('') : '<div class="empty">' + (all.length ? '찾는 자료가 없어요.' : '아직 올라온 자료가 없어요. + 를 눌러 첫 자료를 올려 보세요.') + '</div>';
+}
+ACT.libCat = c => { S.libCat = c; render(); };
+ACT.libPost = id => {
+  const p = byId('library', id); if (!p) return; const own = p.who === S.uid || can('staff_manage');
+  modal('<h3>' + esc(p.title) + '</h3><div class="sub">' + esc((p.cat || '') + ' · ' + uname(p.who) + ' · ' + (p.created || '')) + '</div>' + (p.desc ? '<div class="mtext" style="margin:10px 0">' + linkify(p.desc) + '</div>' : '') +
+    ((p.files || []).length ? '<div class="lb">첨부 파일 (눌러서 받기)</div>' + p.files.map(f => '<button class="mi" data-act="openFile" data-arg="' + esc(f.blob + '|' + (f.chunks || 0) + '|' + f.fname) + '"><span>📎 ' + esc(f.fname) + ' <small style="color:var(--gray)">(' + kb(f.size || 0) + ')</small></span></button>').join('') : '') +
+    '<div class="btns" style="margin-top:12px">' + (own ? '<button class="btn" data-act="libEdit" data-arg="' + p.id + '">수정</button><button class="btn red" data-act="libDel" data-arg="' + p.id + '">삭제</button>' : '') + '<button class="btn" data-act="close">닫기</button></div>');
+};
+ACT.libDel = id => { const p = byId('library', id); askConfirm('‘' + p.title + '’ 삭제할까요?', '자료실 목록에서 사라져요. 서버에는 기록이 보관됩니다.', '삭제', () => { p.deleted = true; put('library', p); render(); toast('삭제했어요.'); }, true); };
+async function uploadBlob(data, mime, name) { // 서버 보관함(blobs)에 600KB 조각으로 올린다 — 앱과 같은 형식
+  const id = String(nextId()), CH = 600 * 1024, n = Math.max(1, Math.ceil(data.length / CH));
+  await Promise.all([...Array(n).keys()].map(i => fs.collection('blobs').doc(id + '_' + i).set({d: b64of(data.subarray(i * CH, (i + 1) * CH)), mime, name, i, n, u: Date.now(), by: S.uid})));
+  return {blob: id, chunks: n, fname: name, size: data.length};
+}
+function libForm(p) {
+  return '<label class="fl" for="f_t1">제목 (필수)</label><input id="f_t1" placeholder="예: 가맹점 계약서 양식" value="' + esc(p ? p.title : '') + '"><label class="fl" for="f_m">설명 (선택)</label><textarea id="f_m" placeholder="설명">' + esc(p ? p.desc || '' : '') + '</textarea>' +
+    '<label class="fl" for="f_c">분류</label><select id="f_c">' + LIB_CATS.map(c => '<option' + (p && p.cat === c ? ' selected' : '') + '>' + c + '</option>').join('') + '</select>';
+}
+ACT.libEdit = id => { const p = byId('library', id); formModal('자료 수정', libForm(p), () => { const t = $('#f_t1').value.trim(); if (!t) return warn('제목을 입력해 주세요.'); p.title = t; p.desc = $('#f_m').value.trim(); p.cat = $('#f_c').value; put('library', p); render(); toast('저장했어요.'); return true; }, '저장'); };
+ACT.newLib = () => {
+  const files = []; let busy = 0;
+  formModal('자료 올리기', libForm(null) + '<button type="button" class="btn tint full" id="f_add">📎 파일 추가 (사진·문서, 3MB까지 · 5개까지)</button><input type="file" id="f_file" hidden multiple><div id="f_list" class="sub">첨부 파일 없음</div>', () => {
+    const t = $('#f_t1').value.trim(); if (!t) return warn('제목을 입력해 주세요.'); if (busy) return warn('파일을 올리는 중이에요. 잠시 뒤 다시 눌러 주세요.');
+    put('library', create('library', {title: t, desc: $('#f_m').value.trim(), cat: $('#f_c').value, who: S.uid, files: files.slice()})); render(); toast('자료를 올렸어요.'); return true;
+  }, '올리기');
+  const show = () => { $('#f_list').innerHTML = (files.map(f => '📎 ' + esc(f.fname) + ' (' + kb(f.size) + ')').join('<br>') || '첨부 파일 없음') + (busy ? '<br>올리는 중… ' + busy + '개' : ''); };
+  $('#f_add').onclick = () => { if (DEMO) return toast('데모에서는 파일을 올릴 수 없어요.'); $('#f_file').click(); };
+  $('#f_file').onchange = () => [...$('#f_file').files].forEach(async file => {
+    if (files.length + busy >= 5) return toast('한 글에 파일은 5개까지 올릴 수 있어요.');
+    const isImg = /^image\/(jpeg|png|webp|heic)/.test(file.type);
+    if (!isImg && file.size > 3 * 1024 * 1024) return toast('파일은 3MB까지 올릴 수 있어요: ' + file.name);
+    busy++; show();
+    try {
+      const data = isImg ? await shrinkImage(file, 1600, 900 * 1024) : new Uint8Array(await file.arrayBuffer());
+      files.push(await uploadBlob(data, isImg ? 'image/jpeg' : (file.type || 'application/octet-stream'), isImg ? file.name.replace(/\.[A-Za-z0-9]+$/, '') + '.jpg' : file.name));
+    } catch (e) { toast('올리지 못했어요. 인터넷을 확인해 주세요.'); }
+    busy--; show();
+  });
+};
+
+// ---------- 비상연락망 (contacts) ----------
+function viewContacts() {
+  return '<h1>비상연락망</h1><div class="sub">번호를 누르면 전화 걸기 화면이 열려요. 오른쪽 아래 + 로 추가합니다.</div><input id="cq" data-q="cq" placeholder="🔍 이름·구분·번호 (초성 가능)" value="' + esc(S.cq || '') + '"><div class="qres" data-for="cq">' + contactList() + '</div>';
+}
+function contactList() {
+  const ls = list('contacts').filter(c => kmatch((c.name || '') + ' ' + (c.cat || '') + ' ' + (c.phone || '') + ' ' + (c.memo || ''), S.cq || '')).sort((a, b) => (a.cat || '').localeCompare(b.cat || '') || (a.name || '').localeCompare(b.name || ''));
+  if (!ls.length) return '<div class="empty">' + (list('contacts').length ? '찾는 연락처가 없어요.' : '등록된 연락처가 없습니다. + 를 눌러 본사·카드사·밴사·긴급 연락처를 넣어 두세요.') + '</div>';
+  let cat = null; return ls.map(c => { const head = c.cat !== cat ? '<div class="lb" style="font-size:13px;margin-top:14px">' + esc((cat = c.cat) || '기타') + '</div>' : '';
+    const ph = (c.phone || '').replace(/[^0-9+*#]/g, '');
+    return head + '<div class="card flat row"><div class="grow"><div class="t1">' + esc(c.name) + '</div><a href="tel:' + ph + '" class="tel">📞 ' + esc(c.phone) + '</a>' + (c.memo ? '<span class="t2"> · ' + esc(c.memo) + '</span>' : '') + '</div><button class="btn" style="flex:none;margin:0" data-act="contactEdit" data-arg="' + c.id + '">수정</button></div>'; }).join('');
+}
+function contactForm(c) {
+  c = c || {}; return '<label class="fl" for="f_n">이름 (필수)</label><input id="f_n" placeholder="예: 본사 총무" value="' + esc(c.name || '') + '"><label class="fl" for="f_c">구분</label><input id="f_c" placeholder="예: 본사, 카드사, 밴사, 직원, 긴급" value="' + esc(c.cat || '') + '">' +
+    '<label class="fl" for="f_p">전화번호 (필수)</label><input id="f_p" type="tel" placeholder="예: 062-123-4567" value="' + esc(c.phone || '') + '"><label class="fl" for="f_m">메모 (선택)</label><input id="f_m" placeholder="메모" value="' + esc(c.memo || '') + '">';
+}
+function contactSave(o) { const n = $('#f_n').value.trim(), ph = $('#f_p').value.trim(); if (!n || !ph) return warn('이름과 전화번호를 입력해 주세요.'); o.name = n; o.cat = $('#f_c').value.trim(); o.phone = ph; o.memo = $('#f_m').value.trim(); put('contacts', o); render(); toast('저장했어요.'); return true; }
+ACT.newContact = () => formModal('연락처 추가', contactForm(null), () => contactSave(create('contacts', {})), '저장');
+ACT.contactEdit = id => { const c = byId('contacts', id); formModal('연락처 수정', contactForm(c) + '<button class="btn red full" id="f_del">이 연락처 삭제</button>', () => contactSave(c), '저장'); $('#f_del').onclick = () => askConfirm('삭제할까요?', c.name, '삭제', () => { c.deleted = true; put('contacts', c); render(); }, true); };
+
+// ---------- 프로필 (사진·상태 메시지 — 앱과 같은 profiles 문서: pic=256px JPEG base64, status) ----------
+function avatarHTML(uid, size) {
+  const pr = byId('profiles', uid), u = user(uid); const s = 'width:' + size + 'px;height:' + size + 'px';
+  return pr && pr.pic ? '<img class="avimg" style="' + s + '" src="data:image/jpeg;base64,' + pr.pic + '" alt="">' : '<b class="avtxt" style="' + s + ';font-size:' + Math.round(size * 0.4) + 'px">' + esc(((u && u.name) || '?').slice(0, 1)) + '</b>';
+}
+ACT.profile = uid => {
+  uid = Number(uid); const u = user(uid); if (!u) return; const pr = byId('profiles', uid) || {}; const me = uid === S.uid; const ph = (u.phone || '').replace(/[^0-9+]/g, '');
+  modal('<div style="text-align:center">' + avatarHTML(uid, 96) + '<h3 style="margin-top:10px">' + esc(u.name) + '</h3><div class="sub">' + ((u.perms || []).includes('staff_manage') ? '관리자' : '직원') + '</div><div style="margin:10px 0;color:' + (pr.status ? 'var(--ink)' : 'var(--gray)') + '">' + esc(pr.status || '상태 메시지가 없어요') + '</div>' + (ph ? '<a class="tel" href="tel:' + ph + '">📞 ' + esc(u.phone) + '</a>' : '') + '</div>' +
+    '<div class="btns" style="margin-top:14px">' + (me ? '<button class="btn tint" data-act="picPick">사진 변경</button><button class="btn tint" data-act="statusEdit">상태 메시지</button>' : '<button class="btn tint" data-act="dmFromProfile" data-arg="' + uid + '">1:1 대화</button>' + (ph ? '<a class="btn tint" style="text-align:center;text-decoration:none" href="tel:' + ph + '">전화하기</a>' : '')) + '<button class="btn" data-act="close">닫기</button></div><input type="file" id="f_pic" accept="image/*" hidden>');
+};
+ACT.myProfile = () => ACT.profile(S.uid);
+ACT.dmFromProfile = uid => { closeModal(); S.tab = 'chat'; S.sub = ''; ACT.dm(uid); };
+ACT.statusEdit = () => { const pr = myProf() || {id: S.uid}; formModal('상태 메시지', '<input id="f_s" placeholder="예: 외근 중, 오후 3시 복귀" value="' + esc(pr.status || '') + '">', () => { const p = myProf() || {id: S.uid}; p.status = $('#f_s').value.trim(); put('profiles', p); render(); toast('저장했어요.'); return true; }, '저장'); };
+ACT.picPick = () => {
+  const f = $('#f_pic'); f.onchange = async () => {
+    if (!f.files[0]) return;
+    try { const d = await shrinkImage(f.files[0], 256, 40 * 1024, true); const p = myProf() || {id: S.uid}; p.pic = b64of(d); put('profiles', p); closeModal(); render(); toast('사진을 바꿨어요.'); } catch (e) { toast('사진을 읽지 못했어요.'); }
+  }; f.click();
+};
+
 // ---------- 입금 확인 ----------
 const DEP_KINDS = ['판매대금', '미납금', '정보변경수수료', '기타'];
 function postToRoom(name, text) { // 이름이 맞는 채팅방에 알림 글을 올린다 (없으면 만든다) — 앱과 같다
@@ -1253,7 +1414,7 @@ ACT.newNotice = () => formModal('공지 작성', '<label class="fl" for="f_t1">�
 // ---------- 전체 ----------
 // 항목과 순서는 안드로이드 앱의 '전체' 탭과 같다. go 가 없는 항목은 아직 앱에서만 되는 기능이다.
 function menuItems() {
-  const P = can('perf_view') || can('staff_manage'), R = can('report_view'), A = can('staff_manage');
+  const P = can('perf_view') || can('staff_manage'), R = canReport() || can('report_view'), A = can('staff_manage');
   const nu = unreadNotices(), lk = lockDoc(); const it = [];
   const add = (sec, label, words, go, badge) => it.push({sec, label, words, go, badge});
   add('바로가기', '업무', '업무 지시 할일 설치 AS 서류', 'nav:task:'); add('바로가기', '프로젝트', '프로젝트 진행률', 'nav:project:');
@@ -1266,11 +1427,11 @@ function menuItems() {
   add('일', '계약 관리 (설치 완료·만료 알림)', '계약 설치 완료 만료 알림 장비', 'nav:all:contracts', ex ? '만료 ' + ex : ''); add('일', '신규 계약 올리기', '신규 계약 올리기 CMS 판매 렌탈', 'act:newContract');
   add('일', '입금 확인 (입금 내역 올리기)', '입금 확인 입금 내역 미납금 판매대금 정보변경수수료', 'nav:all:deposit'); add('일', '단체 문자 보내기 (가맹점)', '단체 문자 sms 발송 가맹점 문자 안내');
   add('일', '내 실적', '내 실적 월별 성장률 계약', 'nav:all:myperf');
-  if (P) { add('일', '전체 실적·직원별 순위', '전체 실적 직원별 순위 성장률', 'nav:all:perf'); add('일', '수익 현황 (입고·출고 단가)', '수익 현황 입고 출고 단가 매출 매입', 'nav:all:profit'); add('일', '실적 보고서 올리기 (대표님께)', '실적 보고서 올리기 대표님 본부장'); }
-  add('일', '일일보고 쓰기', '일일보고 보고 오늘 한 일');
-  if (R) { add('일', '일일보고 종합 보기', '일일보고 종합 대표님 직원별'); if (!P) add('일', '실적 보고서 보기', '실적 보고서 보기 대표님'); }
+  if (P) { add('일', '전체 실적·직원별 순위', '전체 실적 직원별 순위 성장률', 'nav:all:perf'); add('일', '수익 현황 (입고·출고 단가)', '수익 현황 입고 출고 단가 매출 매입', 'nav:all:profit'); add('일', '실적 보고서 올리기 (대표님께)', '실적 보고서 올리기 대표님 본부장', 'nav:all:perfreport'); }
+  add('일', '일일보고 쓰기', '일일보고 보고 오늘 한 일', 'nav:all:daily');
+  if (R) { add('일', '일일보고 종합 보기', '일일보고 종합 대표님 직원별', 'nav:all:reportview'); if (!P) add('일', '실적 보고서 보기', '실적 보고서 보기 대표님', 'nav:all:perfreport'); }
   add('일', '지난 업무 기록', '지난 업무 기록 이력 완료 검색', 'nav:all:history');
-  add('회사', '자료실', '자료실 게시판 양식 서식 계약서 파일 문서'); add('회사', '비상연락망 (눌러서 전화)', '비상연락망 연락처 전화 번호');
+  add('회사', '자료실', '자료실 게시판 양식 서식 계약서 파일 문서', 'nav:all:library'); add('회사', '비상연락망 (눌러서 전화)', '비상연락망 연락처 전화 번호', 'nav:all:contacts');
   add('회사', '사용설명서', '사용설명서 매뉴얼 도움말 사용법 설치', 'nav:all:manual'); add('회사', '버전·업데이트 내역', '버전 업데이트 내역 변경 이력', 'nav:all:about');
   add('회사', '공지사항', '공지사항 공지 알림', 'nav:all:notice', nu ? String(nu) : '');
   if (A) {
@@ -1279,7 +1440,7 @@ function menuItems() {
     if (lk) add('관리자', '가맹점 수정 암호 끄기', '가맹점 수정 암호 끄기 잠금 해제', 'act:mlockOff');
     add('관리자', '직원과 권한', '직원 권한 등록 사용 중지 관리자');
   }
-  add('계정', '내 프로필 (사진·상태 메시지)', '프로필 사진 상태 메시지 내 정보');
+  add('계정', '내 프로필 (사진·상태 메시지)', '프로필 사진 상태 메시지 내 정보', 'act:myProfile');
   const np = 'Notification' in window ? Notification.permission : 'none';
   add('계정', '알림 받기 (이 기기)', '알림 푸시 소리 새 업무 채팅', 'act:notifyOn', np === 'granted' ? '켜짐' : np === 'none' ? '소리만' : '꺼짐');
   add('계정', '알림 소리', '알림 소리 진동 끄기 켜기', 'act:soundToggle', soundOn() ? '켜짐' : '꺼짐');
@@ -1305,7 +1466,7 @@ function viewMenu(wide) {
   const search = '<input id="aq" data-q="allQ" placeholder="🔍  기능 검색 (예: 재고, ㅈㄱ, 문자, 수익)" value="' + esc(S.allQ || '') + '">';
   const note = (wide ? '' : appSec) + '<div class="sub" style="margin-top:18px">‘앱에서’ 표시가 있는 기능은 아직 안드로이드 앱에서만 쓸 수 있어요. 웹에도 차례로 넣고 있어요.</div><div class="sub" style="text-align:center;margin:14px 0 30px">나인패밀리 ' + VERSION + '</div>';
   if (wide) return '<div class="mhead2"><h1>전체 메뉴</h1>' + search + '</div><div class="qres mgrid" data-for="allQ">' + (html || '<div class="empty">찾는 기능이 없어요.</div>') + '</div>' + appSec + note;
-  return '<h1>전체</h1><div class="card row prof" data-act="appOnly" data-arg="내 프로필"><div class="tile big">' + esc((S.me.name || '?').slice(0, 1)) + '</div><div class="grow"><div class="t1">' + esc(S.me.name) + '</div><div class="t2">' + (can('staff_manage') ? '관리자' : '직원') + '</div><div class="t2" style="font-size:11px">프로필 사진·상태 메시지는 앱에서 바꿔요</div></div></div>' +
+  return '<h1>전체</h1><div class="card row prof" data-act="myProfile">' + avatarHTML(S.uid, 48) + '<div class="grow"><div class="t1">' + esc(S.me.name) + '</div><div class="t2">' + (can('staff_manage') ? '관리자' : '직원') + '</div><div class="t2" style="font-size:11px">눌러서 프로필 사진·상태 메시지 바꾸기</div></div></div>' +
     search + '<div class="qres" data-for="allQ">' + (html || '<div class="empty">찾는 기능이 없어요.</div>') + '</div>' + note;
 }
 ACT.appOnly = lb => toast('‘' + lb + '’은(는) 아직 안드로이드 앱에서만 쓸 수 있어요. 웹에도 차례로 넣고 있어요.');
@@ -1334,6 +1495,7 @@ function viewHome() {
 
 // ---------- 사용설명서 · 버전 내역 (웹) ----------
 const WEB_CHANGES = [
+  ['웹 0.0.9', '2026-10-24', ['일일보고 쓰기: 날짜별로 쓰고 제출(완료 업무·올린 계약 자동 집계), 내가 낸 보고', '일일보고 종합 보기(보고 열람 권한자): 직원별 제출·미제출', '실적 보고서: 실적 권한자는 이달 실적 자동 집계를 고쳐서 대표님께 보고, 보고 열람 권한자는 올라온 보고서 보기', '자료실: 분류·검색, 자료 올리기(파일 5개·3MB, 사진은 자동으로 줄여서), 받기, 수정·삭제(올린 사람·관리자)', '비상연락망: 구분별 목록, 눌러서 전화, 추가·수정·삭제', '내 프로필: 사진 변경·상태 메시지, 다른 직원 프로필에서 1:1 대화·전화, 채팅 직원 줄에 프로필 사진']],
   ['웹 0.0.8', '2026-10-24', ['내 실적: 이번 달 신규 계약·판매금액, 지난달과 비교(성장률), 최근 6개월, 올린 계약', '전체 실적·직원별 순위(실적 권한자): 직원별 대수·판매·CMS·렌탈·판매금액 순위, 직원별 지난달→이번 달 막대', '수익 현황(실적 권한자): 총 수익·월 수익·최근 6개월·직원별 수익, 단가 안 적은 출고 장비 바로 입력', '지난 업무 기록: 완료된 업무 검색(전체 이력 권한이 있으면 모두, 없으면 내 것)']],
   ['웹 0.0.7', '2026-10-24', ['안드로이드 앱과 맞춤: 업무 상태 변경은 담당자·최고관리자, 업무 삭제는 만든 사람·최고관리자', '서류 업무(서류 접수·카드사 서류)를 지시하면 ‘서류접수’ 채팅방에 자동으로 알림', '계약 만료 3개월 이내 계약이 있으면 업무 화면 위에 알림 카드', '일정: 다가오는 일정 목록, 일정을 누르면 내용·가맹점 정보 보기, 관리자는 일정 삭제', '가맹점 등급 코드(0~7) 입력·표시', '공지: 작성 권한자·관리자는 읽은 사람 목록', '채팅: 나인이 프렌즈 스티커 80종·이모지, 말풍선 누르면 반응·답장·복사·내 메시지 삭제, 두 번 누르면 ❤️, 글 속 웹 주소 누르면 열림', '가맹점 응대 기록: 종류·날짜로 걸러 보기']],
   ['웹 0.0.6', '2026-10-24', ['저장 상태 표시: 서버에 저장되는 동안 ‘저장 중’, 인터넷이 끊기면 ‘저장 대기 n건’ — 연결되면 자동으로 저장돼요', '가맹점 동시 수정 보호: 수정 창을 연 사이 다른 직원(앱·다른 PC)이 같은 가맹점을 고치면 바뀐 항목을 알려 주고, 덮어쓸지 한 번 더 물어요', '가맹점 등록: 같은 사업자번호가 이미 있으면 알려 줘요', '백업: 관리자 → 데이터 백업 내려받기(PC에 파일로), 관리자가 웹을 열면 하루 한 번 이 PC 안에 자동 보관(14일치)', '매일 새벽 서버 전체 자료를 암호화해 따로 보관하는 자동 백업 준비(관리자가 비밀값을 넣으면 시작)']],
@@ -1364,7 +1526,8 @@ const WEB_MANUAL = [
   ['백업 (관리자)', '자료는 여러 겹으로 지켜져요.\n① 서버: 지우기가 막혀 있어 ‘삭제’해도 표시만 되고, 모든 변경은 변경 기록에 따로 남아요.\n② 매일 새벽 자동 백업: 서버 전체 자료를 암호화해 90일 보관해요(관리자가 비밀값을 넣어 두면 동작).\n③ 관리자 기기: 안드로이드 앱은 폰 안에, 웹은 이 PC 안에 하루 한 번 저절로 14일치 보관해요. 전체 → 관리자 → PC에 보관된 자동 백업.\n④ 언제든 전체 → 관리자 → 데이터 백업 내려받기로 파일을 받아 드라이브 등에 따로 두세요(한 달에 한 번 이상 권장).'],
   ['저장 상태', '저장하면 화면 위에 ‘저장 중’이 잠깐 보였다가 사라져요. 인터넷이 끊기면 ‘저장 대기’로 바뀌고, 다시 연결되면 저절로 서버에 저장돼요. 이 띠가 남아 있는 동안에는 웹앱을 닫지 마세요.\n가맹점 수정 창을 연 사이 다른 직원이 같은 가맹점을 고치면, 저장할 때 바뀐 항목을 알려 주고 덮어쓸지 한 번 더 물어요.'],
   ['실적 · 수익', '전체 → 내 실적: 계약일 기준으로 이번 달 내 신규 계약과 지난달 비교를 봐요. ‹ › 로 달을 바꿔요.\n전체 실적·직원별 순위, 수익 현황은 실적 보기 권한이 있는 사람만 보여요. 수익은 출고된 장비의 출고 단가 − 입고 단가로 계산하고, 단가를 안 적은 장비는 아래 목록에서 눌러 적으면 바로 반영돼요.\n지난 업무 기록: 완료된 업무를 제목·거래처·담당자·완료 메시지로 찾아요.'],
-  ['아직 앱에서만 되는 기능', '단체 문자, 보고, 자료실, 비상연락망, 직원과 권한, 백업, 가맹점 일괄 가져오기 등은 전체 메뉴 맨 아래 ‘아직 안드로이드 앱에서만 되는 기능’에 접혀 있어요. 웹에도 차례로 넣고 있어요.']
+  ['보고 · 자료실 · 연락망 · 프로필', '일일보고 쓰기: ‹ › 로 날짜를 고르고 오늘 한 일을 적어 제출해요. 같은 날 다시 내면 수정본으로 바뀌어요. 보고 열람 권한이 있으면 일일보고 종합에서 직원별 제출 여부를 봐요.\n실적 보고서: 실적 권한이 있으면 자동 집계된 내용을 고쳐 대표님께 올려요.\n자료실: + 로 제목·설명·분류와 파일(5개, 3MB까지)을 올려요. 올린 사람과 관리자만 고치고 지워요.\n비상연락망: 번호를 누르면 전화가 걸려요. + 로 추가, 수정 버튼으로 고쳐요.\n내 프로필: 전체 탭 맨 위 내 카드를 눌러 사진과 상태 메시지를 바꿔요.'],
+  ['아직 앱에서만 되는 기능', '단체 문자, 자료실, 비상연락망, 직원과 권한, 백업, 가맹점 일괄 가져오기 등은 전체 메뉴 맨 아래 ‘아직 안드로이드 앱에서만 되는 기능’에 접혀 있어요. 웹에도 차례로 넣고 있어요.']
 ];
 function viewManual() { return '<h1>사용설명서</h1><div class="sub">나인패밀리 ' + VERSION + ' 기준</div>' + WEB_MANUAL.map(([t, b]) => '<div class="card flat"><div class="t1">' + esc(t) + '</div><div class="mtext">' + esc(b) + '</div></div>').join(''); }
 
@@ -1399,7 +1562,7 @@ ACT.installApp = async () => { if (!installEv) return toast('이미 설치됐거
 
 // ---------- 시작 ----------
 function demoSeed() {
-  S.uid = 1; S.phone = '+821000000000'; S.caps = {perf: true, admin: true};
+  S.uid = 1; S.phone = '+821000000000'; S.caps = {perf: true, admin: true, report: true};
   const U = (id, name, perms) => S.data.users.set(id, {id, name, phone: '+82100000000' + id, active: true, perms: perms || ['task_create']});
   U(1, '양문희', ['task_create', 'task_assign', 'task_view_all', 'notice_write', 'staff_manage']); U(2, '김영업'); U(3, '이사무');
   S.me = user(1);

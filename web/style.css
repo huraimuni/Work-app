@@ -228,3 +228,9 @@ img.stk{display:block;width:120px;height:auto}
 .prow>b{min-width:52px}
 .prow>span{min-width:64px;text-align:right;font-weight:700;color:var(--deep);font-size:12px}
 .hero .n{font-size:30px}
+/* ---- 웹 0.0.9: 보고·자료실·프로필 ---- */
+.avimg{border-radius:50%;object-fit:cover;display:inline-block;vertical-align:middle;flex:none}
+.avtxt{display:inline-flex;border-radius:50%;background:var(--tint);color:var(--deep);align-items:center;justify-content:center;flex:none}
+.av .avimg,.av .avtxt{display:flex;margin:0 auto 3px}
+.clamp2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:14px;margin-top:4px}
+a.tel{color:var(--deep);font-weight:700;text-decoration:none;font-size:14px}
