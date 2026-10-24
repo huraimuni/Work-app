@@ -130,6 +130,10 @@ public class MainActivity extends Activity {
     @Override
     public void onBackPressed() {
         if (inRoom) {
+            if (roomSearchOpen()) {
+                closeRoomSearch();
+                return;
+            }
             leaveRoom();
             return;
         }
@@ -2491,7 +2495,8 @@ public class MainActivity extends Activity {
     // ---------- 채팅 ----------
     private long lastTs(int room) {
         long t = 0;
-        for (JSONObject m : store.list(store.arr("msgs"))) if (m.optInt("room") == room && m.optLong("ts") > t) t = m.optLong("ts");
+        long clr = clearedAt(room);
+        for (JSONObject m : store.list(store.arr("msgs"))) if (m.optInt("room") == room && m.optLong("ts") > t && m.optLong("ts") > clr) t = m.optLong("ts");
         return t;
     }
 
@@ -2596,6 +2601,7 @@ public class MainActivity extends Activity {
         int shown = 0;
         for (final JSONObject r : rooms) {
             String ttl = roomTitle(r);
+            if (roomHidden(r.optInt("id")) && last.get(r.optInt("id")) == 0) continue; // 내가 지운 방은 새 글이 올 때까지 숨김
             if (!chatQuery.isEmpty() && !Kor.match(ttl, chatQuery)) continue;
             shown++;
             LinearLayout row = Ui.cardH(this);
@@ -2628,30 +2634,425 @@ public class MainActivity extends Activity {
             content.addView(row, Ui.lp(this, 8));
         }
         if (shown == 0 && !chatQuery.isEmpty()) content.addView(Ui.text(this, "찾는 대화방이 없어요.", 14, Ui.GRAY, false), Ui.lp(this, 4));
+        if (!chatQuery.isEmpty()) addMsgSearchResults(rooms);
     }
 
+    /** 채팅 목록 검색어로 모든 대화방의 대화 내용을 찾아 보여 준다. 누르면 그 방의 그 글로 이동. */
+    private void addMsgSearchResults(List<JSONObject> rooms) {
+        final java.util.Map<Integer, JSONObject> byRoom = new java.util.HashMap<>();
+        for (JSONObject r : rooms) byRoom.put(r.optInt("id"), r);
+        List<JSONObject> hits = new ArrayList<>();
+        for (JSONObject m : store.list(store.arr("msgs"))) {
+            JSONObject r = byRoom.get(m.optInt("room"));
+            if (r == null || m.optLong("ts") <= clearedAt(m.optInt("room"))) continue;
+            String t = msgText(m);
+            if (!t.isEmpty() && Kor.match(t, chatQuery)) hits.add(m);
+        }
+        Collections.sort(hits, (a, b) -> Long.compare(b.optLong("ts"), a.optLong("ts")));
+        content.addView(Ui.text(this, "대화 내용 검색  (" + hits.size() + "건" + (hits.size() > 40 ? ", 최근 40건" : "") + ")", 13, Ui.GRAY, true), Ui.lp(this, 16));
+        if (hits.isEmpty()) content.addView(Ui.text(this, "그 단어가 들어간 대화가 없어요.", 14, Ui.GRAY, false), Ui.lp(this, 4));
+        int n = 0;
+        for (final JSONObject m : hits) {
+            if (++n > 40) break;
+            JSONObject r = byRoom.get(m.optInt("room"));
+            LinearLayout c = Ui.card(this);
+            c.addView(Ui.text(this, roomTitle(r) + "   " + new SimpleDateFormat("yyyy.M.d HH:mm", Locale.KOREA).format(new Date(m.optLong("ts"))), 12, Ui.DEEP, true));
+            TextView body = Ui.text(this, store.userName(m.optInt("who")) + ": " + snippet(m), 14, Ui.INK, false);
+            body.setMaxLines(2);
+            body.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            c.addView(body, Ui.lp(this, 3));
+            c.setOnClickListener(v -> {
+                chatRoom = m.optInt("room");
+                draft = "";
+                pendingSearch = chatQuery;
+                pendingJump = m.optInt("id");
+                showRoom();
+            });
+            content.addView(c, Ui.lp(this, 8));
+        }
+    }
+
+    /** 검색에 쓰는 글(사진·스티커는 제외, 파일은 이름). */
+    private static String msgText(JSONObject m) {
+        String k = m.optString("kind");
+        if ("img".equals(k) || "stk".equals(k)) return "";
+        if ("file".equals(k)) return m.optString("fname");
+        return m.optString("text");
+    }
+
+    // ======================= v0.14: 채팅 개편 (새 채팅 · 방 메뉴 · 방 안 검색) =======================
+    private android.content.SharedPreferences cprefs() {
+        return getSharedPreferences("chatprefs", MODE_PRIVATE);
+    }
+
+    private String ck(String k, int room) {
+        return k + "_" + myId() + "_" + room;
+    }
+
+    private boolean muted(int room) {
+        return cprefs().getBoolean(ck("mute", room), false);
+    }
+
+    private long clearedAt(int room) {
+        return cprefs().getLong(ck("clr", room), 0);
+    }
+
+    private boolean roomHidden(int room) {
+        return cprefs().getBoolean(ck("hid", room), false);
+    }
+
+    private static final String[] BG_NAMES = {"기본 (크림)", "하늘", "연두", "연분홍", "연보라", "연회색", "진한 밤색"};
+    private static final int[] BG_COLORS = {Color.rgb(250, 248, 242), Color.rgb(232, 243, 252), Color.rgb(233, 247, 232), Color.rgb(253, 236, 240), Color.rgb(241, 236, 251), Color.rgb(238, 240, 244), Color.rgb(44, 48, 60)};
+
+    private int roomBgColor(int room) {
+        int i = cprefs().getInt(ck("bg", room), 0);
+        return BG_COLORS[Math.max(0, Math.min(BG_COLORS.length - 1, i))];
+    }
+
+    private String myPhone() {
+        com.google.firebase.auth.FirebaseUser au = Cloud.auth().getCurrentUser();
+        return au != null && au.getPhoneNumber() != null ? au.getPhoneNumber() : (me == null ? "" : me.optString("phone"));
+    }
+
+    /** 대화할 수 있는 직원(나 제외, 사용 중, 전화번호 등록됨), 이름순. */
+    private List<JSONObject> staffForChat() {
+        List<JSONObject> us = new ArrayList<>();
+        JSONArray ua = store.users();
+        for (int i = 0; i < ua.length(); i++) {
+            JSONObject u = ua.optJSONObject(i);
+            if (u.optInt("id") != myId() && u.optBoolean("active", true) && !u.optString("phone").isEmpty()) us.add(u);
+        }
+        Collections.sort(us, (x, y) -> x.optString("name").compareTo(y.optString("name")));
+        return us;
+    }
+
+    /** 새 채팅: 그룹 채팅방 만들기 / 1:1 채팅 */
     private void showAddRoom() {
+        final String[] items = {"👥   그룹 채팅방 만들기", "💬   1:1 채팅"};
+        new AlertDialog.Builder(this).setTitle("새 채팅").setItems(items, (d, w) -> {
+            if (w == 0) askGroupName();
+            else pickOneOnOne();
+        }).setNegativeButton("취소", null).show();
+    }
+
+    private void pickOneOnOne() {
+        final List<JSONObject> us = staffForChat();
+        if (us.isEmpty()) {
+            Ui.toast(this, "대화할 직원이 아직 없어요.");
+            return;
+        }
+        String[] names = new String[us.size()];
+        for (int i = 0; i < names.length; i++) names[i] = us.get(i).optString("name");
+        new AlertDialog.Builder(this).setTitle("누구와 대화할까요?").setItems(names, (d, w) -> startDm(us.get(w).optInt("id")))
+                .setNegativeButton("취소", null).show();
+    }
+
+    private void askGroupName() {
         LinearLayout f = form();
-        final EditText name = Ui.field(this, "채팅방 이름 (예: 거래처 A/S, 서류 접수)", false);
+        final EditText name = Ui.field(this, "그룹 이름 (예: 광주 영업팀, 설치 현장)", false);
         f.addView(name);
-        new AlertDialog.Builder(this).setTitle("새 채팅방").setView(f)
-                .setNegativeButton("취소", null)
-                .setPositiveButton("만들기", (d, w) -> {
+        new AlertDialog.Builder(this).setTitle("그룹 이름").setView(f).setNegativeButton("취소", null)
+                .setPositiveButton("다음", (d, w) -> {
                     String n = name.getText().toString().trim();
                     if (n.isEmpty()) {
-                        Ui.toast(this, "이름을 입력해 주세요.");
+                        Ui.toast(this, "그룹 이름을 입력해 주세요.");
                         return;
                     }
-                    JSONObject r = store.create("rooms");
+                    pickGroupMembers(n);
+                }).show();
+    }
+
+    private void pickGroupMembers(final String name) {
+        final List<JSONObject> us = staffForChat();
+        if (us.isEmpty()) {
+            Ui.toast(this, "초대할 직원이 아직 없어요.");
+            return;
+        }
+        String[] names = new String[us.size()];
+        for (int i = 0; i < names.length; i++) names[i] = us.get(i).optString("name");
+        final boolean[] on = new boolean[names.length];
+        final AlertDialog dlg = new AlertDialog.Builder(this).setTitle("'" + name + "'에 누구를 초대할까요?")
+                .setMultiChoiceItems(names, on, (d, w, c) -> on[w] = c)
+                .setNegativeButton("취소", null).setNeutralButton("전체 선택", null).setPositiveButton("만들기", null).create();
+        dlg.show();
+        dlg.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v -> {
+            for (int i = 0; i < on.length; i++) {
+                on[i] = true;
+                dlg.getListView().setItemChecked(i, true);
+            }
+        });
+        dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            List<Integer> ids = new ArrayList<>();
+            List<String> phones = new ArrayList<>();
+            String mp = myPhone();
+            if (mp.isEmpty()) {
+                Ui.toast(this, "내 전화번호를 확인하지 못했어요.");
+                return;
+            }
+            ids.add(myId());
+            phones.add(mp);
+            for (int i = 0; i < on.length; i++) {
+                if (!on[i]) continue;
+                ids.add(us.get(i).optInt("id"));
+                phones.add(us.get(i).optString("phone"));
+            }
+            if (ids.size() < 2) {
+                Ui.toast(this, "초대할 사람을 한 명 이상 골라 주세요.");
+                return;
+            }
+            JSONObject r = store.groupRoom(name, myId(), ids, phones);
+            if (r == null) {
+                Ui.toast(this, "그룹을 만들지 못했어요.");
+                return;
+            }
+            dlg.dismiss();
+            chatRoom = r.optInt("id");
+            draft = "";
+            showRoom();
+        });
+    }
+
+    // ----- 방 안 : 메뉴 · 정보 · 검색 -----
+    private LinearLayout roomSearchBar;
+    private EditText roomSearchInput;
+    private TextView roomSearchInfo;
+    private final List<Integer> roomHits = new ArrayList<>();
+    private int roomHitPos = -1;
+    private String pendingSearch = null;
+    private int pendingJump = 0;
+    private int scrollToId = 0;
+    private final java.util.Map<Integer, View> msgViews = new java.util.HashMap<>();
+
+    private void resetRoomSearch() {
+        roomSearchBar = null;
+        roomSearchInput = null;
+        roomSearchInfo = null;
+        roomHits.clear();
+        roomHitPos = -1;
+        scrollToId = 0;
+    }
+
+    private boolean roomSearchOpen() {
+        return roomSearchBar != null && roomSearchBar.getVisibility() == View.VISIBLE;
+    }
+
+    private void openRoomSearch(String preset) {
+        if (roomSearchBar == null) return;
+        roomSearchBar.setVisibility(View.VISIBLE);
+        roomSearchInput.setText(preset == null ? "" : preset);
+        roomSearchInput.setSelection(roomSearchInput.getText().length());
+        roomSearchInput.requestFocus();
+        if (preset == null || preset.isEmpty()) {
+            ((android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE)).showSoftInput(roomSearchInput, 0);
+        }
+    }
+
+    private void closeRoomSearch() {
+        if (roomSearchBar == null) return;
+        hideKeyboard(roomSearchBar);
+        roomSearchBar.setVisibility(View.GONE);
+        roomHits.clear();
+        roomHitPos = -1;
+        fillMsgs();
+    }
+
+    private void runRoomSearch(String q) {
+        roomHits.clear();
+        roomHitPos = -1;
+        q = q.trim();
+        if (!q.isEmpty()) {
+            List<JSONObject> ms = new ArrayList<>();
+            long clr = clearedAt(chatRoom);
+            for (JSONObject m : store.list(store.arr("msgs"))) if (m.optInt("room") == chatRoom && m.optLong("ts") > clr) ms.add(m);
+            Collections.sort(ms, (a, b) -> Long.compare(a.optLong("ts"), b.optLong("ts")));
+            for (JSONObject m : ms) {
+                String t = msgText(m);
+                if (!t.isEmpty() && Kor.match(t, q)) roomHits.add(m.optInt("id"));
+            }
+            if (!roomHits.isEmpty()) {
+                roomHitPos = roomHits.size() - 1; // 가장 최근 글부터
+                int pj = roomHits.indexOf(pendingJump);
+                if (pendingJump != 0 && pj >= 0) roomHitPos = pj;
+                pendingJump = 0;
+            }
+        }
+        showHit();
+    }
+
+    private void showHit() {
+        if (roomSearchInfo != null) {
+            roomSearchInfo.setText(roomHits.isEmpty() ? (roomSearchInput != null && roomSearchInput.getText().toString().trim().isEmpty() ? "" : "없음") : (roomHitPos + 1) + "/" + roomHits.size());
+        }
+        scrollToId = roomHitPos >= 0 && roomHitPos < roomHits.size() ? roomHits.get(roomHitPos) : 0;
+        fillMsgs();
+    }
+
+    private void stepHit(int d) {
+        if (roomHits.isEmpty()) return;
+        roomHitPos = (roomHitPos + d + roomHits.size()) % roomHits.size();
+        showHit();
+    }
+
+    private LinearLayout buildRoomSearchBar() {
+        LinearLayout bar = new LinearLayout(this);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setBackgroundColor(Ui.TINT);
+        bar.setPadding(Ui.dp(this, 10), Ui.dp(this, 6), Ui.dp(this, 6), Ui.dp(this, 6));
+        roomSearchInput = Ui.field(this, "🔍 대화 속 단어 찾기 (초성 가능)", false);
+        roomSearchInput.setSingleLine(true);
+        roomSearchInput.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            public void onTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            public void afterTextChanged(Editable s) {
+                runRoomSearch(s.toString());
+            }
+        });
+        bar.addView(roomSearchInput, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        roomSearchInfo = Ui.text(this, "", 12, Ui.DEEP, true);
+        roomSearchInfo.setPadding(Ui.dp(this, 8), 0, Ui.dp(this, 4), 0);
+        bar.addView(roomSearchInfo);
+        TextView up = Ui.text(this, "▲", 18, Ui.DEEP, true);
+        up.setPadding(Ui.dp(this, 10), Ui.dp(this, 6), Ui.dp(this, 10), Ui.dp(this, 6));
+        up.setOnClickListener(v -> stepHit(-1));
+        bar.addView(up);
+        TextView dn = Ui.text(this, "▼", 18, Ui.DEEP, true);
+        dn.setPadding(Ui.dp(this, 10), Ui.dp(this, 6), Ui.dp(this, 10), Ui.dp(this, 6));
+        dn.setOnClickListener(v -> stepHit(1));
+        bar.addView(dn);
+        TextView x = Ui.text(this, "✕", 18, Ui.GRAY, true);
+        x.setPadding(Ui.dp(this, 10), Ui.dp(this, 6), Ui.dp(this, 10), Ui.dp(this, 6));
+        x.setOnClickListener(v -> closeRoomSearch());
+        bar.addView(x);
+        bar.setVisibility(View.GONE);
+        return bar;
+    }
+
+    /** 방 오른쪽 위 ⋮ : 음소거 · 검색 · 배경화면 · 참여자 · 이름 변경 · 비우기 · 삭제 */
+    private void showRoomMenu(final JSONObject room) {
+        final boolean dm = room.optBoolean("dm");
+        final boolean grp = room.optBoolean("grp");
+        final int rid = room.optInt("id");
+        final List<String> labels = new ArrayList<>();
+        final List<Runnable> acts = new ArrayList<>();
+        labels.add("🔍   대화 검색");
+        acts.add(() -> openRoomSearch(null));
+        if (dm && dmOther(room) != 0) {
+            labels.add("👤   프로필 보기");
+            acts.add(() -> showProfile(dmOther(room)));
+        } else if (!dm) {
+            labels.add("👥   참여자·방 정보");
+            acts.add(() -> showRoomInfo(room));
+        }
+        labels.add(muted(rid) ? "🔔   알림 켜기" : "🔕   음소거 (이 방 알림 끄기)");
+        acts.add(() -> {
+            cprefs().edit().putBoolean(ck("mute", rid), !muted(rid)).apply();
+            Ui.toast(this, muted(rid) ? "이 방 알림을 껐어요." : "이 방 알림을 켰어요.");
+        });
+        labels.add("🖼   배경화면 변경");
+        acts.add(() -> new AlertDialog.Builder(this).setTitle("배경화면").setItems(BG_NAMES, (d, w) -> {
+            cprefs().edit().putInt(ck("bg", rid), w).apply();
+            showRoom();
+        }).setNegativeButton("취소", null).show());
+        if (!dm) {
+            labels.add("✏️   이름 변경");
+            acts.add(() -> renameRoom(room));
+        }
+        labels.add("🧹   대화 내용 비우기");
+        acts.add(() -> new AlertDialog.Builder(this).setTitle("대화 내용을 비울까요?")
+                .setMessage("내 화면에서만 지워져요. 다른 사람의 대화는 그대로 남아 있어요.")
+                .setNegativeButton("취소", null).setPositiveButton("비우기", (d, w) -> {
+                    cprefs().edit().putLong(ck("clr", rid), System.currentTimeMillis()).apply();
+                    resetRoomSearch();
+                    showRoom();
+                }).show());
+        labels.add("🗑   대화방 삭제");
+        acts.add(() -> new AlertDialog.Builder(this).setTitle("대화방을 삭제할까요?")
+                .setMessage("내 목록에서만 사라져요. 다른 사람에게는 그대로 있고, 새 메시지가 오면 다시 나타나요.")
+                .setNegativeButton("취소", null).setPositiveButton("삭제", (d, w) -> {
+                    cprefs().edit().putLong(ck("clr", rid), System.currentTimeMillis()).putBoolean(ck("hid", rid), true).apply();
+                    leaveRoom();
+                }).show());
+        new AlertDialog.Builder(this).setTitle("채팅방 설정").setItems(labels.toArray(new String[0]), (d, w) -> acts.get(w).run())
+                .setNegativeButton("닫기", null).show();
+    }
+
+    private void renameRoom(final JSONObject room) {
+        LinearLayout f = form();
+        final EditText name = Ui.field(this, "채팅방 이름", false);
+        name.setText(room.optString("name"));
+        f.addView(name);
+        new AlertDialog.Builder(this).setTitle("이름 변경").setView(f).setNegativeButton("취소", null)
+                .setPositiveButton("저장", (d, w) -> {
+                    if (name.getText().toString().trim().isEmpty()) return;
                     try {
-                        r.put("name", n);
-                        r.put("by", myId());
+                        room.put("name", name.getText().toString().trim());
                     } catch (Exception ignored) {
                     }
                     store.save();
-                    chatRoom = r.optInt("id");
-                    draft = "";
                     showRoom();
+                }).show();
+    }
+
+    /** 방 이름을 누르면: 그룹이면 참여자 목록(누르면 프로필)과 초대하기. */
+    private void showRoomInfo(final JSONObject room) {
+        LinearLayout f = new LinearLayout(this);
+        f.setOrientation(LinearLayout.VERTICAL);
+        f.setPadding(Ui.dp(this, 22), Ui.dp(this, 16), Ui.dp(this, 22), Ui.dp(this, 4));
+        f.addView(Ui.text(this, roomTitle(room), 21, Ui.INK, true));
+        JSONArray mm = room.optJSONArray("members");
+        final boolean grp = room.optBoolean("grp") && mm != null;
+        if (grp) {
+            f.addView(Ui.text(this, "참여자 " + mm.length() + "명  ·  초대한 사람들끼리만 보여요", 13, Ui.GRAY, false), Ui.lp(this, 4));
+            for (int i = 0; i < mm.length(); i++) {
+                final int uid = mm.optInt(i);
+                LinearLayout row = new LinearLayout(this);
+                row.setGravity(Gravity.CENTER_VERTICAL);
+                row.setPadding(0, Ui.dp(this, 8), 0, Ui.dp(this, 8));
+                row.addView(avatarView(uid, 38));
+                TextView nm = Ui.text(this, store.userName(uid) + (uid == myId() ? "  (나)" : ""), 16, Ui.INK, false);
+                nm.setPadding(Ui.dp(this, 12), 0, 0, 0);
+                row.addView(nm);
+                row.setOnClickListener(v -> showProfile(uid));
+                f.addView(row, Ui.lp(this, 2));
+            }
+        } else {
+            f.addView(Ui.text(this, "모든 직원이 볼 수 있는 방이에요.", 14, Ui.GRAY, false), Ui.lp(this, 6));
+        }
+        ScrollView sv = new ScrollView(this);
+        sv.addView(f);
+        AlertDialog.Builder b = new AlertDialog.Builder(this).setView(sv).setNegativeButton("닫기", null)
+                .setNeutralButton("이름 변경", (d, w) -> renameRoom(room));
+        if (grp) b.setPositiveButton("초대하기", (d, w) -> inviteMore(room));
+        b.show();
+    }
+
+    private void inviteMore(final JSONObject room) {
+        JSONArray mm = room.optJSONArray("members");
+        final List<JSONObject> cand = new ArrayList<>();
+        for (JSONObject u : staffForChat()) {
+            boolean in = false;
+            for (int i = 0; mm != null && i < mm.length(); i++) if (mm.optInt(i) == u.optInt("id")) in = true;
+            if (!in) cand.add(u);
+        }
+        if (cand.isEmpty()) {
+            Ui.toast(this, "초대할 수 있는 직원이 더 없어요.");
+            return;
+        }
+        String[] names = new String[cand.size()];
+        for (int i = 0; i < names.length; i++) names[i] = cand.get(i).optString("name");
+        final boolean[] on = new boolean[names.length];
+        new AlertDialog.Builder(this).setTitle("누구를 더 초대할까요?").setMultiChoiceItems(names, on, (d, w, c) -> on[w] = c)
+                .setNegativeButton("취소", null).setPositiveButton("초대", (d, w) -> {
+                    int n = 0;
+                    for (int i = 0; i < on.length; i++) if (on[i] && store.invite(room, cand.get(i).optInt("id"), cand.get(i).optString("phone"))) n++;
+                    if (n > 0) {
+                        Ui.toast(this, n + "명을 초대했어요. (들어온 뒤의 대화부터 보여요)");
+                        showRoom();
+                    }
                 }).show();
     }
 
@@ -2776,7 +3177,14 @@ public class MainActivity extends Activity {
             {"처음 시작하기 · 로그인", "1. 앱을 켜면 잠깐 시작 화면이 나오고, 처음에는 로그인 화면이 나옵니다.\n2. 관리자가 등록해 둔 내 휴대폰 번호(예: 01012345678)를 입력하고 '인증번호 받기'를 누릅니다.\n3. 문자로 온 인증번호 6자리를 입력하고 '확인'을 누릅니다.\n4. 한 번 로그인하면 계속 유지됩니다. 다시 묻지 않아요.\n\n※ '등록되지 않은 번호입니다'가 나오면 관리자에게 내 번호 등록을 요청하세요.\n※ 로그아웃은 맨 아래 탭 '전체' → 맨 아래 '로그아웃'입니다. 폰을 바꾸면 같은 번호로 다시 인증하면 됩니다."},
             {"업무 탭", "내게 지시된 업무를 확인하고 처리하는 곳입니다.\n\n■ 화면 구성\n- 맨 위 금색 카드: 남은 업무 수, 새 업무·진행·오늘 완료 수와 진행 막대\n- 계약 만료 알림: 만료가 3개월 안으로 남은 계약이 있으면 카드가 나타납니다. 누르면 계약 관리로 이동합니다.\n- 업무 카드: 종류(설치·AS·영업·서류·카드), 제목, 거래처, 기한, 상태\n\n■ 업무 처리\n1. 카드를 누르면 상세가 열립니다.\n2. 아래 버튼으로 상태를 바꿉니다: 확인함 → 진행중 → 완료(또는 보류).\n3. '완료'를 누르면 완료 메시지를 적을 수 있어요. 모든 처리 기록은 이력으로 남습니다.\n\n■ 업무 지시하기 (업무 지시 권한이 있는 사람)\n- 오른쪽 아래 + 버튼 → 제목, 종류, 거래처, 전화, 주소, 기한, 메모, 담당 직원 입력 후 '지시하기'.\n- '가맹점 조회'를 누르면 등록된 가맹점을 검색해 선택할 수 있고, 거래처·전화·주소가 자동으로 채워집니다.\n- '전체 업무' 보기 권한이 있으면 위쪽 '내 업무 / 전체 업무' 버튼이 보입니다."},
             {"프로젝트 탭", "여러 사람이 오래 진행하는 일을 관리합니다.\n\n1. 오른쪽 아래 + 로 프로젝트를 만듭니다 (제목, 기한, 메모, 책임자).\n2. 프로젝트를 누르면 진행률(%) 슬라이더, '점검 필요' 체크, 메모를 수정할 수 있습니다.\n3. 저장할 때마다 진행 기록이 쌓여서 누가 언제 무엇을 바꿨는지 볼 수 있어요."},
-            {"채팅 탭", "직원끼리 대화하는 곳이에요. 원하는 만큼 채팅방을 만들 수 있습니다.\n\n■ 채팅방 만들기\n- 맨 위 '+ 새 채팅방 만들기' → 이름을 적고 '만들기'. (예: 거래처 A/S, 서류 접수, 입금 확인)\n- 방이 하나도 없으면 '기본 채팅방 만들기'로 전체방·서류접수·입금확인·신규계약·AS설치·공지 방을 한 번에 만들 수 있어요.\n\n■ 대화방\n- 방을 누르면 전체 화면 대화방이 열리고, 입력줄은 맨 아래에 고정됩니다. 왼쪽 위 ‹ 또는 폰의 뒤로가기로 목록에 돌아갑니다.\n- 내 말풍선은 금색·오른쪽, 다른 사람은 흰색·왼쪽이고 옆에 이름과 프로필 사진이 나옵니다. 같은 사람이 같은 분에 이어 보내면 사진·이름은 한 번만 나와요.\n- 사람 사진을 누르면 그 직원의 프로필(이름·상태 메시지·전화번호)이 나오고, '전화하기'로 바로 걸 수 있어요.\n\n■ 답장 · 반응 · 삭제 (v0.8.0, 텔레그램처럼)\n- 말풍선을 두 번 빠르게 누르면 ❤️ 좋아요가 붙습니다. 같은 걸 다시 두 번 누르면 취소돼요.\n- 말풍선을 길게 누르면 맨 위에 이모티콘 줄(👍 ❤️ 😂 😮 😢 🙏 🔥 👏)이 뜨고, 그 아래에 답장 / 복사(글만) / 삭제(내 메시지만)가 있어요. 이모티콘을 한 번 누르면 바로 붙습니다.\n- 답장을 고르면 입력줄 위에 '○○에게 답장' 띠가 생기고, 그 상태로 보내면 말풍선 위에 인용이 붙어요. 띠의 ✕ 로 취소합니다.\n- 이미 붙은 이모티콘을 누르면 같은 목록이 떠서 다른 이모티콘으로 바꾸거나, 내 이모티콘을 한 번 더 눌러 지울 수 있어요(텔레그램처럼).\n- 삭제한 내 메시지는 대화에서 사라지고, 서버에는 기록이 보관됩니다.\n\n■ 링크 (v0.9.1)\n- 글에 웹 주소(예: https://… 또는 naver.com)를 적어 보내면 파란 밑줄로 표시되고, 말풍선을 한 번 누르면 브라우저로 열립니다. 주소가 여러 개면 목록에서 고르세요. 길게 누르기·두 번 누르기는 그대로 됩니다.\n\n■ 사진·파일·이모지·스티커\n- 입력줄 왼쪽 '+' → 사진 보내기(앨범) / 사진 찍어 보내기 / 파일 보내기.\n- 사진은 자동으로 줄여서 올라가요. 대화 속 사진을 누르면 크게 보이고, '다른 앱으로 열기·저장'으로 저장할 수 있습니다.\n- 파일은 3MB까지 보낼 수 있어요(문서·엑셀·PDF용). 더 큰 파일은 지금은 보낼 수 없습니다. 파일 말풍선을 누르면 내려받아 열립니다.\n- 입력줄 오른쪽 ☺ 를 누르면 판이 열려요. 맨 위 탭: 이모지(글 사이에 들어감) / 나인이 / 복이 / 호야 / 깍이 / 도리. 스티커는 누르면 바로 전송됩니다.\n- '나인이 프렌즈'는 우리 회사 캐릭터 5마리예요(아홉꼬리 여우 나인이, 복두꺼비 복이, 아기 호랑이 호야, 까치 깍이, 다람쥐 도리). 마리당 16종, 모두 80종으로 신규계약 성공·축하·대단해·빡쳐·정신 차려·힘내와 우리 일(POS 설치, 현장 AS, 랜선 공사, 단말기 수리·도색, 토스 영업, 테이블오더, 회의, 서류, 보고서, 차에서 꿀잠 등)이 들어 있어요.\n- 예전(v0.8.0)에 보낸 나인이 스티커 메시지는 그대로 보입니다.\n\n■ 보내는 중 안내\n- 사진·파일은 인터넷이 연결돼야 올라가요. '보내는 중…'이 뜬 뒤 대화에 나타납니다. 안 나타나면 인터넷을 확인하고 다시 보내 주세요.\n\n■ 1:1 비공개 대화 (v0.12.0)\n- 채팅 탭 맨 위 직원 목록에서 직원을 누르거나, 🔍 검색창에 이름(초성 가능)을 적어 찾은 직원을 누르거나, 채팅에서 직원 사진을 눌러 '1:1 대화'를 누르면 대화창이 열려요.\n- 텔레그램처럼 직원을 눌렀다고 방이 바로 생기지는 않아요. 첫 메시지를 보내야 대화 목록에 나타납니다. 같은 사람과는 항상 같은 방이 열려요.\n- 이 방은 두 사람 사이의 대화라서 다른 직원에게는 내려가지 않아요(최고관리자 포함). 목록에는 상대 이름으로 보여요.\n- 답장·반응·스티커·사진·파일은 일반 방과 같이 쓸 수 있어요. (사진·파일 자체는 보관 주소를 아는 사람만 열 수 있어 사실상 두 사람만 열어요.)\n- 이 방은 이름을 바꿀 수 없고, 업데이트(v0.12.0) 전의 앱에는 보이지 않아요.\n\n※ 1:1 대화를 뺀 나머지 채팅방은 모든 직원이 볼 수 있습니다. 민감한 개인 이야기·개인정보 파일은 1:1 대화로 나누세요."},
+            {"채팅 탭", "직원끼리 대화하는 곳이에요. 원하는 만큼 채팅방을 만들 수 있습니다.\n\n■ 새 채팅 만들기 (v0.14.0)\n- 맨 위 '+ 새 채팅방 만들기'를 누르면 두 가지가 나와요.\n  ① 그룹 채팅방: 그룹 이름을 적고 '다음' → 초대할 직원을 체크('전체 선택'도 있어요) → '만들기'. 초대한 사람들끼리만 보이는 방이 열려요.\n  ② 1:1 채팅: 직원 한 명을 고르면 바로 대화창이 열려요. (첫 메시지를 보내야 목록에 생겨요)\n- 방이 하나도 없으면 '기본 채팅방 만들기'로 전체방·서류접수·입금확인·신규계약·AS설치·공지 방을 한 번에 만들 수 있어요.\n\n■ 대화방\n- 방을 누르면 전체 화면 대화방이 열리고, 입력줄은 맨 아래에 고정됩니다. 왼쪽 위 ‹ 또는 폰의 뒤로가기로 목록에 돌아갑니다.\n- 내 말풍선은 금색·오른쪽, 다른 사람은 흰색·왼쪽이고 옆에 이름과 프로필 사진이 나옵니다. 같은 사람이 같은 분에 이어 보내면 사진·이름은 한 번만 나와요.\n- 사람 사진을 누르면 그 직원의 프로필(이름·상태 메시지·전화번호)이 나오고, '전화하기'로 바로 걸 수 있어요.\n\n■ 답장 · 반응 · 삭제 (v0.8.0, 텔레그램처럼)\n- 말풍선을 두 번 빠르게 누르면 ❤️ 좋아요가 붙습니다. 같은 걸 다시 두 번 누르면 취소돼요.\n- 말풍선을 길게 누르면 맨 위에 이모티콘 줄(👍 ❤️ 😂 😮 😢 🙏 🔥 👏)이 뜨고, 그 아래에 답장 / 복사(글만) / 삭제(내 메시지만)가 있어요. 이모티콘을 한 번 누르면 바로 붙습니다.\n- 답장을 고르면 입력줄 위에 '○○에게 답장' 띠가 생기고, 그 상태로 보내면 말풍선 위에 인용이 붙어요. 띠의 ✕ 로 취소합니다.\n- 이미 붙은 이모티콘을 누르면 같은 목록이 떠서 다른 이모티콘으로 바꾸거나, 내 이모티콘을 한 번 더 눌러 지울 수 있어요(텔레그램처럼).\n- 삭제한 내 메시지는 대화에서 사라지고, 서버에는 기록이 보관됩니다.\n\n■ 링크 (v0.9.1)\n- 글에 웹 주소(예: https://… 또는 naver.com)를 적어 보내면 파란 밑줄로 표시되고, 말풍선을 한 번 누르면 브라우저로 열립니다. 주소가 여러 개면 목록에서 고르세요. 길게 누르기·두 번 누르기는 그대로 됩니다.\n\n■ 사진·파일·이모지·스티커\n- 입력줄 왼쪽 '+' → 사진 보내기(앨범) / 사진 찍어 보내기 / 파일 보내기.\n- 사진은 자동으로 줄여서 올라가요. 대화 속 사진을 누르면 크게 보이고, '다른 앱으로 열기·저장'으로 저장할 수 있습니다.\n- 파일은 3MB까지 보낼 수 있어요(문서·엑셀·PDF용). 더 큰 파일은 지금은 보낼 수 없습니다. 파일 말풍선을 누르면 내려받아 열립니다.\n- 입력줄 오른쪽 ☺ 를 누르면 판이 열려요. 맨 위 탭: 이모지(글 사이에 들어감) / 나인이 / 복이 / 호야 / 깍이 / 도리. 스티커는 누르면 바로 전송됩니다.\n- '나인이 프렌즈'는 우리 회사 캐릭터 5마리예요(아홉꼬리 여우 나인이, 복두꺼비 복이, 아기 호랑이 호야, 까치 깍이, 다람쥐 도리). 마리당 16종, 모두 80종으로 신규계약 성공·축하·대단해·빡쳐·정신 차려·힘내와 우리 일(POS 설치, 현장 AS, 랜선 공사, 단말기 수리·도색, 토스 영업, 테이블오더, 회의, 서류, 보고서, 차에서 꿀잠 등)이 들어 있어요.\n- 예전(v0.8.0)에 보낸 나인이 스티커 메시지는 그대로 보입니다.\n\n■ 보내는 중 안내\n- 사진·파일은 인터넷이 연결돼야 올라가요. '보내는 중…'이 뜬 뒤 대화에 나타납니다. 안 나타나면 인터넷을 확인하고 다시 보내 주세요.\n\n■ 방 안 메뉴 · 검색 (v0.14.0)
+- 방 위쪽 이름(또는 사진)을 누르면: 1:1은 상대 프로필, 그룹은 참여자 목록(누르면 프로필)과 '초대하기'·'이름 변경'이 나와요. 나중에 초대한 사람은 들어온 뒤의 대화부터 볼 수 있어요.
+- 오른쪽 위 🔍 는 방 안 대화 검색이에요. 단어(초성도 가능)를 치면 찾은 글이 노랗게 표시되고, ▲ ▼ 로 이전·다음 글로 넘어가요. ✕ 로 닫습니다.
+- 오른쪽 위 ⋮ 는 채팅방 설정이에요: 대화 검색 · 프로필/참여자 · 음소거 · 배경화면 변경 · 이름 변경(그룹) · 대화 내용 비우기 · 대화방 삭제.
+- 음소거는 이 폰에서 그 방 알림만 꺼요. 비우기·삭제는 '내 화면에서만' 적용돼서 다른 사람 대화에는 영향이 없고, 삭제한 방도 새 메시지가 오면 다시 나타나요. 배경화면도 내 폰에서만 바뀌어요.
+- 채팅 탭 위쪽 🔍 검색창(엔터)에 단어를 치면 직원·대화방 이름과 함께 '대화 내용 검색' 결과가 나와요. 누르면 그 방의 그 글로 바로 이동합니다.
+
+■ 1:1 비공개 대화 (v0.12.0)\n- 채팅 탭 맨 위 직원 목록에서 직원을 누르거나, 🔍 검색창에 이름(초성 가능)을 적어 찾은 직원을 누르거나, 채팅에서 직원 사진을 눌러 '1:1 대화'를 누르면 대화창이 열려요.\n- 텔레그램처럼 직원을 눌렀다고 방이 바로 생기지는 않아요. 첫 메시지를 보내야 대화 목록에 나타납니다. 같은 사람과는 항상 같은 방이 열려요.\n- 이 방은 두 사람 사이의 대화라서 다른 직원에게는 내려가지 않아요(최고관리자 포함). 목록에는 상대 이름으로 보여요.\n- 답장·반응·스티커·사진·파일은 일반 방과 같이 쓸 수 있어요. (사진·파일 자체는 보관 주소를 아는 사람만 열 수 있어 사실상 두 사람만 열어요.)\n- 이 방은 이름을 바꿀 수 없고, 업데이트(v0.12.0) 전의 앱에는 보이지 않아요.\n\n※ 1:1 대화와 초대한 그룹방을 뺀 나머지 기본 채팅방(전체방 등)은 모든 직원이 볼 수 있습니다. 민감한 개인 이야기·개인정보 파일은 1:1 대화나 그룹방으로 나누세요."},
             {"일정 탭 (달력)", "한국 달력과 앞으로의 일정을 함께 봅니다.\n\n■ 달력\n- 일요일·공휴일은 빨간색, 토요일은 파란색, 오늘은 금색 원입니다. 공휴일 이름도 표시돼요. (2026~2028년 기준)\n- ‹ › 로 달을 넘기고 '오늘'을 누르면 오늘로 돌아옵니다.\n- 일정이나 업무 기한이 있는 날은 작은 금색 점이 찍혀요.\n- 날짜를 누르면 그날의 일정과 업무가 아래에 나옵니다.\n\n■ 일정 남기기\n1. 오른쪽 아래 + 버튼.\n2. 제목과 날짜를 적고, 시간은 선택입니다.\n3. '가맹점 조회·선택'을 누르면 등록된 가맹점 중에서 찾아 고릅니다 (초성 검색 가능). 고르면 사업자번호·연락처·주소·계약조건·등급이 불러와지고, 장소에는 가맹점 주소가 자동으로 들어갑니다.\n4. '추가'를 누르면 달력에 바로 표시되고, 달력 아래 '다가오는 일정'에도 올라갑니다.\n\n■ 다가오는 일정\n- 오늘부터 앞으로의 일정과 내 업무 기한이 날짜 순으로 나와서, 언제 어디로 가야 하는지 한눈에 확인할 수 있습니다.\n- 가맹점이 연결된 일정을 누르면 가맹점 상세 정보가 열립니다."},
             {"전체 탭", "나머지 모든 기능으로 들어가는 메뉴판입니다.\n\n■ 기능 검색 (v0.8.0)\n- 맨 위 프로필 카드 아래 '🔍 기능 검색' 칸에 단어나 초성을 치면 그 기능이 바로 나옵니다. 예: '재고', 'ㅈㄱ', '문자', '수익', '바코드', '프로필'.\n- 눌러서 바로 이동해요. 지우면 원래 메뉴판으로 돌아갑니다. (업무·채팅·일정 같은 탭도 검색됩니다.)\n\n■ 메뉴\n- 맨 위 내 카드를 누르면 프로필 사진과 상태 메시지를 바꿀 수 있어요.\n- 재고: 장비 재고 관리 (바코드 스캔, 단가)\n- 가맹점: 가맹점 정보 관리\n- 신규 계약 올리기 / 계약 관리: 계약 등록과 설치 완료 처리, 만료 알림\n- 단체 문자 보내기: 가맹점에 안내 문자\n- 내 실적: 나만 보는 월별 실적과 지난달 비교\n- 전체 실적·직원별 순위 / 수익 현황 / 실적 보고서 올리기: (권한이 있는 사람만 보임)\n- 일일보고 쓰기, 일일보고 종합 보기(권한자)\n- 지난 업무 기록: 완료된 업무 검색\n- 사용설명서, 버전·업데이트 내역, 공지사항\n- 직원과 권한: (관리자만) 직원 추가·권한 설정\n- 로그아웃\n\n※ 맨 아래에 현재 앱 버전이 표시됩니다. 문의할 때 이 버전을 알려 주세요."},
             {"재고", "장비를 우리가 직접 입력해서 관리합니다. (전체 → 재고)\n\n■ 재고 추가\n1. 오른쪽 아래 + 버튼.\n2. 모델명을 적고, 시리얼은 한 줄에 하나씩 적습니다. 여러 줄을 붙여 넣으면 장비가 한꺼번에 등록돼요.\n3. 시리얼이 없는 소모품(롤지 등)은 시리얼 대신 '수량'만 적습니다.\n4. 안전재고: 이 수 아래로 내려가면 빨간색으로 '부족해요!'가 표시됩니다.\n5. 입고 단가: 실적 권한자에게만 보이는 칸입니다. 1대당 산 값을 적으면 시리얼 전체에 같이 적용돼요.\n\n■ 바코드 스캔\n- '바코드 스캔'을 누르면 카메라가 열리고, 읽으면 번호가 시리얼 칸에 한 줄 들어갑니다. 한 번 누르면 한 번만 읽어요. 다음 장비는 버튼을 다시 눌러 주세요. 같은 번호는 두 번 들어가지 않아요.\n- 재고 목록 위 '바코드로 찾기'를 누르면 바코드를 읽어 그 시리얼을 바로 검색합니다.\n- 계약에서 '+ 장비 추가'를 누르고 '바코드 스캔(한 번에 한 대)'을 누르면, 읽은 번호가 재고에 있을 때 그 장비가 바로 추가돼요. 다음 장비는 다시 '+ 장비 추가'를 눌러 같은 방식으로 넣습니다. 재고에 없는 번호면 모델명만 적어 직접 입력하게 열려요.\n\n■ 시리얼 촬영 인식 (v0.7.0)\n- '시리얼 촬영'을 누르고 장비 뒷면의 S/N 라벨을 가까이서 찍으면 글자를 읽어 줍니다.\n- 시리얼처럼 보이는 글자 후보가 목록으로 나오고, 맞는 것을 체크해서 '넣기'를 누르세요. 0(영)과 O(오), 1과 I처럼 헷갈리기 쉬운 글자는 꼭 눈으로 확인해 주세요.\n- 바코드가 같이 있으면 바코드 스캔이 더 정확합니다.\n- 스캔과 촬영은 구글 서비스가 있는 폰에서 동작합니다.\n\n■ 보기·검색\n- 모델별로 묶여서 '재고 n대'가 보이고, 그 아래에 시리얼이 나열됩니다.\n- 검색창에 모델명·시리얼을 치면 찾아줘요. 'ㅌㅅㅍㅅ' 같은 초성도 됩니다.\n\n■ 수정·삭제\n- 시리얼 줄을 누르면 수정창이 열립니다. 시리얼 칸에도 스캔·촬영 버튼이 있어요. '삭제'를 누르면 목록에서 지워져요 (기록은 서버에 남아 복구 가능).\n\n■ 단가와 수익 (실적 권한자 전용)\n- 재고 줄을 누르면 입고 단가(산 값)와 출고 단가(판 값)를 적을 수 있어요.\n- 재고 화면 맨 위에 보유 재고 자산(입고 단가 합계)이 나오고, '수익 현황 보기'로 이동합니다.\n- 단가는 서버에서도 실적 권한자만 읽을 수 있게 따로 보관됩니다. 권한이 없는 직원에게는 칸 자체가 보이지 않아요.\n\n■ 상태가 바뀌는 순서\n재고 → (계약에서 선택하면) 출고중 → (설치 완료 처리하면) 재고 목록에서 사라짐"},
@@ -2828,6 +3236,7 @@ public class MainActivity extends Activity {
 
     /** {버전, 날짜, 내용}. 새 버전은 맨 위에 추가. CI 가 현재 versionName 항목이 있는지 검사한다. */
     private static final String[][] CHANGELOG = {
+            {"0.14.0", "2026-10-24", "• 새 채팅방 만들기가 두 갈래로: 그룹 채팅방(이름 → 초대할 직원 체크 → 만들기, 초대한 사람들끼리만 보임) / 1:1 채팅(직원 한 명 고르면 바로 대화)\n• 방 위쪽 이름을 누르면 1:1은 프로필, 그룹은 참여자 목록·초대하기·이름 변경\n• 방 오른쪽 위 🔍 대화 검색(찾은 글 노란색, ▲▼ 이동)과 ⋮ 채팅방 설정(음소거·배경화면·대화 내용 비우기·대화방 삭제)\n• 채팅 목록 검색창에 단어를 치면 모든 대화방의 대화 내용까지 찾아서, 눌러서 그 글로 이동"},
             {"0.13.1", "2026-10-24", "• 채팅 탭에 🔍 검색창: 직원 이름(초성 가능)이나 대화방 이름으로 찾고, 직원을 누르면 대화창이 열려요\n• 텔레그램처럼: 직원을 눌러도 대화방이 바로 만들어지지 않고, 첫 메시지를 보낼 때 비로소 생겨요 (그냥 열었다 닫으면 아무것도 남지 않음)\n• 대화 목록에 1:1 대화는 직원 사진으로, 마지막 메시지와 시간이 함께 보여요"},
             {"0.13.0", "2026-10-24", "• 자료실 게시판: 양식·계약서·안내문 등 파일을 올리고 내려받기 (분류·검색·수정·삭제, 한 글에 파일 5개, 사진은 자동으로 줄임)\n• 채팅에서 자물쇠 표시와 '둘만 보여요' 문구를 없앰 (1:1 대화는 그대로 두 사람 사이에서만 오가요)"},
             {"0.12.1", "2026-10-24", "• 채팅 탭 맨 위에 직원 목록(사진·이름)이 생겨서, 직원을 누르면 바로 1:1 대화가 열려요 (이미 있으면 그 방으로)\n• 1:1 대화도 단체방과 같은 기능(답장·반응·스티커·사진·파일·링크·삭제)을 그대로 씁니다"},
@@ -2882,6 +3291,9 @@ public class MainActivity extends Activity {
         replyBar = null;
         replyTo = null;
         lastMsgCount = -1;
+        resetRoomSearch();
+        pendingSearch = null;
+        pendingJump = 0;
         buildMain();
     }
 
@@ -2918,38 +3330,66 @@ public class MainActivity extends Activity {
             leaveRoom();
         });
         hd.addView(back);
-        TextView nm = Ui.text(this, roomTitle(room), 19, Ui.INK, true);
+        final boolean isDm = room.optBoolean("dm");
+        final String ttl = roomTitle(room);
+        LinearLayout who = new LinearLayout(this);
+        who.setGravity(Gravity.CENTER_VERTICAL);
+        if (isDm && dmOther(room) != 0) who.addView(avatarView(dmOther(room), 38));
+        else who.addView(Ui.circle(this, ttl, 38, Ui.TINT, Ui.DEEP));
+        LinearLayout nc = new LinearLayout(this);
+        nc.setOrientation(LinearLayout.VERTICAL);
+        nc.setPadding(Ui.dp(this, 10), 0, Ui.dp(this, 6), 0);
+        TextView nm = Ui.text(this, ttl, 18, Ui.INK, true);
         nm.setSingleLine(true);
-        hd.addView(nm, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        TextView ren = Ui.text(this, "이름 변경", 13, Ui.GRAY, false);
-        ren.setPadding(Ui.dp(this, 10), Ui.dp(this, 8), 0, Ui.dp(this, 8));
-        ren.setOnClickListener(v -> {
-            LinearLayout f = form();
-            final EditText name = Ui.field(this, "채팅방 이름", false);
-            name.setText(room.optString("name"));
-            f.addView(name);
-            new AlertDialog.Builder(this).setTitle("이름 변경").setView(f).setNegativeButton("취소", null)
-                    .setPositiveButton("저장", (d, w) -> {
-                        if (name.getText().toString().trim().isEmpty()) return;
-                        try {
-                            room.put("name", name.getText().toString().trim());
-                        } catch (Exception ignored) {
-                        }
-                        store.save();
-                        showRoom();
-                    }).show();
+        nm.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        nc.addView(nm);
+        String subt;
+        JSONArray rmm = room.optJSONArray("members");
+        if (isDm) {
+            JSONObject pp = store.profile(dmOther(room));
+            subt = pp == null || pp.optString("status").isEmpty() ? "눌러서 프로필 보기" : pp.optString("status");
+        } else if (room.optBoolean("grp") && rmm != null) {
+            subt = "참여자 " + rmm.length() + "명";
+        } else {
+            subt = "전체 직원";
+        }
+        TextView sb = Ui.text(this, subt, 11, Ui.GRAY, false);
+        sb.setSingleLine(true);
+        sb.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        nc.addView(sb);
+        who.addView(nc, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        who.setOnClickListener(v -> {
+            hideKeyboard(v);
+            if (isDm) {
+                if (dmOther(room) != 0) showProfile(dmOther(room));
+            } else {
+                showRoomInfo(room);
+            }
         });
-        if (room.optBoolean("dm")) ren.setVisibility(View.GONE);
-        hd.addView(ren);
+        hd.addView(who, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView sch = Ui.text(this, "🔍", 20, Ui.DEEP, false);
+        sch.setPadding(Ui.dp(this, 10), Ui.dp(this, 6), Ui.dp(this, 6), Ui.dp(this, 6));
+        sch.setOnClickListener(v -> openRoomSearch(null));
+        hd.addView(sch);
+        TextView mnu = Ui.text(this, "⋮", 26, Ui.DEEP, true);
+        mnu.setPadding(Ui.dp(this, 10), 0, Ui.dp(this, 2), Ui.dp(this, 2));
+        mnu.setOnClickListener(v -> {
+            hideKeyboard(v);
+            showRoomMenu(room);
+        });
+        hd.addView(mnu);
         root.addView(hd);
 
         View line = new View(this);
         line.setBackgroundColor(Ui.FIELD);
         root.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 1)));
+        resetRoomSearch();
+        roomSearchBar = buildRoomSearchBar();
+        root.addView(roomSearchBar);
 
         roomScroll = new ScrollView(this);
         roomScroll.setVerticalScrollBarEnabled(false);
-        roomScroll.setBackgroundColor(Color.rgb(250, 248, 242));
+        roomScroll.setBackgroundColor(roomBgColor(chatRoom));
         msgBox = new LinearLayout(this);
         msgBox.setOrientation(LinearLayout.VERTICAL);
         msgBox.setPadding(Ui.dp(this, 12), Ui.dp(this, 8), Ui.dp(this, 12), Ui.dp(this, 12));
@@ -3048,6 +3488,11 @@ public class MainActivity extends Activity {
             setContentView(root);
         }
         fillMsgs();
+        if (pendingSearch != null) { // 목록의 대화 검색에서 넘어온 경우: 검색창을 열고 그 글로 이동
+            String ps = pendingSearch;
+            pendingSearch = null;
+            openRoomSearch(ps);
+        }
     }
 
     private static final String[] FRIENDS = {"나인이", "복이", "호야", "깍이", "도리"};
@@ -3479,8 +3924,10 @@ public class MainActivity extends Activity {
         boolean atBottom = lastMsgCount < 0 || roomScroll.getChildAt(0).getBottom() - (roomScroll.getHeight() + roomScroll.getScrollY()) < Ui.dp(this, 120);
         msgBox.removeAllViews();
         List<JSONObject> ms = new ArrayList<>();
-        for (JSONObject m : store.list(store.arr("msgs"))) if (m.optInt("room") == chatRoom) ms.add(m);
+        long clr = clearedAt(chatRoom);
+        for (JSONObject m : store.list(store.arr("msgs"))) if (m.optInt("room") == chatRoom && m.optLong("ts") > clr) ms.add(m);
         Collections.sort(ms, (a, b) -> Long.compare(a.optLong("ts"), b.optLong("ts")));
+        msgViews.clear();
         if (ms.isEmpty()) {
             TextView e = Ui.text(this, "첫 메시지를 남겨 보세요.", 14, Ui.GRAY, false);
             e.setGravity(Gravity.CENTER);
@@ -3559,10 +4006,17 @@ public class MainActivity extends Activity {
                 }
             }
             msgBox.addView(row, Ui.lp(this, same ? 3 : 10));
+            msgViews.put(m.optInt("id"), row);
+            if (roomHits.contains(m.optInt("id"))) row.setBackgroundColor(m.optInt("id") == scrollToId ? Color.rgb(255, 226, 140) : Color.rgb(255, 242, 200));
             prev = m;
         }
         lastMsgCount = ms.size();
-        if (atBottom) roomScroll.post(() -> roomScroll.fullScroll(View.FOCUS_DOWN));
+        final View target = scrollToId == 0 ? null : msgViews.get(scrollToId);
+        if (target != null) {
+            roomScroll.postDelayed(() -> roomScroll.smoothScrollTo(0, Math.max(0, target.getTop() - Ui.dp(this, 140))), 80);
+        } else if (atBottom && !roomSearchOpen()) {
+            roomScroll.post(() -> roomScroll.fullScroll(View.FOCUS_DOWN));
+        }
     }
 
     private void toggleReaction(JSONObject m, String emoji) {
@@ -3827,7 +4281,7 @@ public class MainActivity extends Activity {
             if ("tasks".equals(coll) && o.optInt("assignee") == me2 && o.optInt("by", o.optInt("author")) != me2) {
                 title = "새 업무가 지시됐어요";
                 body = o.optString("title");
-            } else if ("msgs".equals(coll) && o.optInt("who") != me2 && o.optInt("ts", 1) != 0 && System.currentTimeMillis() - o.optLong("ts") < 120000) {
+            } else if ("msgs".equals(coll) && o.optInt("who") != me2 && o.optInt("ts", 1) != 0 && System.currentTimeMillis() - o.optLong("ts") < 120000 && !muted(o.optInt("room"))) {
                 title = store.userName(o.optInt("who"));
                 body = snippet(o);
             } else if ("library".equals(coll) && o.optInt("who") != me2) {
@@ -4478,8 +4932,7 @@ public class MainActivity extends Activity {
     private void startDm(int uid) {
         JSONObject other = store.user(uid);
         if (other == null) return;
-        com.google.firebase.auth.FirebaseUser au = Cloud.auth().getCurrentUser();
-        String pa = au != null && au.getPhoneNumber() != null ? au.getPhoneNumber() : (me == null ? "" : me.optString("phone"));
+        String pa = myPhone();
         String pb = other.optString("phone");
         if (pa.isEmpty() || pb.isEmpty()) {
             Ui.toast(this, "두 사람 모두 전화번호가 등록돼 있어야 해요.");

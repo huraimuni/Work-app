@@ -160,6 +160,40 @@ final class Store {
         save();
     }
 
+    /** 초대한 사람들끼리만 보이는 그룹 대화방. mem(전화번호)에 든 사람에게만 서버가 보여 준다. */
+    JSONObject groupRoom(String name, int by, List<Integer> ids, List<String> phones) {
+        try {
+            JSONObject r = new JSONObject();
+            r.put("id", nextId());
+            r.put("created", now());
+            r.put("name", name);
+            r.put("by", by);
+            r.put("grp", true);
+            r.put("members", new JSONArray(ids));
+            r.put("mem", new JSONArray(phones));
+            db.optJSONArray("rooms").put(r);
+            save();
+            return r;
+        } catch (JSONException e) {
+            return null;
+        }
+    }
+
+    /** 그룹 대화방에 사람을 더 초대한다. (새로 들어온 사람은 들어온 뒤의 대화부터 보여요) */
+    boolean invite(JSONObject r, int uid, String phone) {
+        try {
+            JSONArray mm = r.optJSONArray("members"), mem = r.optJSONArray("mem");
+            if (mm == null || mem == null) return false;
+            for (int i = 0; i < mm.length(); i++) if (mm.optInt(i) == uid) return false;
+            mm.put(uid);
+            mem.put(phone);
+            save();
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     /** 두 직원의 1:1 대화방을 찾고, 없으면 만든다. 참가자 전화번호(mem)가 들어 있어 서버가 둘에게만 보여 준다. */
     JSONObject dmRoom(int a, String phoneA, int b, String phoneB) {
         int lo = Math.min(a, b), hi = Math.max(a, b);
