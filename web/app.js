@@ -2,11 +2,15 @@
 /* 나인패밀리 웹앱 — 앱과 같은 Firebase(nine-family)를 쓴다. 문서는 {j: JSON문자열, u: 시각} 형식. */
 const CFG = {apiKey: 'AIzaSyCsA-M6QGGGk0owyDXzziv1X79TqF5NptI', authDomain: 'nine-family.firebaseapp.com', projectId: 'nine-family',
   storageBucket: 'nine-family.firebasestorage.app', messagingSenderId: '48232341344', appId: '1:48232341344:web:19be016c9c1c1de5a34805'};
-const VERSION = '웹 0.1.3';
+const VERSION = '웹 0.0.1';
 const DEMO = location.hash === '#demo';
 const COLLS = ['users', 'tasks', 'notices', 'projects', 'events', 'merchants', 'rooms', 'msgs', 'profiles', 'mlogs'];
 const TYPES = ['신규 설치', 'AS', '영업 방문', '서류 접수', '카드사 서류', '기타'];
-const KINDS = ['AS', '전화 응대', '방문', '기타'];
+const KINDS = ['방문A/S', '원격A/S', '전화응대', '기타'];
+const logKind = k => (k === 'AS' || k === '방문' || k === '방문 A/S') ? '방문A/S' : k === '원격 A/S' ? '원격A/S' : k === '전화 응대' ? '전화응대' : k;
+const logReq = g => (g.req !== undefined || g.res !== undefined) ? (g.req || '') : (g.text || '');
+const logRes = g => g.res || '';
+const logAll = g => (g.mname || '') + ' ' + logReq(g) + ' ' + logRes(g) + ' ' + (g.text || '');
 const ST = {'지시됨': '미확인', '확인함': '진행중', '진행중': '진행중', '보류': '보류', '완료': '완료'};
 const $ = (s, r) => (r || document).querySelector(s);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
@@ -446,22 +450,22 @@ ACT.merchant = id => {
 };
 function logCard(g, act) {
   const [a, id, mid] = act.split('|');
-  return '<div class="card" data-act="' + a + '" data-arg="' + id + '|' + mid + '"><span class="chip">' + esc(g.kind) + '</span> <b style="font-size:13px">' + esc(g.date) + '</b><div style="margin-top:6px;white-space:pre-wrap">' + esc(g.text) + '</div><div class="t2">' + esc(uname(g.who) + (g.editedBy ? ' · 수정 ' + uname(g.editedBy) + ' ' + (g.editedAt || '') : '')) + '</div></div>';
+  return '<div class="card" data-act="' + a + '" data-arg="' + id + '|' + mid + '"><span class="chip">' + esc(logKind(g.kind)) + '</span> <b style="font-size:13px">' + esc(g.date) + '</b>' + (logReq(g) ? '<div class="lb">요청사항</div><div style="white-space:pre-wrap">' + esc(logReq(g)) + '</div>' : '') + (logRes(g) ? '<div class="lb g">처리결과</div><div style="white-space:pre-wrap">' + esc(logRes(g)) + '</div>' : '') + '<div class="t2">' + esc(uname(g.who) + (g.editedBy ? ' · 수정 ' + uname(g.editedBy) + ' ' + (g.editedAt || '') : '')) + '</div></div>';
 }
 ACT.logmore = mid => { S.logLimit += 50; ACT.merchant(mid); };
 ACT.editLog = a => {
   const [id, mid] = a.split('|'); const g = byId('mlogs', id); if (!g) return;
   const mine = g.who === S.uid || can('staff_manage');
-  formModal('응대 기록 수정', '<div class="sub">' + esc(g.mname) + ' · 작성 ' + esc(uname(g.who)) + (g.editedBy ? ' · 마지막 수정 ' + esc(uname(g.editedBy)) + ' ' + esc(g.editedAt || '') : '') + '</div><input id="f_d" type="date" value="' + esc(g.date) + '"><select id="f_k">' + KINDS.map(k => '<option' + (k === g.kind ? ' selected' : '') + '>' + k + '</option>').join('') + '</select><textarea id="f_m">' + esc(g.text) + '</textarea>' + (mine ? '<button class="btn red full" id="f_del">이 기록 지우기</button>' : ''), () => {
-    const d = $('#f_d').value, t = $('#f_m').value.trim(); if (!d || !t) return warn('날짜와 내용을 확인해 주세요.');
-    if (t !== g.text) { g.editedBy = S.uid; g.editedAt = nowStr(); }
-    g.date = d; g.kind = $('#f_k').value; g.text = t; put('mlogs', g); render(); if (mid && byId('merchants', mid)) ACT.merchant(mid); toast('고쳤어요.'); return true;
+  formModal('응대 기록 수정', '<div class="sub">' + esc(g.mname) + ' · 작성 ' + esc(uname(g.who)) + (g.editedBy ? ' · 마지막 수정 ' + esc(uname(g.editedBy)) + ' ' + esc(g.editedAt || '') : '') + '</div><input id="f_d" type="date" value="' + esc(g.date) + '"><select id="f_k">' + KINDS.map(k => '<option' + (k === logKind(g.kind) ? ' selected' : '') + '>' + k + '</option>').join('') + '</select><div class="lb">요청사항</div><textarea id="f_m" placeholder="고객이 요청한 내용">' + esc(logReq(g)) + '</textarea><div class="lb g">처리결과</div><textarea id="f_r" placeholder="어떻게 처리했는지">' + esc(logRes(g)) + '</textarea>' + (mine ? '<button class="btn red full" id="f_del">이 기록 지우기</button>' : ''), () => {
+    const d = $('#f_d').value, t = $('#f_m').value.trim(), r = $('#f_r').value.trim(); if (!d || (!t && !r)) return warn('날짜와 요청사항(또는 처리결과)을 적어 주세요.');
+    if (t !== logReq(g) || r !== logRes(g)) { g.editedBy = S.uid; g.editedAt = nowStr(); }
+    g.date = d; g.kind = $('#f_k').value; g.req = t; g.res = r; g.text = t + (r ? (t ? '\n' : '') + '→ 처리: ' + r : ''); put('mlogs', g); render(); if (mid && byId('merchants', mid)) ACT.merchant(mid); toast('고쳤어요.'); return true;
   }, '저장');
   const del = $('#f_del'); if (del) del.onclick = () => { if (!confirm('이 기록을 지울까요?')) return; g.deleted = true; put('mlogs', g); closeModal(); render(); if (mid && byId('merchants', mid)) ACT.merchant(mid); };
 };
-ACT.newLog = mid => formModal('응대 기록', '<input id="f_d" type="date" value="' + todayStr() + '"><select id="f_k">' + KINDS.map(k => '<option>' + k + '</option>').join('') + '</select><textarea id="f_m" placeholder="내용 (필수)"></textarea>', () => {
-  const d = $('#f_d').value, t = $('#f_m').value.trim(); if (!d || !t) return warn('날짜와 내용을 확인해 주세요.');
-  const m = byId('merchants', mid); put('mlogs', create('mlogs', {merchant: m.id, mname: m.name, date: d, kind: $('#f_k').value, text: t, who: S.uid})); render(); ACT.merchant(mid); toast('기록을 남겼어요.'); return true;
+ACT.newLog = mid => formModal('응대 기록', '<input id="f_d" type="date" value="' + todayStr() + '"><select id="f_k">' + KINDS.map(k => '<option>' + k + '</option>').join('') + '</select><div class="lb">요청사항</div><textarea id="f_m" placeholder="고객이 요청한 내용"></textarea><div class="lb g">처리결과</div><textarea id="f_r" placeholder="어떻게 처리했는지"></textarea>', () => {
+  const d = $('#f_d').value, t = $('#f_m').value.trim(), r = $('#f_r').value.trim(); if (!d || (!t && !r)) return warn('날짜와 요청사항(또는 처리결과)을 적어 주세요.');
+  const m = byId('merchants', mid); put('mlogs', create('mlogs', {merchant: m.id, mname: m.name, date: d, kind: $('#f_k').value, req: t, res: r, text: t + (r ? (t ? '\n' : '') + '→ 처리: ' + r : ''), who: S.uid})); render(); ACT.merchant(mid); toast('기록을 남겼어요.'); return true;
 }, '저장');
 const mfield = (id, ph, v, t) => '<input id="' + id + '" placeholder="' + ph + '" value="' + esc(v || '') + '"' + (t ? ' type="' + t + '"' : '') + '>';
 function merchantForm(m) {
@@ -484,7 +488,7 @@ function viewAllLogs() {
     found = hits.slice(0, 20).map(m => { const c = list('mlogs').filter(g => g.merchant === m.id).length; return '<div class="card" data-act="merchant" data-arg="' + m.id + '"><div class="row"><div class="grow"><div class="t1">' + esc(m.name) + '</div><div class="t2">' + esc((m.bizno || '사업자번호 없음') + ' · 응대 기록 ' + c + '건') + '</div></div><span style="color:var(--deep);font-size:22px">›</span></div></div>'; }).join('') +
       (hits.length > 20 ? '<div class="sub">더 있어요. 검색어를 더 적어 주세요.</div>' : '') + (hits.length ? '' : '<div class="empty">찾는 가맹점이 없어요. (상호·사업자번호만 찾아요)</div>');
   }
-  const ls = list('mlogs').filter(g => kmatch((g.mname || '') + ' ' + (g.text || ''), q)).sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.created || '').localeCompare(a.created || ''));
+  const ls = list('mlogs').filter(g => kmatch(logAll(g), q)).sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.created || '').localeCompare(a.created || ''));
   return '<h1>가맹점 응대 기록</h1><div class="sub">상호 또는 사업자번호로 가맹점을 찾아 눌러서 기록을 보고·추가·수정해요.</div><input id="lmq" data-q="lmq" placeholder="🔍 가맹점 찾기 — 상호 또는 사업자번호" value="' + esc(S.lmq) + '">' + found +
     '<h2>최근 기록</h2><input id="lq" data-q="lq" placeholder="가맹점·내용 검색 (초성 가능)" value="' + esc(q) + '"><div class="sub" style="margin-top:8px;font-weight:700">기록 ' + ls.length + '건 · 눌러서 수정</div>' +
     ls.slice(0, 100).map(g => logCard(g, 'editLog|' + g.id + '|' + g.merchant).replace('<span class="chip">' + esc(g.kind) + '</span>', '<span class="chip">' + esc(g.kind) + '</span> <b>' + esc(g.mname) + '</b>')).join('') + (ls.length > 100 ? '<div class="sub">최근 100건만 보여요.</div>' : '') + (ls.length ? '' : '<div class="empty">기록이 없어요.</div>');
