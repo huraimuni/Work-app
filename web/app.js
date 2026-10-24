@@ -2,7 +2,7 @@
 /* 나인패밀리 웹앱 — 앱과 같은 Firebase(nine-family)를 쓴다. 문서는 {j: JSON문자열, u: 시각} 형식. */
 const CFG = {apiKey: 'AIzaSyCsA-M6QGGGk0owyDXzziv1X79TqF5NptI', authDomain: 'nine-family.firebaseapp.com', projectId: 'nine-family',
   storageBucket: 'nine-family.firebasestorage.app', messagingSenderId: '48232341344', appId: '1:48232341344:web:19be016c9c1c1de5a34805'};
-const VERSION = '웹 0.0.6';
+const VERSION = '웹 0.0.7';
 const DEMO = location.hash === '#demo';
 const COLLS = ['users', 'tasks', 'notices', 'projects', 'events', 'merchants', 'rooms', 'msgs', 'profiles', 'mlogs', 'config', 'stock', 'contracts', 'deposits', 'costs'];
 const TYPES = ['신규 설치', 'AS', '영업 방문', '서류 접수', '카드사 서류', '기타'];
@@ -312,6 +312,8 @@ function fab() {
 function bind(root) {
   root.onclick = ev => {
     S.exitWarn = false;
+    const bb = ev.target.closest('.bub[data-mid]');
+    if (bb && !ev.target.closest('a,[data-act]')) { clearTimeout(S.tapT); if (S.tapId === bb.dataset.mid) { S.tapId = 0; return ACT.react(bb.dataset.mid + '|❤️'); } S.tapId = bb.dataset.mid; S.tapT = setTimeout(() => { S.tapId = 0; ACT.msgMenu(bb.dataset.mid); }, 280); return; }
     const n = ev.target.closest('[data-nav]'); if (n) { S.tab = n.dataset.nav; S.sub = n.dataset.sub || ''; S.room = 0; S.menu = false; return render(); }
     const a = ev.target.closest('[data-act]'); if (a) { ACT[a.dataset.act] && ACT[a.dataset.act](a.dataset.arg, a, ev); }
   };
@@ -341,7 +343,9 @@ function viewTasks(noHero) {
   const norm = t => t.status === '확인함' ? '진행중' : t.status;
   const cnt = F.map((f, i) => scope.filter(t => i === 0 ? norm(t) !== '완료' : norm(t) === FS[i]).length);
   const rows = scope.filter(t => S.taskFilter === 0 ? norm(t) !== '완료' : norm(t) === FS[S.taskFilter]).sort((a, b) => (b.created || '').localeCompare(a.created || ''));
-  return (noHero ? '' : '<div class="hero"><div class="row"><div class="grow">남은 업무<div class="n">' + open + '건</div></div><div style="text-align:right;font-size:12px">미확인 ' + fresh + ' · 진행 ' + doing + ' · 보류 ' + held + '<br>오늘 완료 ' + done + '</div></div><div class="bar"><i style="width:' + ratio + '%"></i></div></div>') +
+  const exn = expiringContracts().length;
+  const expCard = exn ? '<button class="expcard" data-nav="all" data-sub="contracts">⏰ 만료가 3개월 안으로 남은 계약 ' + exn + '건 <span>계약 관리 ›</span></button>' : '';
+  return expCard + (noHero ? '' : '<div class="hero"><div class="row"><div class="grow">남은 업무<div class="n">' + open + '건</div></div><div style="text-align:right;font-size:12px">미확인 ' + fresh + ' · 진행 ' + doing + ' · 보류 ' + held + '<br>오늘 완료 ' + done + '</div></div><div class="bar"><i style="width:' + ratio + '%"></i></div></div>') +
     (can('task_view_all') ? '<div class="pills"><button class="pill ' + (!S.showAll ? 'on' : '') + '" data-act="scope" data-arg="0">내 업무</button><button class="pill ' + (S.showAll ? 'on' : '') + '" data-act="scope" data-arg="1">전체 업무</button></div>' : '') +
     '<div class="sub" style="margin-top:' + (noHero ? 4 : 14) + 'px;font-weight:700">상태별로 보기</div><div class="seg">' + F.map((f, i) => '<button class="' + (S.taskFilter === i ? 'on' : '') + '" data-act="tfilter" data-arg="' + i + '">' + f + '<b>' + cnt[i] + '</b></button>').join('') + '</div>' +
     (rows.length ? rows.map(taskCard).join('') : '<div class="empty">' + (S.taskFilter === 0 ? '진행 중인 업무가 없습니다.' : '\'' + F[S.taskFilter] + '\' 업무가 없습니다.') + '</div>');
@@ -357,7 +361,7 @@ function tlog(t, text) { (t.history = t.history || []).push({t: nowStr(), who: S
 ACT.task = id => {
   const t = byId('tasks', id); if (!t) return;
   if (t.status === '지시됨' && t.assignee === S.uid && !t.seenAt) { t.seenAt = nowStr(); tlog(t, '담당자가 열어봄'); put('tasks', t); }
-  const own = t.assignee === S.uid || can('task_assign') || can('task_view_all');
+  const own = t.assignee === S.uid || can('staff_manage'); // 상태 변경: 담당자 본인 또는 최고관리자 (앱과 같음)
   const ln = (k, v) => v ? '<div class="line"><b>' + k + '</b><div>' + esc(v) + '</div></div>' : '';
   const ph = (t.phone || '').replace(/[^0-9+*#]/g, '');
   modal('<h3>' + esc(t.title) + '</h3><div class="sub" style="font-weight:700">' + esc(t.type) + ' · ' + (ST[t.status] || t.status) + '</div>' +
@@ -366,8 +370,9 @@ ACT.task = id => {
     (own && t.status !== '완료' ? '<div class="btns" style="margin-top:12px">' + (t.status !== '진행중' && t.status !== '확인함' ? '<button class="btn tint" data-act="tstatus" data-arg="' + id + '|진행중">진행 시작</button>' : '') + '<button class="btn" data-act="thold" data-arg="' + id + '">보류·연기</button><button class="btn gold" data-act="tdone" data-arg="' + id + '">완료</button></div>' : '') +
     (own && t.status === '완료' ? '<button class="btn full" data-act="tstatus" data-arg="' + id + '|진행중">진행중으로 되돌리기</button>' : '') +
     (own && t.status === '보류' ? '<button class="btn tint full" data-act="tresched" data-arg="' + id + '">일정 다시 잡기</button>' : '') +
-    '<button class="btn full" data-act="close">닫기</button>');
+    '<div class="btns">' + (t.creator === S.uid || can('staff_manage') ? '<button class="btn red" data-act="tdel" data-arg="' + id + '">삭제</button>' : '') + '<button class="btn" data-act="close">닫기</button></div>');
 };
+ACT.tdel = id => { const t = byId('tasks', id); if (!t) return; askConfirm('업무를 삭제할까요?', t.title + '\n목록과 달력에서 사라집니다.', '삭제', () => { t.deleted = true; put('tasks', t); render(); toast('삭제했어요.'); }, true); };
 ACT.tstatus = a => {
   const [id, st] = a.split('|'); const t = byId('tasks', id); if (!t || t.status === st) return;
   t.status = st; tlog(t, '상태 → ' + st); put('tasks', t); closeModal(); render(); toast('바꿨어요.');
@@ -395,6 +400,7 @@ ACT.newTask = () => {
     const d = $('#f_d').value, tm = $('#f_tm').value; const as = Number($('#f_w').value);
     const t = create('tasks', {title: ti, type: $('#f_ty').value, client: $('#f_c').value.trim(), phone: $('#f_p').value.trim(), addr: $('#f_a').value.trim(), due: d ? d + (tm ? ' ' + tm : '') : '', memo: $('#f_m').value.trim(), assignee: as, creator: S.uid, status: '지시됨', history: []});
     tlog(t, '업무 지시 → ' + uname(as)); put('tasks', t);
+    if (t.type.includes('서류')) postToRoom('서류접수', '📄 서류 업무 · ' + ti + (t.client ? ' · ' + t.client : '') + '\n담당 ' + uname(as) + ' · 지시 ' + uname(S.uid) + (t.due ? ' · 기한 ' + t.due : '')); // 앱과 같은 자동 알림
     if (d) { const p = d.split('-'); S.calY = +p[0]; S.calM = +p[1]; S.calSel = d; }
     render(); toast(uname(as) + '님에게 업무를 지시했습니다.'); return true;
   }, '지시하기');
@@ -446,7 +452,7 @@ function viewCalendar() {
   if (!S.calY) { S.calY = now.getFullYear(); S.calM = now.getMonth() + 1; S.calSel = todayStr(); }
   const ev = {};
   const add = (d, o) => { if (d) (ev[d] = ev[d] || []).push(o); };
-  list('events').forEach(e => add(e.date, {kind: 'e', t: e.title, time: e.time, sub: e.place, who: e.who}));
+  list('events').forEach(e => add(e.date, {kind: 'e', t: e.title, time: e.time, sub: e.place, who: e.who, id: e.id}));
   list('tasks').forEach(t => { if (t.due && t.status !== '완료' && (S.showAll || t.assignee === S.uid || can('task_view_all'))) add(t.due.slice(0, 10), {kind: 't', t: t.title, time: t.due.length > 10 ? t.due.slice(11, 16) : '', sub: uname(t.assignee) + ' · ' + (ST[t.status] || t.status), id: t.id}); });
   const first = new Date(S.calY, S.calM - 1, 1).getDay(); const days = new Date(S.calY, S.calM, 0).getDate();
   let cells = ''; for (let i = 0; i < first; i++) cells += '<td></td>';
@@ -459,8 +465,20 @@ function viewCalendar() {
   return '<div class="row" style="margin-top:18px"><button class="btn" data-act="calmove" data-arg="-1" style="margin:0" aria-label="이전 달">‹</button><div class="grow t1" style="text-align:center;font-size:19px">' + S.calY + '년 ' + S.calM + '월</div><button class="btn" data-act="caltoday" style="margin:0">오늘</button><button class="btn" data-act="calmove" data-arg="1" style="margin:0" aria-label="다음 달">›</button></div>' +
     '<table class="cal"><tr>' + ['일', '월', '화', '수', '목', '금', '토'].map(x => '<th>' + x + '</th>').join('') + '</tr><tr>' + cells + '</tr></table>' +
     (can('staff_manage') ? '' : '<div class="sub" style="margin-top:6px">일정 추가는 관리자만 할 수 있어요. (업무에 기한 날짜를 넣으면 달력에 표시돼요)</div>') +
-    '<h2>' + esc(S.calSel) + (HOL[S.calSel] ? ' <span style="color:var(--red)">' + esc(HOL[S.calSel]) + '</span>' : '') + '</h2>' + (sel.length ? sel.map(o => '<div class="card ' + (o.kind === 'e' ? 'flat' : '') + '" ' + (o.kind === 't' ? 'data-act="task" data-arg="' + o.id + '"' : '') + '><div class="row"><div class="tile">' + (o.kind === 't' ? '업무' : '일정') + '</div><div class="grow"><div class="t1">' + esc(o.t) + '</div><div class="t2">' + esc((o.time ? o.time + ' · ' : '') + (o.sub || '')) + '</div></div></div></div>').join('') : '<div class="empty">이 날은 일정이 없어요.</div>');
+    '<h2>' + esc(S.calSel) + (HOL[S.calSel] ? ' <span style="color:var(--red)">' + esc(HOL[S.calSel]) + '</span>' : '') + '</h2>' + (sel.length ? sel.map(o => '<div class="card" data-act="' + (o.kind === 't' ? 'task' : 'event') + '" data-arg="' + o.id + '"><div class="row"><div class="tile">' + (o.kind === 't' ? '업무' : '일정') + '</div><div class="grow"><div class="t1">' + esc(o.t) + '</div><div class="t2">' + esc((o.time ? o.time + ' · ' : '') + (o.sub || '')) + '</div></div></div></div>').join('') : '<div class="empty">이 날은 일정이 없어요.</div>') + upcoming(ev);
 }
+function upcoming(ev) { // 오늘부터 앞으로의 일정과 업무 기한을 날짜 순으로 (앱의 '다가오는 일정')
+  const today = todayStr(); const days = Object.keys(ev).filter(d => d >= today).sort().slice(0, 14);
+  const rows = []; days.forEach(d => (ev[d] || []).slice().sort((a, b) => (a.time || '').localeCompare(b.time || '')).forEach(o => rows.push([d, o])));
+  return '<h2>다가오는 일정</h2>' + (rows.length ? rows.slice(0, 20).map(([d, o]) => '<div class="evl" data-act="' + (o.kind === 't' ? 'task' : 'event') + '" data-arg="' + o.id + '"><b style="width:74px">' + d.slice(5).replace('-', '/') + (o.time ? ' ' + esc(o.time) : '') + '</b><span>' + (o.kind === 't' ? '📋 ' : '📅 ') + esc(o.t) + (o.sub ? '<small>' + esc(o.sub) + '</small>' : '') + '</span></div>').join('') : '<div class="empty" style="padding:16px 0">앞으로 잡힌 일정이 없어요.</div>');
+}
+ACT.event = id => {
+  const e = byId('events', id); if (!e) return; const m = e.merchant ? byId('merchants', e.merchant) : null;
+  const ln = (k, v) => v ? '<div class="line"><b>' + k + '</b><div>' + esc(v) + '</div></div>' : '';
+  modal('<h3>' + esc(e.title) + '</h3>' + ln('날짜', e.date + (e.time ? ' ' + e.time : '')) + ln('장소', e.place) + ln('가맹점', m && m.name) + ln('남긴 사람', uname(e.who)) +
+    '<div class="btns" style="margin-top:12px">' + (m ? '<button class="btn tint" data-act="merchant" data-arg="' + m.id + '">가맹점 정보 보기</button>' : '') + (can('staff_manage') ? '<button class="btn red" data-act="eventDel" data-arg="' + e.id + '">삭제</button>' : '') + '<button class="btn" data-act="close">닫기</button></div>');
+};
+ACT.eventDel = id => { const e = byId('events', id); if (!e) return; askConfirm('일정을 삭제할까요?', e.title, '삭제', () => { e.deleted = true; put('events', e); render(); toast('삭제했어요.'); }, true); };
 ACT.calsel = d => { S.calSel = d; render(); };
 ACT.caltoday = () => { const t = todayStr().split('-'); S.calY = +t[0]; S.calM = +t[1]; S.calSel = todayStr(); render(); };
 ACT.calmove = a => { S.calM += Number(a); if (S.calM < 1) { S.calM = 12; S.calY--; } if (S.calM > 12) { S.calM = 1; S.calY++; } render(); };
@@ -522,15 +540,56 @@ function viewChat() {
     const d = new Date(m.ts); const day = d.getFullYear() + '년 ' + (d.getMonth() + 1) + '월 ' + d.getDate() + '일';
     if (day !== lastDay) { lastDay = day; html += '<div class="day"><span>' + day + '</span></div>'; }
     const me = m.who === S.uid;
-    html += '<div class="m ' + (me ? 'me' : '') + '"><div>' + (me || room.dm ? '' : '<div class="who">' + esc(uname(m.who)) + '</div>') + '<div class="bub' + (m.kind === 'img' ? ' pic' : '') + '">' + (m.rto ? '<div class="rto">' + esc((uname(m.rto.who)) + ': ' + (m.rto.text || '')) + '</div>' : '') + msgBody(m) + '</div><div class="who" style="' + (me ? 'text-align:right' : '') + '">' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + '</div></div></div>';
+    html += '<div class="m ' + (me ? 'me' : '') + '"><div>' + (me || room.dm ? '' : '<div class="who">' + esc(uname(m.who)) + '</div>') + '<div class="bub' + (m.kind === 'img' ? ' pic' : m.kind === 'stk' ? ' pic' : '') + '" data-mid="' + m.id + '">' + (m.rto ? '<div class="rto">' + esc((uname(m.rto.who)) + ': ' + (m.rto.text || '')) + '</div>' : '') + msgBody(m) + '</div>' + reactLine(m) + '<div class="who" style="' + (me ? 'text-align:right' : '') + '">' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + '</div></div></div>';
   });
-  const roomView = '<div class="chatroom"><div class="hdr"><button data-act="leave">‹</button><div class="grow t1">' + esc(roomTitle(room)) + (room.grp ? ' <span class="sub">(' + (room.members || []).length + '명)</span>' : '') + '</div></div><div class="msgs" id="msgbox">' + (html || '<div class="empty">첫 메시지를 남겨 보세요.</div>') + '</div><div class="send"><button class="plus" data-act="attach" aria-label="사진·파일 보내기">+</button><input id="msgin" placeholder="메시지 입력" autocomplete="off"><button data-act="send">보내기</button></div><input type="file" id="fpick" hidden></div>';
+  const roomView = '<div class="chatroom"><div class="hdr"><button data-act="leave">‹</button><div class="grow t1">' + esc(roomTitle(room)) + (room.grp ? ' <span class="sub">(' + (room.members || []).length + '명)</span>' : '') + '</div></div><div class="msgs" id="msgbox">' + (html || '<div class="empty">첫 메시지를 남겨 보세요.</div>') + '</div>' + (S.replyTo ? '<div class="replybar"><span>↩ ' + esc(uname(S.replyTo.who)) + '에게 답장: ' + esc(S.replyTo.text) + '</span><button data-act="replyOff" aria-label="답장 취소">✕</button></div>' : '') + stkPanelHTML() + '<div class="send"><button class="plus" data-act="attach" aria-label="사진·파일 보내기">+</button><input id="msgin" placeholder="메시지 입력" autocomplete="off"><button class="plus" data-act="stkPanel" aria-label="이모지·스티커">☺</button><button data-act="send">보내기</button></div><input type="file" id="fpick" hidden></div>';
   return wide ? '<div class="chatwrap">' + lst + roomView + '</div>' : roomView;
 }
+const FRIENDS = ['나인이', '복이', '호야', '깍이', '도리'];
+const STK_CAPS = [["신규계약 성공!", "축하축하~!", "대단해 대단해", "아 빡쳐!!", "정신 차려!", "힘내요 우리!", "POS 설치 중", "여보세요~ 나인입니다", "현장 AS 출동!", "공부하는 대표님", "굿샷~ 접대골프", "토스단말기 어떠세요", "회의 또 회의", "사장님 수다 삼매경", "수수료 입금 완료", "OK 접수 완료"], ["복 터졌다 계약!", "복 받으세요~", "캬 대단하다", "복이도 화나!", "정신 줄 잡아요", "힘내면 복와요", "랜선 공사 중", "전화 응대 중", "단말기 도색 중", "독서 삼매경", "차에서 꿀잠", "단말기 수리 중", "서류 접수했습니다", "돈복 터졌다", "점심 뭐 먹지", "복 감사합니다"], ["어흥! 계약 따냈다", "축하 어흥~", "대단하다 어흥", "어흥 빡쳤다!!", "정신 차려 어흥", "힘내라 어흥!", "AS 출동 어흥", "랜선 깔자 어흥", "테이블오더 설치", "호야 홀인원!", "토스 영업 어흥", "서류 작성 중", "보고서 쓰는 중", "퇴근하고 싶다", "죄송합니다...", "알겠습니다 어흥"], ["깍깍! 계약 성공", "까치가 물어왔다", "깍! 대단해", "깍깍 빡쳐!!", "깍! 정신 차려", "힘내 깍깍", "깍깍 전화 중", "상담원 연결 중", "블로그 작업 중", "보고서 쓰는 중", "깍깍 회의 중", "사장님 깍깍 수다", "서류 접수 완료", "엉엉 깍깍", "감사합니다 깍", "점심은 뭐 쪼지"], ["도리 계약 땄다!", "도토리 축하~", "도리도리 대단해", "도리 빡쳐!!", "정신 차려 도리", "힘내 도리도리", "쇼핑몰 작업 중", "서류 작성 중", "공부하는 도리", "POS 설치 중", "차에서 농땡이", "도리 골프 연습", "토스 영업 중", "월요일 싫어", "도토리값 입금", "도리 반성중"]];
+const REACTS = ['👍', '❤️', '😂', '😮', '😢', '🙏', '🔥', '👏'];
+const EMOJIS = '😀 😁 😂 🤣 😊 😍 😘 😎 🤔 😅 😭 😡 👍 👏 🙏 💪 🔥 ❤️ 🎉 ✅ ⭕ ❌ 📞 📄 💰 🚗 ☕ 🍚'.split(' ');
+const stkSrc = k => 'stk/stk_' + (String(k).startsWith('c') ? k : pad(Number(k) || 1)) + '.png';
+function linkify(t) { // 글 속 웹 주소는 눌러서 열리게
+  return esc(t).replace(/(https?:\/\/[^\s<]+|www\.[^\s<]+|[a-z0-9-]+\.(?:com|net|kr|co\.kr|org|io)(?:\/[^\s<]*)?)/gi, u => '<a href="' + (/^https?:/i.test(u) ? u : 'https://' + u) + '" target="_blank" rel="noopener">' + u + '</a>');
+}
 function msgBody(m) {
+  if (m.kind === 'stk') return '<img class="stk" src="' + stkSrc(m.blob) + '" alt="' + esc(m.text || '스티커') + '">';
   if (m.kind === 'img') return '<img class="cimg" data-blob="' + esc(m.blob) + '" data-n="' + (m.chunks || 0) + '" data-name="' + esc(m.fname || '사진.jpg') + '" alt="사진" data-act="viewImg">';
   if (m.kind === 'file') return '<button class="fbtn" data-act="openFile" data-arg="' + esc(m.blob + '|' + (m.chunks || 0) + '|' + (m.fname || '파일')) + '">📎 ' + esc(m.fname || '파일') + (m.size ? ' <small>' + Math.max(1, Math.round(m.size / 1024)) + 'KB · 눌러서 받기</small>' : '') + '</button>';
-  return esc(msgText(m));
+  return linkify(msgText(m));
+}
+function reactLine(m) {
+  const r = m.react || {}; const cnt = {}; Object.values(r).forEach(e => cnt[e] = (cnt[e] || 0) + 1);
+  const mine = r[String(S.uid)];
+  return Object.keys(cnt).length ? '<div class="reacts">' + Object.keys(cnt).map(e => '<button class="' + (e === mine ? 'on' : '') + '" data-act="react" data-arg="' + m.id + '|' + e + '">' + e + (cnt[e] > 1 ? ' ' + cnt[e] : '') + '</button>').join('') + '</div>' : '';
+}
+ACT.react = a => { const [id, e] = a.split('|'); const m = byId('msgs', id); if (!m) return; m.react = Object.assign({}, m.react || {}); const k = String(S.uid); if (m.react[k] === e) delete m.react[k]; else m.react[k] = e; put('msgs', m); closeModal(); render(); };
+ACT.msgMenu = id => { // 말풍선을 누르면: 반응 · 답장 · 복사 · 삭제(내 것)
+  const m = byId('msgs', id); if (!m) return; const mine = m.who === S.uid;
+  modal('<div class="reactbar">' + REACTS.map(e => '<button data-act="react" data-arg="' + m.id + '|' + e + '">' + e + '</button>').join('') + '</div>' +
+    '<button class="mi" data-act="reply" data-arg="' + m.id + '"><span>↩ 답장</span></button>' + (m.kind ? '' : '<button class="mi" data-act="copyMsg" data-arg="' + m.id + '"><span>📋 복사</span></button>') +
+    (mine ? '<button class="mi" data-act="delMsg" data-arg="' + m.id + '"><span style="color:var(--red)">🗑 삭제</span></button>' : '') + '<button class="btn full" data-act="close">닫기</button>');
+};
+const snippet = m => m.kind === 'img' ? '사진' : m.kind === 'stk' ? '스티커' : m.kind === 'file' ? '파일: ' + (m.fname || '') : ((m.text || '').replace(/\n/g, ' ').slice(0, 60) + ((m.text || '').length > 60 ? '…' : ''));
+ACT.reply = id => { const m = byId('msgs', id); if (!m) return; S.replyTo = {id: m.id, who: m.who, text: snippet(m)}; closeModal(); render(); setTimeout(() => { const i = $('#msgin'); if (i) i.focus(); }, 0); };
+ACT.replyOff = () => { S.replyTo = null; render(); };
+ACT.copyMsg = id => { const m = byId('msgs', id); closeModal(); try { navigator.clipboard.writeText(m.text || ''); toast('복사했어요.'); } catch (e) { toast('복사하지 못했어요.'); } };
+ACT.delMsg = id => { const m = byId('msgs', id); if (!m) return; askConfirm('이 메시지를 지울까요?', '대화에서 사라지고, 서버에는 기록이 남아요.', '삭제', () => { m.deleted = true; put('msgs', m); render(); }, true); };
+ACT.stkPanel = () => { S.stkOpen = !S.stkOpen; render(); };
+ACT.stkTab = i => { S.stkTab = Number(i); render(); };
+ACT.emoji = e => { const i = $('#msgin'); if (!i) return; i.value += e; i.focus(); };
+ACT.sendStk = a => {
+  const [key, cap] = a.split('|'); const room = ensureRoom(); if (!room) return;
+  const m = create('msgs', {room: room.id, who: S.uid, text: cap, ts: Date.now(), kind: 'stk', blob: key, fname: '', size: 0});
+  if (room.mem && room.mem.length) m.mem = room.mem.slice(); put('msgs', m); S.stkOpen = false; render();
+};
+function stkPanelHTML() {
+  if (!S.stkOpen) return ''; const t = S.stkTab || 0;
+  const tabs = '<div class="stktabs">' + ['이모지'].concat(FRIENDS).map((n, i) => '<button class="' + (i === t ? 'on' : '') + '" data-act="stkTab" data-arg="' + i + '">' + n + '</button>').join('') + '</div>';
+  const body = t === 0 ? '<div class="emgrid">' + EMOJIS.map(e => '<button data-act="emoji" data-arg="' + e + '">' + e + '</button>').join('') + '</div>'
+    : '<div class="stkgrid">' + STK_CAPS[t - 1].map((c, i) => { const k = 'c' + t + '_' + pad(i + 1); return '<button data-act="sendStk" data-arg="' + k + '|' + esc(c) + '" title="' + esc(c) + '"><img src="' + stkSrc(k) + '" alt="' + esc(c) + '" loading="lazy"></button>'; }).join('') + '</div>';
+  return '<div class="stkpanel">' + tabs + body + '</div>';
 }
 // 사진·파일은 서버 보관함(blobs)에 600KB 조각(id_0, id_1 …)으로 들어 있다 — 앱과 같은 형식
 const blobCache = new Map();
@@ -604,6 +663,7 @@ ACT.send = () => {
   const room = ensureRoom(); if (!room) return;
   const m = create('msgs', {room: room.id, who: S.uid, text, ts: Date.now()});
   if (room.mem && room.mem.length) m.mem = room.mem.slice();
+  if (S.replyTo) { m.rto = S.replyTo; S.replyTo = null; }
   put('msgs', m); inp.value = ''; render(); setTimeout(() => { const i = $('#msgin'); if (i) i.focus(); }, 0);
 };
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing && e.target.id === 'msgin') { e.preventDefault(); ACT.send(); } });
@@ -645,13 +705,16 @@ ACT.mmore = () => { S.mlimit += 100; render(); };
 ACT.merchant = id => {
   const m = byId('merchants', id); if (!m) return;
   if (S.logMid !== m.id) { S.logMid = m.id; S.logLimit = 30; }
-  const logs = list('mlogs').filter(g => g.merchant === m.id).sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.created || '').localeCompare(a.created || ''));
+  if (S.logMidF !== m.id) { S.logMidF = m.id; S.logKindF = ''; S.logDateF = ''; }
+  const logs = list('mlogs').filter(g => g.merchant === m.id && (!S.logKindF || logKind(g.kind) === S.logKindF) && (!S.logDateF || g.date === S.logDateF)).sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.created || '').localeCompare(a.created || ''));
   const ln = (k, v) => v ? '<div class="line"><b>' + k + '</b><div>' + esc(v) + '</div></div>' : '';
   const nm = mNums(m); const ph = nm.phone.replace(/[^0-9+*#]/g, ''); const mp = nm.mobile.replace(/[^0-9+*#]/g, '');
   const callBtn = (num, raw, lb) => num ? '<a class="btn tint full" style="display:block;text-align:center;text-decoration:none;margin-top:6px" href="tel:' + num + '">📞 ' + lb + ' ' + esc(raw) + ' 전화 걸기</a>' : '';
-  modal('<h3>' + esc(m.name) + '</h3>' + ln('사업자번호', m.bizno) + ln('전화번호', nm.phone) + ln('휴대폰번호', nm.mobile) + ln('이메일', m.email) + ln('주소', m.addr) + ln('VAN사', m.van) + ln('계약조건', termsText(m)) + ln('메모', m.memo) +
+  modal('<h3>' + esc(m.name) + '</h3>' + ln('사업자번호', m.bizno) + ln('전화번호', nm.phone) + ln('휴대폰번호', nm.mobile) + ln('이메일', m.email) + ln('주소', m.addr) + ln('VAN사', m.van) + ln('계약조건', termsText(m)) + ln('등급', gradeLabel(m.grade)) + ln('메모', m.memo) +
     callBtn(ph, nm.phone, '전화') + callBtn(mp, nm.mobile, '휴대폰') +
     '<h2>📝 응대 기록 (' + logs.length + '건)</h2><button class="btn gold full" data-act="newLog" data-arg="' + m.id + '">+ 응대 기록 남기기</button>' +
+    '<div class="pills">' + [''].concat(KINDS).map(k => '<button class="pill ' + (S.logKindF === k ? 'on' : '') + '" data-act="logKindF" data-arg="' + m.id + '|' + k + '">' + (k || '전체') + '</button>').join('') + '</div>' +
+    '<div class="row" style="gap:8px"><input type="date" id="logDateF" value="' + esc(S.logDateF || '') + '" data-mid="' + m.id + '" aria-label="날짜로 찾기">' + (S.logDateF ? '<button class="btn" style="flex:none" data-act="logDateOff" data-arg="' + m.id + '">날짜 해제</button>' : '') + '</div>' +
     logs.slice(0, S.logLimit).map(g => logCard(g, 'editLog|' + g.id + '|' + m.id)).join('') + (logs.length > S.logLimit ? '<button class="btn full" data-act="logmore" data-arg="' + m.id + '">더 보기 (' + (logs.length - S.logLimit) + '건 남음)</button>' : '') +
     '<div class="btns" style="margin-top:10px">' + (canEditMerchant() ? '<button class="btn" data-act="editMerchant" data-arg="' + m.id + '">정보 수정</button><button class="btn red" data-act="delMerchant" data-arg="' + m.id + '">삭제</button>' : '') + '<button class="btn" data-act="close">닫기</button></div>');
 };
@@ -659,6 +722,9 @@ function logCard(g, act) {
   const [a, id, mid] = act.split('|');
   return '<div class="card" data-act="' + a + '" data-arg="' + id + '|' + mid + '"><span class="chip">' + esc(logKind(g.kind)) + '</span> <b style="font-size:13px">' + esc(g.date) + '</b>' + (logReq(g) ? '<div class="lb">요청사항</div><div style="white-space:pre-wrap">' + esc(logReq(g)) + '</div>' : '') + (logRes(g) ? '<div class="lb g">처리결과</div><div style="white-space:pre-wrap">' + esc(logRes(g)) + '</div>' : '') + '<div class="t2">' + esc(uname(g.who) + (g.editedBy ? ' · 수정 ' + uname(g.editedBy) + ' ' + (g.editedAt || '') : '')) + '</div></div>';
 }
+ACT.logKindF = a => { const [mid, k] = a.split('|'); S.logKindF = k; ACT.merchant(mid); };
+ACT.logDateOff = mid => { S.logDateF = ''; ACT.merchant(mid); };
+document.addEventListener('change', e => { if (e.target && e.target.id === 'logDateF') { S.logDateF = e.target.value; ACT.merchant(e.target.dataset.mid); } });
 ACT.logmore = mid => { S.logLimit += 50; ACT.merchant(mid); };
 ACT.editLog = a => {
   const [id, mid] = a.split('|'); const g = byId('mlogs', id); if (!g) return;
@@ -685,6 +751,8 @@ function termsText(m) {
   return p.join(' · ');
 }
 const mfield = (id, label, ph, v, t) => '<label class="fl" for="' + id + '">' + label + '</label><input id="' + id + '" placeholder="' + ph + '" value="' + esc(v || '') + '"' + (t ? ' type="' + t + '"' : '') + '>';
+const GRADES = ['S · 5만원 이상', 'A · 3만원 이상', 'B · 1만원 이상', 'C · 1만원 미만', '해지가맹점', '신규가맹점', '', '협력사'];
+const gradeLabel = g => (g == null || g === '' || !GRADES[g]) ? '' : g + '코드 · ' + GRADES[g];
 function merchantForm(m) {
   m = m || {}; const nm = mNums(m);
   return mfield('f_n', '상호 (필수)', '예: 토스단말기 전문', m.name) + mfield('f_b', '사업자번호', '예: 123-45-67890', m.bizno) +
@@ -693,12 +761,14 @@ function merchantForm(m) {
     '<label class="fl" for="f_v">VAN사</label><input id="f_v" list="vanlist" placeholder="목록에서 고르거나 직접 입력" value="' + esc(m.van || '') + '"><datalist id="vanlist">' + VANS.map(v => '<option value="' + esc(v) + '">').join('') + '</datalist>' +
     '<label class="fl" for="f_ct">계약구분</label><select id="f_ct">' + ['', '임대', '판매'].map(v => '<option value="' + v + '"' + ((m.ctype || '') === v ? ' selected' : '') + '>' + (v || '(선택 안 함)') + '</option>').join('') + '</select>' +
     '<label class="fl" for="f_ca" id="f_cal">' + amtLabel(m.ctype) + '</label><input id="f_ca" inputmode="numeric" placeholder="숫자만 (예: 30000)" value="' + esc(m.camt || '') + '">' +
-    mfield('f_t', '계약조건 (추가 내용)', '예: 36개월 약정, 위약금 없음', m.terms) + '<label class="fl" for="f_m">메모</label><textarea id="f_m" placeholder="메모">' + esc(m.memo || '') + '</textarea>';
+    mfield('f_t', '계약조건 (추가 내용)', '예: 36개월 약정, 위약금 없음', m.terms) +
+    '<label class="fl" for="f_g">등급 코드 (밴피 기준)</label><select id="f_g">' + GRADES.map((g, i) => g ? '<option value="' + i + '"' + (Number(m.grade == null ? 5 : m.grade) === i ? ' selected' : '') + '>' + gradeLabel(i) + '</option>' : '').join('') + '</select>' +
+    '<label class="fl" for="f_m">메모</label><textarea id="f_m" placeholder="메모">' + esc(m.memo || '') + '</textarea>';
 }
 function wireMerchantForm() { const ct = $('#f_ct'); if (ct) ct.onchange = () => { $('#f_cal').textContent = amtLabel(ct.value); }; }
 function readMerchant(o) {
   o.name = $('#f_n').value.trim(); o.bizno = $('#f_b').value.trim(); o.phone = $('#f_p').value.trim(); o.mobile = $('#f_mo').value.trim(); o.email = $('#f_e').value.trim();
-  o.addr = $('#f_a').value.trim(); o.van = $('#f_v').value.trim(); o.ctype = $('#f_ct').value; o.camt = $('#f_ca').value.replace(/[^0-9]/g, ''); o.terms = $('#f_t').value.trim(); o.memo = $('#f_m').value.trim(); return o;
+  o.addr = $('#f_a').value.trim(); o.van = $('#f_v').value.trim(); o.ctype = $('#f_ct').value; o.camt = $('#f_ca').value.replace(/[^0-9]/g, ''); o.terms = $('#f_t').value.trim(); o.grade = Number($('#f_g').value); o.memo = $('#f_m').value.trim(); return o;
 }
 // ---------- 가맹점 수정 암호 (화면 잠금) ----------
 const LOCK_MS = 5 * 60 * 1000; let unlockedAt = 0;
@@ -740,7 +810,7 @@ ACT.delMerchant = id => needLock(() => {
   const c = list('mlogs').filter(g => g.merchant === m.id).length;
   askConfirm('‘' + m.name + '’ 가맹점을 삭제할까요?', '목록에서만 지워지고, 응대 기록 ' + c + '건과 서버의 기록은 그대로 남아요. (앱의 가맹점 보호·복원에서 되살릴 수 있어요)', '삭제', () => { m.deleted = true; put('merchants', m); render(); toast('삭제했어요.'); }, true);
 });
-const MF = {name: '상호', bizno: '사업자번호', phone: '전화번호', mobile: '휴대폰번호', email: '이메일', addr: '주소', van: 'VAN사', ctype: '계약구분', camt: '금액', terms: '계약조건', memo: '메모', deleted: '삭제'};
+const MF = {grade: '등급', name: '상호', bizno: '사업자번호', phone: '전화번호', mobile: '휴대폰번호', email: '이메일', addr: '주소', van: 'VAN사', ctype: '계약구분', camt: '금액', terms: '계약조건', memo: '메모', deleted: '삭제'};
 ACT.editMerchant = id => needLock(() => {
   const key = 'merchants/' + Number(id), base = S.pushed[key], before = JSON.stringify(byId('merchants', id)); let forced = false;
   formModal('가맹점 정보 수정', merchantForm(byId('merchants', id)) + '<div id="f_conf"></div>', () => {
@@ -1091,7 +1161,8 @@ function viewNotices() {
 ACT.notice = id => {
   const n = byId('notices', id); if (!n) return;
   if (!(n.readBy = n.readBy || []).includes(S.uid)) { n.readBy.push(S.uid); put('notices', n); render(); }
-  modal('<h3>' + esc(n.title) + '</h3><div class="sub">' + esc(uname(n.author) + ' · ' + (n.t || '')) + '</div><div style="white-space:pre-wrap;margin:12px 0">' + esc(n.body) + '</div><button class="btn full" data-act="close">닫기</button>');
+  modal('<h3>' + esc(n.title) + '</h3><div class="sub">' + esc(uname(n.author) + ' · ' + (n.t || '')) + '</div><div style="white-space:pre-wrap;margin:12px 0">' + esc(n.body) + '</div>' +
+    (can('notice_write') || can('staff_manage') ? '<div class="sub">읽은 사람 ' + (n.readBy || []).length + '명: ' + esc((n.readBy || []).map(uname).join(', ')) + '</div>' : '') + '<button class="btn full" data-act="close">닫기</button>');
 };
 ACT.newNotice = () => formModal('공지 작성', '<label class="fl" for="f_t1">제목 (필수)</label><input id="f_t1" placeholder="제목"><label class="fl" for="f_m">내용</label><textarea id="f_m" placeholder="내용"></textarea><label class="chk"><input type="checkbox" id="f_pin"><span>맨 위에 고정</span></label>', () => {
   const t = $('#f_t1').value.trim(); if (!t) return warn('제목을 입력해 주세요.');
@@ -1182,6 +1253,7 @@ function viewHome() {
 
 // ---------- 사용설명서 · 버전 내역 (웹) ----------
 const WEB_CHANGES = [
+  ['웹 0.0.7', '2026-10-24', ['안드로이드 앱과 맞춤: 업무 상태 변경은 담당자·최고관리자, 업무 삭제는 만든 사람·최고관리자', '서류 업무(서류 접수·카드사 서류)를 지시하면 ‘서류접수’ 채팅방에 자동으로 알림', '계약 만료 3개월 이내 계약이 있으면 업무 화면 위에 알림 카드', '일정: 다가오는 일정 목록, 일정을 누르면 내용·가맹점 정보 보기, 관리자는 일정 삭제', '가맹점 등급 코드(0~7) 입력·표시', '공지: 작성 권한자·관리자는 읽은 사람 목록', '채팅: 나인이 프렌즈 스티커 80종·이모지, 말풍선 누르면 반응·답장·복사·내 메시지 삭제, 두 번 누르면 ❤️, 글 속 웹 주소 누르면 열림', '가맹점 응대 기록: 종류·날짜로 걸러 보기']],
   ['웹 0.0.6', '2026-10-24', ['저장 상태 표시: 서버에 저장되는 동안 ‘저장 중’, 인터넷이 끊기면 ‘저장 대기 n건’ — 연결되면 자동으로 저장돼요', '가맹점 동시 수정 보호: 수정 창을 연 사이 다른 직원(앱·다른 PC)이 같은 가맹점을 고치면 바뀐 항목을 알려 주고, 덮어쓸지 한 번 더 물어요', '가맹점 등록: 같은 사업자번호가 이미 있으면 알려 줘요', '백업: 관리자 → 데이터 백업 내려받기(PC에 파일로), 관리자가 웹을 열면 하루 한 번 이 PC 안에 자동 보관(14일치)', '매일 새벽 서버 전체 자료를 암호화해 따로 보관하는 자동 백업 준비(관리자가 비밀값을 넣으면 시작)']],
   ['웹 0.0.5', '2026-10-24', ['뒤로가기: 폰 뒤로가기·브라우저 뒤로 버튼이 앱처럼 한 단계씩 닫아요(팝업 → 대화방 → 메뉴 → 하위 화면 → 첫 화면, 첫 화면에서 한 번 더 누르면 나가요)', '빨라짐: 한 번 받은 자료를 기기에 보관해서 다음부터 바로 열리고, 인터넷이 약해도 보여요', '알림: 웹앱을 열어 둔 동안 새 업무·채팅·공지가 오면 소리·진동·안내, PC는 다른 창을 보고 있어도 브라우저 알림(전체 → 알림 받기), 탭 제목에 안 본 개수', '채팅: 사진 보기·저장, 파일 받기, 사진·파일 보내기(+ 버튼, 파일 3MB까지), PC와 아이폰 웹앱끼리 읽음 표시 맞춤', '업무 지시·일정 추가: 모든 칸에 이름표, 가맹점 조회로 거래처·전화·주소 자동 채우기', '일정: 공휴일 빨간색·이름 표시, 토요일 파란색, 오늘 버튼', '전체 메뉴: 아직 앱에서만 되는 기능은 맨 아래에 접어 두기, PC 주 메뉴에 프로젝트', '확인 창을 웹앱 모양으로, 팝업 안 안내가 버튼을 가리지 않게, 채팅 보내기 버튼·말풍선 줄바꿈 고침, 권한이 없을 때 안내']],
   ['웹 0.0.4', '2026-10-24', ['재고: 모델별 재고·출고중 수량, 안전재고 부족 표시, 재고 추가(시리얼 여러 개 한 번에)·수정·삭제, 입고·출고 단가와 보유 재고 자산(실적 권한자)', '바코드: PC는 USB·블루투스 스캐너로 찍으면 바로 입력·검색, 아이폰·휴대폰은 📷 버튼으로 카메라 스캔', '계약 관리: 만료 3개월 이내 계약 따로 보기(D-day), 계약 정보·나간 장비, 장비 추가, 설치 완료(장비가 재고에서 빠짐)', '신규 계약 올리기: 가맹점 찾기(상호·초성·사업자번호), 결제 연동(VAN/PG), 판매·CMS·렌탈과 금액, 재고에서 장비 고르기·스캔·직접 입력, 만료일 +12/24/36개월', '입금 확인: 입금 올리기·확인 처리, ‘입금확인’ 채팅방에 자동 알림', '안드로이드 앱과 같은 서버 자료라 어느 쪽에서 해도 바로 서로 보여요']],
@@ -1198,7 +1270,7 @@ const WEB_MANUAL = [
   ['화면 구성', '휴대폰: 안드로이드 앱과 같아요. 아래 탭 업무·프로젝트·채팅·일정·전체, 나머지 기능은 전체 탭에 있어요.\nPC: 위쪽 가로줄이 주 메뉴(업무·채팅·일정·가맹점·응대 기록)예요. 왼쪽 위 ☰ 를 누르면 계정·회사·일·관리자로 묶인 전체 메뉴가 펼쳐지고, ‘나인패밀리’를 누르면 홈(오늘 현황)으로 가요.\n안드로이드 앱·아이폰·PC 는 같은 서버를 써서 바로 서로 반영돼요.'],
   ['업무', '오른쪽 아래 + 로 업무를 지시해요. 업무를 눌러 진행 시작·보류·완료를 바꾸고, 완료할 때는 처리 결과를 한 줄 남겨요.'],
   ['프로젝트', '+ 로 만들고 체크리스트를 채우면 진행률이 자동으로 올라가요.'],
-  ['채팅', '직원을 눌러 1:1 대화, ‘새 그룹 채팅방’으로 단체방을 만들어요.\n입력줄 왼쪽 + 로 사진·파일을 보내요(사진은 자동으로 줄여서, 파일은 3MB까지). 사진을 누르면 크게 보고 저장할 수 있어요.\n읽음 표시는 PC와 아이폰 웹앱끼리 맞춰져요. (안드로이드 앱과는 아직 따로예요)'],
+  ['채팅', '직원을 눌러 1:1 대화, ‘새 그룹 채팅방’으로 단체방을 만들어요.\n말풍선을 한 번 누르면 반응(👍 ❤️ 😂 …)·답장·복사·삭제(내 것), 두 번 빠르게 누르면 ❤️ 가 붙어요. 입력줄 ☺ 로 이모지와 나인이 프렌즈 스티커(80종)를 보내요.\n입력줄 왼쪽 + 로 사진·파일을 보내요(사진은 자동으로 줄여서, 파일은 3MB까지). 사진을 누르면 크게 보고 저장할 수 있어요.\n읽음 표시는 PC와 아이폰 웹앱끼리 맞춰져요. (안드로이드 앱과는 아직 따로예요)'],
   ['알림', '웹앱을 열어 둔 동안 새 업무·채팅·공지가 오면 소리와 안내로 알려요. PC는 전체(☰) → 알림 받기를 누르고 허용하면 다른 창을 보고 있어도 알림이 떠요. 소리는 전체 → 알림 소리로 끄고 켜요.\n웹앱을 닫았거나 화면이 꺼져 있을 때 오는 알림은 아직 안 돼요(서버 연동 후 가능).'],
   ['뒤로가기', '폰 뒤로가기나 브라우저 뒤로 버튼을 누르면 팝업 → 대화방 → 메뉴 → 하위 화면 → 첫 화면 순서로 닫혀요. 첫 화면에서 한 번 더 누르면 나가요.'],
   ['일정', '달력에서 날짜를 누르면 그날 일정과 기한이 있는 업무가 보여요. 일요일·공휴일은 빨간색(공휴일 이름도 보여요), 토요일은 파란색이에요. ‘오늘’로 이번 달에 돌아와요.\n일정 추가는 관리자만 할 수 있어요. 업무에 기한 날짜를 넣으면 달력에 같이 표시돼요.'],
