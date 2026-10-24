@@ -2,7 +2,7 @@
 /* 나인패밀리 웹앱 — 앱과 같은 Firebase(nine-family)를 쓴다. 문서는 {j: JSON문자열, u: 시각} 형식. */
 const CFG = {apiKey: 'AIzaSyCsA-M6QGGGk0owyDXzziv1X79TqF5NptI', authDomain: 'nine-family.firebaseapp.com', projectId: 'nine-family',
   storageBucket: 'nine-family.firebasestorage.app', messagingSenderId: '48232341344', appId: '1:48232341344:web:19be016c9c1c1de5a34805'};
-const VERSION = '웹 0.0.13';
+const VERSION = '웹 0.0.14';
 const DEMO = location.hash === '#demo';
 const COLLS = ['users', 'tasks', 'notices', 'projects', 'events', 'merchants', 'rooms', 'msgs', 'profiles', 'mlogs', 'config', 'stock', 'contracts', 'deposits', 'costs', 'reports', 'library', 'contacts'];
 const TYPES = ['신규 설치', 'AS', '영업 방문', '서류 접수', '카드사 서류', '기타'];
@@ -260,7 +260,7 @@ const isWide = () => window.innerWidth >= 900;
 function newTaskCount() { return list('tasks').filter(t => t.assignee === S.uid && t.status === '지시됨').length; }
 function bodyHTML() {
   const k = S.sub || S.tab, wide = isWide();
-  if (wide && S.menu) return '<div class="scroll"><div class="col">' + viewMenu(true) + '</div></div>';
+  if (wide && S.menu) return '<div class="scroll menupg"><div class="col">' + viewMenu(true) + '</div></div>';
   if (S.tab === 'chat' && !S.sub) return viewChat();
   return '<div class="scroll"><div class="col">' + (!wide && S.sub ? '<button class="back" data-act="back">‹ 전체</button>' : '') + viewBody(k) + '</div></div>';
 }
@@ -306,6 +306,7 @@ function viewBody(k) {
     case 'notice': return viewNotices();
     case 'logs': return viewAllLogs();
     case 'stock': return viewStock();
+    case 'stocklog': return viewStockLog();
     case 'contracts': return viewContracts();
     case 'deposit': return viewDeposits();
     case 'myperf': return viewPerf(true);
@@ -899,18 +900,29 @@ function scanCamera(onCode) {
 ACT.scanInto = id => scanCamera(code => { const el = $('#' + id); if (!el) return; if (el.tagName === 'TEXTAREA') el.value = (el.value.trim() ? el.value.trim() + '\n' : '') + code; else el.value = code; el.dispatchEvent(new Event('input', {bubbles: true})); toast('읽었어요: ' + code); });
 
 // ---------- 재고 ----------
+// 상태: 재고 → (계약) 출고중 → 설치완료. 계약 없이 내보낸 것(반품·불량·A/S 교체·분실·정정)은 status '설치완료' + gone(사유)
+// 로 둔다 → 안드로이드 앱(0.0.2)에서도 재고 목록에서 빠지고 수익 계산에도 안 들어간다.
+// 입고·출고·정정 이력은 각 재고 문서의 log 배열에 남긴다 {d 시각, by 직원, k 종류, q 수량(±), m 메모}.
 const canPerf = () => !!(S.caps && (S.caps.perf || S.caps.admin)); // 단가(입고·출고)는 실적 권한자만 (서버 규칙과 같음)
 const costOf = sid => list('costs').find(c => c.stock === sid);
 function costDoc(sid) { let c = costOf(sid); if (!c) { c = create('costs', {stock: sid, buy: 0, sell: 0}); } return c; }
 const numOf = v => Number(String(v || '').replace(/[^0-9]/g, '')) || 0;
+const OUT_KINDS = ['반품 (공급처로)', '불량·폐기', 'A/S 교체', '분실', '기타'];
+function slog(r, k, q, m) { // 바꾸기 '전에' 부른다 — 이력 기능 전에 등록된 재고는 그때 수량을 첫 입고로 남긴다
+  if (!r.log && S.data.stock.has(r.id)) r.log = [{d: r.created || '', by: 0, k: '입고', q: r.qty || 1, m: '이력 기능 전 등록'}];
+  r.log = (r.log || []).concat({d: nowStr(), by: S.uid, k, q, m: m || ''}).slice(-60);
+}
+const inStock = () => list('stock').filter(r => r.status === '재고');
+const stockModels = () => [...new Set(list('stock').map(r => (r.model || '').trim()).filter(Boolean))].sort();
 function viewStock() {
   let asset = '';
   if (canPerf()) {
     let sum = 0, noPrice = 0;
-    list('stock').forEach(r => { if (r.status !== '재고') return; const c = costOf(r.id); if (!c || !c.buy) noPrice += r.qty || 1; else sum += c.buy * (r.qty || 1); });
+    inStock().forEach(r => { const c = costOf(r.id); if (!c || !c.buy) noPrice += r.qty || 1; else sum += c.buy * (r.qty || 1); });
     asset = '<div class="card flat"><div class="sub" style="margin:0">보유 재고 자산 (입고 단가 합계)</div><div class="t1" style="font-size:22px;margin-top:2px">' + wonFmt(sum) + '</div>' + (noPrice ? '<div class="sub" style="color:var(--amber)">단가 미입력 ' + noPrice + '대는 빠져 있어요.</div>' : '') + '<button class="btn tint" data-nav="all" data-sub="profit">수익 현황 보기</button></div>';
   }
-  return '<h1>재고</h1><div class="sub">장비를 직접 입력해 관리해요. 계약에서 장비를 고르면 ‘출고중’이 되고, 설치 완료하면 재고에서 빠집니다. 검색칸에 바코드 스캐너로 찍으면 그 장비가 바로 열려요.</div>' + asset +
+  return '<h1>재고</h1><div class="sub">입고·출고·수량 정정을 하면 이력이 남아요. 계약에서 장비를 고르면 ‘출고중’이 되고, 설치 완료하면 재고에서 빠집니다. 검색칸에 바코드 스캐너로 찍으면 그 장비가 바로 열려요.</div>' +
+    '<div class="stkacts"><button class="btn gold" data-act="newStock">＋ 입고</button><button class="btn tint" data-act="outStock">− 출고</button><button class="btn tint" data-act="adjStock">± 수량 정정</button><button class="btn" data-nav="all" data-sub="stocklog">이력</button></div>' + asset +
     '<div class="row" style="gap:8px"><input id="sq" data-q="sq" placeholder="🔍 모델명·시리얼 (초성)" value="' + esc(S.sq || '') + '" autocomplete="off"><button class="btn tint" data-act="scanInto" data-arg="sq" style="flex:none" aria-label="카메라로 바코드 찍기">📷 바코드</button></div>' +
     '<div class="qres" data-for="sq">' + stockGroups() + '</div>';
 }
@@ -918,7 +930,7 @@ function stockGroups() {
   const g = new Map();
   list('stock').filter(r => r.status !== '설치완료' && kmatch((r.model || '') + ' ' + (r.serial || ''), S.sq || '')).sort((a, b) => (a.model || '').localeCompare(b.model || '') || (a.serial || '').localeCompare(b.serial || ''))
     .forEach(r => { if (!g.has(r.model)) g.set(r.model, []); g.get(r.model).push(r); });
-  if (!g.size) return '<div class="empty">' + ((S.sq || '').trim() ? '찾는 장비가 없어요.' : '등록된 재고가 없습니다. 오른쪽 아래 + 로 추가해 주세요.') + '</div>';
+  if (!g.size) return '<div class="empty">' + ((S.sq || '').trim() ? '찾는 장비가 없어요.' : '등록된 재고가 없습니다. ‘＋ 입고’로 추가해 주세요.') + '</div>';
   return [...g.entries()].map(([model, rows]) => {
     let have = 0, out = 0, safe = 0;
     rows.forEach(r => { if (r.status === '출고중') out += r.qty || 1; else have += r.qty || 1; safe = Math.max(safe, r.safe || 0); });
@@ -935,37 +947,141 @@ document.addEventListener('keydown', e => {
   const r = list('stock').find(x => (x.serial || '').trim().toLowerCase() === c && x.status !== '설치완료');
   if (r) { e.preventDefault(); ACT.editStock(r.id); }
 });
-ACT.newStock = () => formModal('재고 추가',
-  '<label class="fl" for="f_mo">모델명 (필수)</label><input id="f_mo" placeholder="예: 토스 포스 T2">' +
-  '<label class="fl" for="f_se">시리얼 (여러 개는 한 줄에 하나 — 스캐너로 계속 찍으면 줄이 바뀌어요)</label><textarea id="f_se" placeholder="시리얼 번호"></textarea><button class="btn tint full" data-act="scanInto" data-arg="f_se">📷 카메라로 바코드 찍기</button>' +
-  '<label class="fl" for="f_q">시리얼이 없는 물품의 수량 (선택)</label><input id="f_q" inputmode="numeric" placeholder="예: 10">' +
-  '<label class="fl" for="f_sf">안전재고 (이 수 아래면 알려줘요, 선택)</label><input id="f_sf" inputmode="numeric" placeholder="예: 3">' +
-  (canPerf() ? '<label class="fl" for="f_b">입고 단가 (1대당 산 값, 원, 선택)</label><input id="f_b" inputmode="numeric" placeholder="예: 250000">' : ''), () => {
-  const m = $('#f_mo').value.trim(); if (!m) return warn('모델명을 입력해 주세요.');
-  const qn = numOf($('#f_q').value), sf = numOf($('#f_sf').value), by = canPerf() ? numOf($('#f_b').value) : 0;
-  const ss = $('#f_se').value.split(/[\n,]+/).map(x => x.trim()).filter(Boolean);
-  if (!ss.length && qn < 1) return warn('시리얼을 적거나 수량을 입력해 주세요.');
-  const seen = new Set();
-  for (const x of ss) { const k = x.toLowerCase(); if (seen.has(k) || list('stock').some(r => (r.serial || '').trim().toLowerCase() === k)) return warn('이미 있는 시리얼이에요: ' + x); seen.add(k); }
-  const one = (serial, qty) => { const r = create('stock', {model: m, serial, qty, safe: sf, status: '재고', deleted: false}); put('stock', r); if (by > 0) { const c = costDoc(r.id); c.buy = by; put('costs', c); } };
-  if (ss.length) ss.forEach(x => one(x, 1)); else one('', qn);
-  render(); toast('재고에 추가했어요.'); return true;
-}, '추가');
+ACT.newStock = () => {
+  formModal('입고 (재고 추가)',
+    '<label class="fl" for="f_mo">모델명 (필수 · 있던 모델은 아래에서 골라도 돼요)</label><input id="f_mo" list="f_mol" placeholder="예: 토스 포스 T2" autocomplete="off"><datalist id="f_mol">' + stockModels().map(m => '<option value="' + esc(m) + '">').join('') + '</datalist>' +
+    '<label class="fl" for="f_se">시리얼 (여러 개는 한 줄에 하나 — 스캐너로 계속 찍으면 줄이 바뀌어요)</label><textarea id="f_se" placeholder="시리얼 번호"></textarea><button class="btn tint full" data-act="scanInto" data-arg="f_se">📷 카메라로 바코드 찍기</button>' +
+    '<label class="fl" for="f_q">시리얼이 없는 물품의 수량 (같은 모델이 있으면 그 수량에 더해져요)</label><input id="f_q" inputmode="numeric" placeholder="예: 10">' +
+    '<label class="fl" for="f_mm">입고처·메모 (선택)</label><input id="f_mm" placeholder="예: 토스플레이스 본사 10/24 배송분">' +
+    '<label class="fl" for="f_sf">안전재고 (이 수 아래면 알려줘요, 선택)</label><input id="f_sf" inputmode="numeric" placeholder="예: 3">' +
+    (canPerf() ? '<label class="fl" for="f_b">입고 단가 (1대당 산 값, 원, 선택)</label><input id="f_b" inputmode="numeric" placeholder="예: 250000">' : ''), () => {
+    const m = $('#f_mo').value.trim(); if (!m) return warn('모델명을 입력해 주세요.');
+    const qn = numOf($('#f_q').value), sf = numOf($('#f_sf').value), by = canPerf() ? numOf($('#f_b').value) : 0, memo = $('#f_mm').value.trim();
+    const ss = $('#f_se').value.split(/[\n,]+/).map(x => x.trim()).filter(Boolean);
+    if (!ss.length && qn < 1) return warn('시리얼을 적거나 수량을 입력해 주세요.');
+    const seen = new Set();
+    for (const x of ss) { const k = x.toLowerCase(); if (seen.has(k) || list('stock').some(r => r.status !== '설치완료' && (r.serial || '').trim().toLowerCase() === k)) return warn('이미 재고에 있는 시리얼이에요: ' + x); seen.add(k); }
+    const one = (serial, qty) => { const r = create('stock', {model: m, serial, qty, safe: sf, status: '재고', deleted: false}); slog(r, '입고', qty, memo); put('stock', r); if (by > 0) { const c = costDoc(r.id); c.buy = by; put('costs', c); } };
+    if (ss.length) ss.forEach(x => one(x, 1));
+    else {
+      const same = inStock().find(r => !r.serial && (r.model || '').trim() === m);
+      if (same) { slog(same, '입고', qn, memo); same.qty = (same.qty || 1) + qn; if (sf) same.safe = sf; put('stock', same); if (by > 0) { const c = costDoc(same.id); c.buy = by; put('costs', c); } }
+      else one('', qn);
+    }
+    render(); toast('입고했어요: ' + m + ' ' + (ss.length || qn) + (ss.length ? '대' : '개')); return true;
+  }, '입고');
+};
+// 계약 없이 내보내기 — n개만 떼어 낼 때는 takeStock 처럼 새 줄로 나눠 이력을 남긴다
+function goneStock(row, n, kind, memo, merchant) {
+  const all = !!row.serial || n >= (row.qty || 1); let use = row;
+  if (!all) { slog(row, '출고', -n, kind + (memo ? ' · ' + memo : '')); row.qty = (row.qty || 1) - n; put('stock', row); use = create('stock', {model: row.model, serial: '', qty: n, safe: row.safe || 0, deleted: false, log: []}); }
+  else slog(use, '출고', -(use.qty || 1), kind + (memo ? ' · ' + memo : ''));
+  use.status = '설치완료'; use.gone = kind; use.goneAt = nowStr(); if (merchant) use.merchant = merchant; put('stock', use);
+}
+ACT.outStock = pre => {
+  const sel = []; let mer = 0; const p0 = pre ? byId('stock', pre) : null; if (p0 && p0.status === '재고') sel.push({id: p0.id, n: 1});
+  formModal('출고 (계약 없이 내보내기)',
+    '<div class="sub" style="margin-top:0">가맹점에 계약으로 나가는 장비는 ‘계약’에서 고르세요. 여기는 반품·불량·A/S 교체처럼 계약 없이 나가는 것만 처리해요.</div>' +
+    '<label class="fl" for="f_k">출고 사유</label><select id="f_k">' + OUT_KINDS.map(k => '<option>' + k + '</option>').join('') + '</select>' +
+    '<div class="lb">나가는 장비</div><div id="osel"></div><div class="row" style="gap:8px"><input id="oq" placeholder="재고에서 찾기 (모델·시리얼 · 스캐너 가능)" autocomplete="off"><button type="button" class="btn tint" id="ocam" style="flex:none" aria-label="카메라로 바코드 찍기">📷</button></div><div id="ol" class="picks"></div>' +
+    '<details class="direct"><summary>가맹점 연결 (A/S 교체 등, 선택)</summary>' + MP_HTML + '</details>' +
+    '<label class="fl" for="f_mm">메모 (선택)</label><input id="f_mm" placeholder="예: 액정 불량, 토스 본사로 반품">', () => {
+    if (!sel.length) return warn('나갈 장비를 골라 주세요.');
+    const kind = $('#f_k').value.replace(/ \(.*\)/, ''), memo = $('#f_mm').value.trim();
+    for (const e of sel) { const r = byId('stock', e.id); if (!r || r.status !== '재고') return warn('이미 나간 장비가 있어요. 다시 열어 주세요.'); if (!r.serial && !(e.n >= 1 && e.n <= (r.qty || 1))) return warn(r.model + ' 수량은 1~' + (r.qty || 1) + ' 사이로 적어 주세요.'); }
+    sel.forEach(e => goneStock(byId('stock', e.id), e.n, kind, memo, mer));
+    render(); toast('출고했어요 (' + kind + ').'); return true;
+  }, '출고');
+  const q = $('#oq'), L = $('#ol'), box = $('#osel');
+  const show = () => { box.innerHTML = sel.length ? sel.map((e, i) => { const r = byId('stock', e.id); return '<div class="eqi"><span>' + esc(r.model) + (r.serial ? ' / ' + esc(r.serial) : '') + '</span>' + (r.serial ? '' : '<input type="number" min="1" max="' + (r.qty || 1) + '" value="' + e.n + '" data-i="' + i + '" class="oqn" aria-label="수량"> / ' + (r.qty || 1) + '개') + '<button type="button" data-i="' + i + '" aria-label="빼기">−</button></div>'; }).join('') : '<div class="sub">아직 고른 장비가 없어요.</div>'; };
+  const avail = () => inStock().filter(r => !sel.some(e => e.id === r.id));
+  const fill = () => { const v = q.value.trim(); L.innerHTML = avail().filter(r => kmatch((r.model || '') + ' ' + (r.serial || ''), v)).sort((a, b) => (a.model || '').localeCompare(b.model || '')).slice(0, 40).map(r => '<button type="button" class="pick" data-id="' + r.id + '"><b>' + esc(r.model) + '</b><span>' + (r.serial ? esc(r.serial) : '시리얼 없음 · ' + (r.qty || 1) + '개 보유') + '</span></button>').join('') || '<div class="sub">재고에 맞는 장비가 없어요.</div>'; };
+  const add = r => { sel.push({id: r.id, n: 1}); show(); fill(); };
+  const byCode = code => { const c = code.trim().toLowerCase(); if (!c) return; const r = avail().find(x => (x.serial || '').trim().toLowerCase() === c); if (r) { add(r); toast('추가: ' + r.model + ' · ' + r.serial); } else toast('재고에 없는 번호예요: ' + code); q.value = ''; fill(); };
+  q.addEventListener('input', fill);
+  q.addEventListener('keydown', ev => { if (ev.key === 'Enter' && !ev.isComposing) { ev.preventDefault(); byCode(q.value); } });
+  L.onclick = ev => { const p = ev.target.closest('.pick'); if (p) add(byId('stock', p.dataset.id)); };
+  box.onclick = ev => { const b = ev.target.closest('button[data-i]'); if (b) { sel.splice(Number(b.dataset.i), 1); show(); fill(); } };
+  box.oninput = ev => { const t = ev.target; if (t.classList.contains('oqn')) sel[Number(t.dataset.i)].n = Math.floor(Number(t.value) || 0); };
+  $('#ocam').onclick = () => scanCamera(byCode);
+  wireMerchantPicker(m => { mer = m.id; });
+  show(); fill();
+};
+// 재고 조사(실사): 실제로 센 수량을 적으면 차이만큼 정정. 시리얼 장비는 없는 것만 체크를 끈다.
+ACT.adjStock = () => {
+  const rows = inStock().sort((a, b) => (a.model || '').localeCompare(b.model || '') || (a.serial || '').localeCompare(b.serial || ''));
+  if (!rows.length) return toast('정정할 재고가 없어요.');
+  const g = new Map(); rows.forEach(r => { if (!g.has(r.model)) g.set(r.model, []); g.get(r.model).push(r); });
+  formModal('수량 정정 (재고 조사)',
+    '<div class="sub" style="margin-top:0">창고에서 실제로 센 수량을 적으세요. 시리얼 장비는 실제로 없는 것만 체크를 끄면 ‘분실’로 빠져요. 바뀐 것만 이력에 남습니다.</div>' +
+    '<div class="row" style="gap:8px"><input id="aqs" placeholder="시리얼 스캔하면 ‘확인’ 표시 (선택)" autocomplete="off"><button type="button" class="btn tint" id="acam" style="flex:none" aria-label="카메라로 바코드 찍기">📷</button></div>' +
+    [...g.entries()].map(([model, rs]) => '<div class="adjg"><b>' + esc(model) + '</b>' + rs.map(r => r.serial
+      ? '<label class="adjr"><input type="checkbox" checked data-id="' + r.id + '"><span>' + esc(r.serial) + '</span></label>'
+      : '<div class="adjr"><span>시리얼 없음 · 장부 ' + (r.qty || 1) + '개 → 실제</span><input type="number" min="0" value="' + (r.qty || 1) + '" data-adj="' + r.id + '" aria-label="실제 수량"></div>').join('') + '</div>').join('') +
+    '<label class="fl" for="f_mm">정정 사유 (필수)</label><input id="f_mm" placeholder="예: 10월 재고 조사, 입력 실수 바로잡기">', () => {
+    const memo = $('#f_mm').value.trim(); const ch = [];
+    document.querySelectorAll('#modal [data-adj]').forEach(i => { const r = byId('stock', i.dataset.adj), v = Math.floor(Number(i.value)); if (isNaN(v) || v < 0) return; if (v !== (r.qty || 1)) ch.push([r, v]); });
+    document.querySelectorAll('#modal input[type=checkbox][data-id]').forEach(i => { if (!i.checked) ch.push([byId('stock', i.dataset.id), 0]); });
+    if (!ch.length) return warn('바뀐 수량이 없어요.');
+    if (!memo) return warn('정정 사유를 적어 주세요.');
+    ch.forEach(([r, v]) => {
+      if (v === 0) { slog(r, '정정', -(r.qty || 1), memo); r.status = '설치완료'; r.gone = r.serial ? '분실' : '정정'; r.goneAt = nowStr(); }
+      else { slog(r, '정정', v - (r.qty || 1), memo); r.qty = v; }
+      put('stock', r);
+    });
+    render(); toast(ch.length + '건 정정했어요.'); return true;
+  }, '정정 저장');
+  const hit = code => { const c = code.trim().toLowerCase(); const r = rows.find(x => (x.serial || '').trim().toLowerCase() === c); const b = r && $('#modal input[data-id="' + r.id + '"]'); if (b) { b.checked = true; b.closest('.adjr').classList.add('ok'); toast('확인: ' + r.serial); } else if (c) toast('재고 장부에 없는 번호예요: ' + code); $('#aqs').value = ''; };
+  $('#aqs').addEventListener('keydown', ev => { if (ev.key === 'Enter' && !ev.isComposing) { ev.preventDefault(); hit($('#aqs').value); } });
+  $('#acam').onclick = () => scanCamera(hit);
+};
+// 이력: 각 재고의 log + 예전 자료(log 없음)는 등록일을 입고로 본다
+function stockMoves() {
+  const out = [];
+  list('stock').forEach(r => {
+    const lg = r.log || [];
+    if (r.log) { lg.forEach(x => out.push(Object.assign({r}, x))); return; } // 떼어 낸 줄(log 빈 배열)은 원래 줄에 이미 남음
+    if (r.serial || !r.contract) out.push({d: r.created || '', k: '입고', q: r.qty || 1, m: '', by: 0, r}); // 계약으로 떼어 낸 줄은 입고가 아님
+    if (r.contract) out.push({d: '', k: '계약 출고', q: -(r.qty || 1), m: r.merchant ? (byId('merchants', r.merchant) || {}).name || '' : '', by: 0, r});
+  });
+  return out.sort((a, b) => (b.d || '').localeCompare(a.d || ''));
+}
+const MOVE_KINDS = ['전체', '입고', '출고', '정정'];
+function viewStockLog() {
+  const f = S.slogF || '전체';
+  return '<h1>재고 이력</h1><div class="sub">입고·출고(계약 출고 포함)·수량 정정이 시간 순으로 남아요. 장비를 누르면 그 장비가 열려요.</div>' +
+    '<div class="pills">' + MOVE_KINDS.map(k => '<button class="pill ' + (k === f ? 'on' : '') + '" data-act="slogF" data-arg="' + k + '">' + k + '</button>').join('') + '</div>' +
+    '<input id="slq" data-q="slq" placeholder="🔍 모델·시리얼·메모·직원 (초성)" value="' + esc(S.slq || '') + '" autocomplete="off"><div class="qres" data-for="slq">' + stockLogList() + '</div>';
+}
+ACT.slogF = k => { S.slogF = k; render(); };
+function stockLogList() {
+  const f = S.slogF || '전체', q = S.slq || '';
+  const ls = stockMoves().filter(x => (f === '전체' || x.k.endsWith(f)) && kmatch((x.r.model || '') + ' ' + (x.r.serial || '') + ' ' + (x.m || '') + ' ' + (x.by ? uname(x.by) : ''), q));
+  if (!ls.length) return '<div class="empty">이력이 없어요.</div>';
+  const col = k => k === '입고' ? 'var(--green)' : k === '정정' ? 'var(--amber)' : 'var(--red)';
+  return '<div class="sub" style="font-weight:700">' + ls.length + '건</div>' + ls.slice(0, 300).map(x => '<div class="mv" data-act="editStock" data-arg="' + x.r.id + '"><span class="mvd">' + esc((x.d || '').slice(2, 16) || '예전 자료') + '</span><span class="chip" style="color:' + col(x.k) + ';background:var(--field)">' + esc(x.k) + '</span>' +
+    '<span class="grow"><b>' + esc(x.r.model) + '</b>' + (x.r.serial ? ' / ' + esc(x.r.serial) : '') + (x.m ? '<small>' + esc(x.m) + '</small>' : '') + '</span><b class="mvq" style="color:' + col(x.k) + '">' + (x.q > 0 ? '+' : '') + x.q + '</b><span class="mvb">' + esc(x.by ? uname(x.by) : '') + '</span></div>').join('');
+}
+const stockState = r => r.status === '설치완료' ? (r.gone ? '출고 완료 (' + r.gone + ')' : '설치 완료') : (r.status || '재고');
 ACT.editStock = id => {
   const r = byId('stock', id); if (!r) return; const c = canPerf() ? costOf(r.id) : null; const mer = r.merchant ? byId('merchants', r.merchant) : null;
+  const hist = (r.log || []).slice().reverse().slice(0, 8);
   formModal('재고 수정', '<label class="fl" for="f_mo">모델명</label><input id="f_mo" value="' + esc(r.model) + '"><label class="fl" for="f_se">시리얼</label><input id="f_se" value="' + esc(r.serial) + '"><button class="btn tint full" data-act="scanInto" data-arg="f_se">📷 카메라로 바코드 찍기</button>' +
-    (r.serial ? '' : '<label class="fl" for="f_q">수량</label><input id="f_q" inputmode="numeric" value="' + (r.qty || 1) + '">') +
+    (r.serial ? '' : '<div class="sub">수량은 ‘수량 정정’ 또는 ‘입고’·‘출고’로 바꿔 주세요 (지금 ' + (r.qty || 1) + '개).</div>') +
     '<label class="fl" for="f_sf">안전재고</label><input id="f_sf" inputmode="numeric" value="' + (r.safe || 0) + '">' +
     (canPerf() ? '<label class="fl" for="f_b">입고 단가 (산 값, 원)</label><input id="f_b" inputmode="numeric" value="' + (c && c.buy ? c.buy : '') + '"><label class="fl" for="f_s">출고 단가 (판 값, 원)</label><input id="f_s" inputmode="numeric" value="' + (c && c.sell ? c.sell : '') + '">' : '') +
-    '<div class="sub" style="margin-top:10px">상태: ' + esc(r.status || '재고') + (r.status === '출고중' && mer ? ' · ' + esc(mer.name) : '') + '</div><button class="btn red full" id="f_del">이 재고 삭제</button>', () => {
+    '<div class="sub" style="margin-top:10px">상태: ' + esc(stockState(r)) + (mer ? ' · ' + esc(mer.name) : '') + '</div>' +
+    (hist.length ? '<div class="lb">이 장비 이력</div>' + hist.map(x => '<div class="sub" style="margin:2px 0">' + esc((x.d || '').slice(2) + ' · ' + x.k + ' ' + (x.q > 0 ? '+' : '') + x.q + (x.m ? ' · ' + x.m : '') + (x.by ? ' · ' + uname(x.by) : '')) + '</div>').join('') : '') +
+    '<div class="btns" style="margin-top:10px">' + (r.status === '재고' ? '<button class="btn tint" id="f_out">이 장비 출고</button>' : '') + '<button class="btn red" id="f_del">삭제</button></div>', () => {
     const m = $('#f_mo').value.trim(); if (!m) return warn('모델명을 입력해 주세요.');
     const se = $('#f_se').value.trim();
-    if (se && se.toLowerCase() !== (r.serial || '').trim().toLowerCase() && list('stock').some(x => x.id !== r.id && (x.serial || '').trim().toLowerCase() === se.toLowerCase())) return warn('이미 있는 시리얼이에요: ' + se);
-    r.model = m; r.serial = se; r.safe = numOf($('#f_sf').value); if ($('#f_q')) r.qty = Math.max(1, numOf($('#f_q').value)); put('stock', r);
+    if (se && se.toLowerCase() !== (r.serial || '').trim().toLowerCase() && list('stock').some(x => x.id !== r.id && x.status !== '설치완료' && (x.serial || '').trim().toLowerCase() === se.toLowerCase())) return warn('이미 있는 시리얼이에요: ' + se);
+    r.model = m; r.serial = se; r.safe = numOf($('#f_sf').value); put('stock', r);
     if (canPerf()) { const b2 = numOf($('#f_b').value), s2 = numOf($('#f_s').value); const cd = costOf(r.id) || (b2 || s2 ? costDoc(r.id) : null); if (cd) { cd.buy = b2; cd.sell = s2; put('costs', cd); } }
     render(); toast('저장했어요.'); return true;
   }, '저장');
-  $('#f_del').onclick = () => askConfirm('이 재고를 지울까요?', (r.model || '') + ' ' + (r.serial || '') + '\n목록에서 지워집니다.', '지우기', () => { r.deleted = true; put('stock', r); render(); toast('삭제했어요.'); }, true);
+  if ($('#f_out')) $('#f_out').onclick = () => { closeModal(); setTimeout(() => ACT.outStock(r.id), 0); };
+  $('#f_del').onclick = () => askConfirm('이 재고를 지울까요?', (r.model || '') + ' ' + (r.serial || '') + '\n잘못 넣은 것을 지울 때만 쓰세요. 실제로 나간 것은 ‘출고’, 수가 안 맞으면 ‘수량 정정’을 써야 이력이 남아요.', '지우기', () => { r.deleted = true; put('stock', r); render(); toast('삭제했어요.'); }, true);
 };
 
 // ---------- 가맹점 고르기 · 장비 고르기 (팝업 안에서 쓰는 조각) ----------
@@ -1029,11 +1145,12 @@ function viewContracts() {
 function takeStock(row, merchant, contract) { // 재고 한 줄을 출고 처리 (수량 여러 개짜리는 1개만 떼어 낸다) — 앱의 Store.takeStock 과 같다
   let use = row;
   if (!row.serial && (row.qty || 1) > 1) {
-    row.qty = (row.qty || 1) - 1; put('stock', row);
-    use = create('stock', {model: row.model, serial: '', safe: row.safe || 0, deleted: false});
+    slog(row, '계약 출고', -1, ((byId('merchants', merchant) || {}).name || '') + ' (1개 떼어 냄)'); row.qty = (row.qty || 1) - 1; put('stock', row);
+    use = create('stock', {model: row.model, serial: '', safe: row.safe || 0, deleted: false, log: []});
     const rc = canPerf() ? costOf(row.id) : null; if (rc) put('costs', create('costs', {stock: use.id, buy: rc.buy || 0, sell: rc.sell || 0}));
   }
-  use.qty = 1; use.status = '출고중'; use.merchant = merchant; use.contract = contract; put('stock', use); return use;
+  const mn = (byId('merchants', merchant) || {}).name || '';
+  use.qty = 1; use.status = '출고중'; use.merchant = merchant; use.contract = contract; if (use === row) slog(use, '계약 출고', -1, mn); put('stock', use); return use;
 }
 function addEquip(c, sel) {
   c.equip = c.equip || [];
@@ -1679,7 +1796,7 @@ function menuItems() {
   const add = (sec, label, words, go, badge) => it.push({sec, label, words, go, badge});
   add('바로가기', '업무', '업무 지시 할일 설치 AS 서류', 'nav:task:'); add('바로가기', '프로젝트', '프로젝트 진행률', 'nav:project:');
   add('바로가기', '채팅', '채팅 대화 메시지 방', 'nav:chat:'); add('바로가기', '일정 (달력)', '일정 달력 캘린더 방문 약속', 'nav:calendar:');
-  add('일', '재고', '재고 장비 바코드 시리얼 단가 입고 출고 스캔', 'nav:all:stock');
+  add('일', '재고', '재고 장비 바코드 시리얼 단가 입고 출고 수량 정정 스캔', 'nav:all:stock'); add('일', '재고 이력 (입고·출고·정정)', '재고 이력 입고 출고 정정 실사 조사 반품 불량', 'nav:all:stocklog');
   add('일', '가맹점', '가맹점 거래처 상호 사업자 삭제', 'nav:all:merchants');
   add('일', '가맹점 응대 기록 조회', '응대 기록 AS 전화 응대 방문 메모 이력 날짜 가맹점', 'nav:all:logs');
   add('일', '가맹점 일괄 가져오기 (엑셀·이카운트)', '가맹점 일괄 가져오기 업로드 엑셀 csv 이카운트', 'act:importM');
@@ -1692,7 +1809,7 @@ function menuItems() {
   if (R) { add('일', '일일보고 종합 보기', '일일보고 종합 대표님 직원별', 'nav:all:reportview'); if (!P) add('일', '실적 보고서 보기', '실적 보고서 보기 대표님', 'nav:all:perfreport'); }
   add('일', '지난 업무 기록', '지난 업무 기록 이력 완료 검색', 'nav:all:history');
   add('회사', '자료실', '자료실 게시판 양식 서식 계약서 파일 문서', 'nav:all:library'); add('회사', '비상연락망 (눌러서 전화)', '비상연락망 연락처 전화 번호', 'nav:all:contacts');
-  add('회사', '사용설명서', '사용설명서 매뉴얼 도움말 사용법 설치', 'nav:all:manual'); add('회사', '버전·업데이트 내역', '버전 업데이트 내역 변경 이력', 'nav:all:about');
+  add('회사', '사용설명서', '사용설명서 매뉴얼 도움말 사용법 설치', 'nav:all:manual'); add('회사', '버전·업데이트 내역', '버전 업데이트 내역 변경 이력', 'nav:all:about'); add('회사', '업데이트 확인 (새 버전 받기)', '업데이트 확인 새 버전 새로고침 최신', 'act:checkUpdate');
   add('회사', '공지사항', '공지사항 공지 알림', 'nav:all:notice', nu ? String(nu) : '');
   if (A) {
     add('관리자', '데이터 백업 내려받기', '데이터 백업 내려받기 저장 내보내기 json', 'act:backupDownload'); add('관리자', 'PC에 보관된 자동 백업', '자동 백업 보관 PC 복원', 'act:pcBackups'); add('관리자', '가맹점 보호·복원', '가맹점 보호 복원 되돌리기 삭제 복구 휴지통', 'act:safety');
@@ -1758,6 +1875,7 @@ function viewHome() {
 
 // ---------- 사용설명서 · 버전 내역 (웹) ----------
 const WEB_CHANGES = [
+  ['웹 0.0.14', '2026-10-24', ['재고: 입고(같은 모델은 수량에 더하기·입고처 메모), 출고(반품·불량·A/S 교체·분실 — 계약 없이), 수량 정정(재고 조사, 시리얼 스캔 확인), 재고 이력(입고·출고·계약 출고·정정, 날짜·직원·메모)', 'PC: ☰ 전체 메뉴 화면 바탕색을 구분하고 묶음별 카드로 정리', '업데이트: 새 버전이 나오면 위쪽에 ‘지금 업데이트’ 띠가 떠요. 새로고침·프로그램 재시작만 해도 새 버전이 바로 적용되고, 전체 → 회사 → 업데이트 확인으로 직접 확인할 수도 있어요']],
   ['웹 0.0.13', '2026-10-24', ['사용설명서 전면 정리: 앱 사용설명서와 같은 순서로 모든 기능 설명, 항목을 눌러 펼치기, 검색(초성 가능), 자주 묻는 질문 추가']],
   ['웹 0.0.12', '2026-10-24', ['로그인: 인증번호 받기를 누른 뒤 기다리는 시간 줄임(사람 확인을 화면이 열릴 때 미리 준비)']],
   ['웹 0.0.11', '2026-10-24', ['윈도우 PC용 설치 프로그램(나인패밀리 설치 .exe) — 전체 → 계정 → PC 프로그램 설치 파일 받기. 토스포스처럼 설치해서 쓰고, 화면·기능은 웹앱과 같아요']],
@@ -1786,7 +1904,7 @@ const WEB_MANUAL = [
   ['일정 (달력)', '■ 일요일·공휴일은 빨간색(공휴일 이름 표시, 2026~2028년), 토요일은 파란색이에요. ‹ › 로 달을 넘기고 ‘오늘’로 돌아와요.\n■ 날짜를 누르면 그날 일정과 기한이 있는 업무가 보이고, 아래 ‘다가오는 일정’에 앞으로의 일정이 날짜 순으로 나와요.\n■ 일정을 누르면 내용이 보이고, 가맹점이 연결된 일정은 ‘가맹점 정보 보기’로 바로 가요.\n■ 일정 추가·삭제는 최고관리자만 해요(+ 버튼). 가맹점을 고르면 장소에 주소가 들어가요. 일반 직원은 업무에 기한을 넣으면 달력에 표시돼요.'],
   ['가맹점', '■ 검색: 상호, 초성(예: ㅅㅇㅍ), 사업자번호(- 없이도), 전화번호. 한글을 치는 중에도 바로 걸러져요. PC는 표로 보여요.\n■ 항목: 상호·사업자번호·전화번호·휴대폰번호·이메일·주소·VAN사·계약구분(임대면 월 CMS 금액, 판매면 판매 금액)·계약조건·등급 코드·메모. 칸마다 이름이 위에 있어요.\n■ 등급 코드(밴피 기준): 0 S·월 5만원 이상 / 1 A·3만원 이상 / 2 B·1만원 이상 / 3 C·1만원 미만 / 4 해지 / 5 신규 / 7 협력사.\n■ 등록·수정·삭제는 ‘가맹점 등록·수정’ 권한이 있어야 하고, 관리자가 수정 암호를 정해 두면 관리자도 암호를 넣어야 해요(한 번 넣으면 5분 동안 다시 묻지 않아요). 같은 사업자번호가 이미 있으면 등록할 때 알려 줘요.\n■ 삭제하면 목록에서만 사라지고 기록은 남아요(관리자가 복원 가능).\n■ 최고관리자는 가맹점 정보 창의 ‘🕘 변경 이력’에서 누가 언제 무엇을 바꿨는지 보고 그 시점으로 되돌려요.'],
   ['가맹점 응대 기록', '■ 가맹점을 열어 ‘+ 응대 기록 남기기’ → 날짜·종류(방문A/S·원격A/S·전화응대·기타)·요청사항·처리결과.\n■ 가맹점 창에서 종류 버튼과 날짜로 걸러 봐요.\n■ 전체 → 가맹점 응대 기록 조회: 상호·초성·사업자번호로 가맹점을 찾거나, 모든 가맹점의 최근 기록을 검색해요.\n■ 기록은 직원 누구나 고칠 수 있고 수정한 사람·시각이 남아요. 지우기는 쓴 사람과 최고관리자만 해요.'],
-  ['재고 · 바코드', '■ + 로 추가: 모델명, 시리얼(한 줄에 하나 — 스캐너로 계속 찍으면 여러 대가 한 번에), 시리얼 없는 물품은 수량, 안전재고, 입고 단가(실적 권한자).\n■ 바코드: PC는 USB·블루투스 스캐너로 찍으면 바로 입력돼요. 검색칸에 시리얼을 찍으면 그 장비가 바로 열려요. 휴대폰은 📷 버튼으로 카메라 스캔(처음에 카메라 허용).\n■ 모델별로 재고·출고중 수량이 보이고, 안전재고보다 적으면 빨간색으로 알려요.\n■ 시리얼 줄을 눌러 수정·삭제, 실적 권한자는 입고·출고 단가와 보유 재고 자산을 봐요.\n■ 순서: 재고 → (계약에서 고르면) 출고중 → (설치 완료하면) 재고에서 빠짐.'],
+  ['재고 · 바코드', '■ 입고(＋ 입고 또는 오른쪽 아래 +): 모델명, 시리얼(한 줄에 하나 — 스캐너로 계속 찍으면 여러 대가 한 번에), 시리얼 없는 물품은 수량, 안전재고, 입고 단가(실적 권한자).\n■ 출고(− 출고): 계약 없이 나가는 장비 — 반품(공급처로)·불량·폐기·A/S 교체·분실·기타 중 사유를 고르고, 재고에서 찾거나 스캐너로 찍어 담아요. 시리얼 없는 물품은 수량을 적어요. A/S 교체는 가맹점을 연결할 수 있어요. 계약으로 나가는 장비는 지금처럼 ‘계약’에서 고릅니다.\n■ 수량 정정(재고 조사): 창고에서 센 실제 수량을 적고, 시리얼 장비는 없는 것만 체크를 꺼요(스캐너로 찍으면 ‘확인’ 표시). 사유를 적으면 차이만큼 바로잡고 이력에 남아요.\n■ 이력: 재고 화면의 ‘이력’ 또는 전체 → 일 → 재고 이력. 입고·출고·계약 출고·정정이 날짜·직원·메모와 함께 시간 순으로 나와요. 장비를 누르면 그 장비의 이력도 볼 수 있어요.\n■ 삭제는 잘못 넣은 것을 지울 때만 쓰세요(이력이 안 남음).\n■ 바코드: PC는 USB·블루투스 스캐너로 찍으면 바로 입력돼요. 검색칸에 시리얼을 찍으면 그 장비가 바로 열려요. 휴대폰은 📷 버튼으로 카메라 스캔(처음에 카메라 허용).\n■ 모델별로 재고·출고중 수량이 보이고, 안전재고보다 적으면 빨간색으로 알려요.\n■ 시리얼 줄을 눌러 수정·삭제, 실적 권한자는 입고·출고 단가와 보유 재고 자산을 봐요.\n■ 순서: 재고 → (계약에서 고르면) 출고중 → (설치 완료하면) 재고에서 빠짐.'],
   ['계약 · 입금', '■ 신규 계약 올리기: 가맹점 찾기 → 결제 연동(VAN/PG·업체명) → 구분(판매·CMS·렌탈)과 금액 → 나가는 장비(재고에서 고르기·스캔·직접 입력) → 장비 메모 → 계약일·만료일(+12/24/36개월 버튼).\n■ 계약 관리: 만료 3개월 이내 계약이 위에 빨간 D-day 로 나와요. 계약을 눌러 장비 추가, ‘설치 완료’(장비가 재고에서 빠짐). 실적 권한이 없으면 내가 올린 계약만 보여요.\n■ 입금 확인: + 로 종류·금액·가맹점·메모를 올리면 ‘입금확인’ 채팅방에 알림이 가고, 확인한 사람이 ‘확인 처리’를 눌러요.'],
   ['실적 · 수익 · 지난 업무', '■ 내 실적: 이번 달 내 신규 계약·판매금액, 지난달과 비교(성장률), 최근 6개월. ‹ › 로 달을 바꿔요.\n■ 전체 실적·직원별 순위(실적 권한자): 신규 계약 대수 순(같으면 판매금액 순), 직원별 지난달 → 이번 달 막대.\n■ 수익 현황(실적 권한자): 출고된 장비의 출고 단가 − 입고 단가. 단가를 안 적은 장비는 아래 목록에서 눌러 적으면 바로 반영돼요.\n■ 지난 업무 기록: 완료된 업무를 제목·거래처·담당자·완료 메시지로 찾아요(전체 이력 권한이 없으면 내 것만).'],
   ['일일보고 · 실적 보고서', '■ 일일보고 쓰기: ‹ › 로 날짜를 고르고 오늘 한 일·특이사항·내일 계획을 적어 제출해요. 그날 완료한 업무와 올린 계약은 자동으로 같이 들어가요. 같은 날 다시 내면 수정본으로 바뀌어요.\n■ 일일보고 종합 보기(보고 열람 권한자): 날짜별로 직원별 보고와 미제출자를 봐요.\n■ 실적 보고서: 실적 권한자는 자동 집계된 이달 실적을 고쳐 ‘대표님께 보고하기’, 보고 열람 권한자는 올라온 보고서를 봐요.'],
@@ -1798,7 +1916,7 @@ const WEB_MANUAL = [
   ['가맹점 일괄 가져오기 (엑셀·CSV)', '■ 이카운트 등에서 거래처 목록을 엑셀(.xlsx) 또는 CSV로 받아요. 옛 .xls 는 엑셀에서 .xlsx 로 다시 저장해 주세요.\n■ 머리글에 ‘거래처명’(또는 상호·가맹점명)이 있어야 하고, 사업자등록번호·거래처코드·대표자·전화·핸드폰·주소·등급·업태·종목·메모 열이 있으면 함께 가져와요.\n■ 전체 → 가맹점 일괄 가져오기 → 파일 고르기 → 미리보기(새로 등록·갱신·건너뜀) 확인 → 가져오기.\n■ 같은 거래처코드·사업자번호·상호가 있으면 새로 만들지 않고, 파일에 값이 있는 칸만 덮어써요. 잘못되면 가맹점 보호·복원에서 되돌려요.'],
   ['단체 문자 (가맹점)', '■ 전체 → 단체 문자 보내기. 내용을 쓰고({상호} 는 가맹점 이름으로 바뀜), 등급 버튼·검색·체크로 받을 가맹점을 골라요(휴대폰 번호가 있는 곳만).\n■ ‘문자 보내기 시작’ → 한 곳씩 휴대폰 문자 앱이 열리고 내용이 채워져 있어요. 보내고 돌아오면 다음 가맹점이 준비돼요. 받는 분끼리 번호가 보이지 않고, 요금은 그 휴대폰 요금제로 나가요.\n■ PC에는 문자 앱이 없어 보낼 수 없어요(남은 번호 복사는 가능). 알리고 연동 후 PC에서도 바로 보낼 수 있게 할 예정이에요.'],
   ['안드로이드 앱과 다른 점', '■ 웹에 아직 없는 세부 기능: 채팅방 이름 변경·초대·음소거·방 안 검색, 프로젝트 항목 삭제·진행 기록, 시리얼 사진 인식.\n■ 웹에서 먼저 생긴 기능: 저장 상태 표시, 가맹점 동시 수정 경고, 웹 기기끼리 채팅 읽음 맞춤.\n■ 가맹점 삭제: 웹은 ‘가맹점 등록·수정’ 권한 + 암호, 앱은 최고관리자만.'],
-  ['자주 묻는 질문', 'Q. 인증번호 문자가 안 와요.\nA. 번호가 등록됐는지 확인하세요. 짧은 시간에 여러 번 요청하면 잠시 막힐 수 있어요(30분쯤 뒤 다시).\n\nQ. 기기를 바꿨어요.\nA. 같은 번호로 다시 로그인하면 모든 자료가 그대로 나와요. 자료는 서버에 있어요.\n\nQ. 인터넷이 없을 때도 되나요?\nA. 받아 둔 자료로 보기와 입력이 되고, 연결되면 저절로 서버에 올라가요(화면 위 ‘저장 대기’ 띠).\n\nQ. 실수로 지웠어요.\nA. 지운 자료도 서버에 남아 있어요. 관리자에게 말씀해 주세요(가맹점은 보호·복원에서 바로 되살려요).\n\nQ. 업데이트는 어떻게 받아요?\nA. 웹앱·PC 프로그램은 다시 열면(F5) 자동으로 최신이에요. 안드로이드 앱은 새 APK 를 받아 설치해요.']
+  ['자주 묻는 질문', 'Q. 새 버전은 어떻게 받아요?\nA. 새 버전이 나오면 화면 위쪽에 ‘지금 업데이트’ 띠가 떠요. 누르거나, 새로고침(F5)·프로그램을 껐다 켜도 바로 적용돼요. 전체 → 회사 → 업데이트 확인으로 직접 확인할 수도 있어요.\n\nQ. 인증번호 문자가 안 와요.\nA. 번호가 등록됐는지 확인하세요. 짧은 시간에 여러 번 요청하면 잠시 막힐 수 있어요(30분쯤 뒤 다시).\n\nQ. 기기를 바꿨어요.\nA. 같은 번호로 다시 로그인하면 모든 자료가 그대로 나와요. 자료는 서버에 있어요.\n\nQ. 인터넷이 없을 때도 되나요?\nA. 받아 둔 자료로 보기와 입력이 되고, 연결되면 저절로 서버에 올라가요(화면 위 ‘저장 대기’ 띠).\n\nQ. 실수로 지웠어요.\nA. 지운 자료도 서버에 남아 있어요. 관리자에게 말씀해 주세요(가맹점은 보호·복원에서 바로 되살려요).\n\nQ. 업데이트는 어떻게 받아요?\nA. 웹앱·PC 프로그램은 다시 열면(F5) 자동으로 최신이에요. 안드로이드 앱은 새 APK 를 받아 설치해요.']
 ];
 function viewManual() {
   const q = (S.manq || '').trim();
@@ -1867,4 +1985,28 @@ if (DEMO) { demoSeed(); render(); } else {
 }
 let wasWide = isWide();
 window.addEventListener('resize', () => { if (S.me && wasWide !== isWide()) { wasWide = isWide(); later(); } });
-if ('serviceWorker' in navigator && !DEMO) navigator.serviceWorker.register('sw.js').catch(() => {});
+if ('serviceWorker' in navigator && !DEMO) navigator.serviceWorker.register('sw.js').then(r => r.update()).catch(() => {});
+// ---------- 새 버전 확인 ----------
+// 서버의 app.js 에서 VERSION 을 읽어 지금 화면과 다르면 위쪽에 '업데이트' 띠를 띄운다. 새로고침(F5)·프로그램 재시작 때도 항상 새 화면을 받는다(sw.js).
+let newVer = '';
+async function checkUpdate(manual) {
+  try {
+    const t = await (await fetch('app.js?v=' + Date.now(), {cache: 'no-store'})).text();
+    const m = t.match(/const VERSION = '([^']+)'/); newVer = m && m[1] !== VERSION ? m[1] : '';
+  } catch (e) { if (manual) toast('인터넷 연결을 확인해 주세요.'); return; }
+  showUpdate();
+  if (manual && !newVer) toast('지금이 최신 버전이에요 (' + VERSION + ').');
+}
+function showUpdate() {
+  let b = $('#updbar'); if (!newVer) { if (b) b.remove(); return; }
+  if (!b) { b = document.createElement('div'); b.id = 'updbar'; document.body.appendChild(b); }
+  b.innerHTML = '새 버전 ' + esc(newVer.replace('웹 ', '')) + '<button data-act="doUpdate">지금 업데이트</button><button data-act="laterUpdate" aria-label="나중에">✕</button>';
+  b.querySelector('[data-act=doUpdate]').onclick = ACT.doUpdate; b.querySelector('[data-act=laterUpdate]').onclick = () => b.remove();
+}
+ACT.doUpdate = async () => {
+  toast('업데이트하는 중…');
+  try { const rs = await navigator.serviceWorker.getRegistrations(); await Promise.all(rs.map(r => r.update())); const ks = await caches.keys(); await Promise.all(ks.map(k => caches.delete(k))); } catch (e) {}
+  location.reload();
+};
+ACT.checkUpdate = () => checkUpdate(true);
+if (!DEMO) { setTimeout(checkUpdate, 20000); setInterval(checkUpdate, 10 * 60000); document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkUpdate(); }); }
