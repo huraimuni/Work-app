@@ -191,3 +191,8 @@ body.hasmodal #toast{bottom:auto;top:calc(16px + env(safe-area-inset-top))}
 .cal td.sat div{color:#2b5bd7}
 details.appsec{margin-top:18px}
 details.appsec summary{cursor:pointer;font-size:15px;font-weight:700;color:var(--gray);padding:10px 0;border-bottom:2px solid #e3e5e9}
+/* ---- 웹 0.0.6: 저장 상태 · 동시 수정 ---- */
+#syncb{position:fixed;left:50%;top:calc(8px + env(safe-area-inset-top));transform:translateX(-50%);z-index:40;padding:6px 14px;border-radius:14px;font-size:13px;font-weight:700;display:none;max-width:92%;text-align:center}
+#syncb.on{display:block;background:var(--tint);color:var(--deep)}
+#syncb.off{display:block;background:#fdecea;color:var(--red)}
+.conf{background:#fff4e5;color:#7a4a00;border-radius:12px;padding:12px 14px;font-size:13px;line-height:1.5;margin-top:12px}

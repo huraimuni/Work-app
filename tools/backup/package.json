@@ -1,0 +1,8 @@
+{
+  "name": "nine-family-backup",
+  "private": true,
+  "description": "Firestore 전체 자료를 매일 받아 암호화해 보관하는 도구 (.github/workflows/backup.yml 에서 실행)",
+  "dependencies": {
+    "firebase-admin": "13.0.2"
+  }
+}

@@ -2,7 +2,7 @@
 /* 나인패밀리 웹앱 — 앱과 같은 Firebase(nine-family)를 쓴다. 문서는 {j: JSON문자열, u: 시각} 형식. */
 const CFG = {apiKey: 'AIzaSyCsA-M6QGGGk0owyDXzziv1X79TqF5NptI', authDomain: 'nine-family.firebaseapp.com', projectId: 'nine-family',
   storageBucket: 'nine-family.firebasestorage.app', messagingSenderId: '48232341344', appId: '1:48232341344:web:19be016c9c1c1de5a34805'};
-const VERSION = '웹 0.0.5';
+const VERSION = '웹 0.0.6';
 const DEMO = location.hash === '#demo';
 const COLLS = ['users', 'tasks', 'notices', 'projects', 'events', 'merchants', 'rooms', 'msgs', 'profiles', 'mlogs', 'config', 'stock', 'contracts', 'deposits', 'costs'];
 const TYPES = ['신규 설치', 'AS', '영업 방문', '서류 접수', '카드사 서류', '기타'];
@@ -74,9 +74,18 @@ function put(coll, o) {
   if ((coll === 'rooms' || coll === 'msgs') && o.mem && o.mem.length) { m.mem = o.mem; target = coll === 'rooms' ? 'prooms' : 'pmsgs'; priv = true; }
   if (coll === 'profiles') m.who = o.id;
   if (coll === 'contracts') { m.who = o.who; m.date = o.date || ''; }
-  fs.collection(target).doc(String(o.id)).set(m).catch(e => toast('저장하지 못했어요: ' + (e.code || e.message)));
+  S.pend = (S.pend || 0) + 1; syncBadge();
+  fs.collection(target).doc(String(o.id)).set(m).then(() => { S.pend--; syncBadge(); }).catch(e => { S.pend--; syncBadge(); toast('저장하지 못했어요: ' + (e.code || e.message)); });
   if (!(priv || coll === 'msgs' || coll === 'profiles')) fs.collection('audit').add({c: coll, id: o.id, by: S.uid, u: Date.now(), j}).catch(() => {});
 }
+// 화면 위쪽 작은 띠: 저장 중 / 인터넷 끊김(저장 대기) — 서버에 다 들어가면 사라진다
+function syncBadge() {
+  let b = $('#syncb'); if (!b) { b = document.createElement('div'); b.id = 'syncb'; document.body.appendChild(b); }
+  const off = !navigator.onLine, n = S.pend || 0;
+  b.className = off ? 'off' : n ? 'on' : '';
+  b.textContent = off ? '📴 인터넷 끊김' + (n ? ' · 저장 대기 ' + n + '건 (연결되면 자동으로 저장돼요)' : ' · 기기에 받아 둔 자료로 보는 중') : n ? '⏳ 서버에 저장 중… ' + n + '건' : '';
+}
+window.addEventListener('online', syncBadge); window.addEventListener('offline', syncBadge);
 function create(coll, extra) { const o = Object.assign({id: nextId(), created: nowStr()}, extra || {}); return o; }
 
 // ---------- 서버 읽기 ----------
@@ -109,6 +118,7 @@ function attach() {
       first = false;
       if (coll === 'users' && !snap.metadata.fromCache) { refreshMe(); if (!S.me) return noProfile(); }
       if (ch) { S.ready = true; if (S.me === null || coll === 'users') refreshMe(); later(); }
+      if (coll === 'merchants' && !snap.metadata.fromCache) { clearTimeout(S.bkT); S.bkT = setTimeout(autoBackup, 15000); }
     }, err => console.warn(srv, err.code)));
   });
 }
@@ -719,8 +729,10 @@ ACT.mlockOff = () => {
     sha(L.salt + $('#f_old').value).then(h => { if (h === L.hash) { L.salt = ''; L.hash = ''; L.key = 'merchant_lock_off'; put('config', L); closeModal(); render(); toast('암호를 껐어요.'); } else toast('현재 암호가 맞지 않아요.'); }); return false;
   }, '끄기');
 };
-ACT.newMerchant = () => needLock(() => { formModal('가맹점 등록', merchantForm(null), () => {
+ACT.newMerchant = () => needLock(() => { let dupOk = false; formModal('가맹점 등록', merchantForm(null), () => {
   if (!$('#f_n').value.trim()) return warn('상호를 입력해 주세요.');
+  const bd = $('#f_b').value.replace(/\D/g, ''); const dup = bd.length >= 10 && list('merchants').find(m => (m.bizno || '').replace(/\D/g, '') === bd);
+  if (dup && !dupOk) { dupOk = true; return warn('같은 사업자번호의 가맹점 ‘' + dup.name + '’이(가) 이미 있어요. 그래도 등록하려면 저장을 한 번 더 누르세요.'); }
   const o = readMerchant(create('merchants', {grade: 5})); put('merchants', o); render(); toast('저장했어요.'); return true;
 }, '저장'); wireMerchantForm(); });
 ACT.delMerchant = id => needLock(() => {
@@ -728,10 +740,20 @@ ACT.delMerchant = id => needLock(() => {
   const c = list('mlogs').filter(g => g.merchant === m.id).length;
   askConfirm('‘' + m.name + '’ 가맹점을 삭제할까요?', '목록에서만 지워지고, 응대 기록 ' + c + '건과 서버의 기록은 그대로 남아요. (앱의 가맹점 보호·복원에서 되살릴 수 있어요)', '삭제', () => { m.deleted = true; put('merchants', m); render(); toast('삭제했어요.'); }, true);
 });
-ACT.editMerchant = id => needLock(() => { formModal('가맹점 정보 수정', merchantForm(byId('merchants', id)), () => {
-  if (!$('#f_n').value.trim()) return warn('상호를 입력해 주세요.');
-  const o = readMerchant(byId('merchants', id)); put('merchants', o); render(); toast('저장했어요.'); return true;
-}, '저장'); wireMerchantForm(); });
+const MF = {name: '상호', bizno: '사업자번호', phone: '전화번호', mobile: '휴대폰번호', email: '이메일', addr: '주소', van: 'VAN사', ctype: '계약구분', camt: '금액', terms: '계약조건', memo: '메모', deleted: '삭제'};
+ACT.editMerchant = id => needLock(() => {
+  const key = 'merchants/' + Number(id), base = S.pushed[key], before = JSON.stringify(byId('merchants', id)); let forced = false;
+  formModal('가맹점 정보 수정', merchantForm(byId('merchants', id)) + '<div id="f_conf"></div>', () => {
+    if (!$('#f_n').value.trim()) return warn('상호를 입력해 주세요.');
+    const now = byId('merchants', id);
+    if (!forced && (S.pushed[key] !== base || JSON.stringify(now) !== before)) { // 창을 연 사이에 다른 곳(앱·다른 PC)에서 저장됨
+      const old = JSON.parse(before || '{}'); const ch = Object.keys(MF).filter(k => String(old[k] || '') !== String(now[k] || '')).map(k => MF[k]);
+      $('#f_conf').innerHTML = '<div class="conf">⚠ 이 창을 연 뒤 다른 직원이 이 가맹점을 고쳤어요' + (ch.length ? ' (' + ch.join(', ') + ')' : '') + '.<br>지금 저장하면 그 내용을 내 입력으로 덮어써요. 그래도 저장하려면 <b>저장</b>을 한 번 더 누르고, 아니면 취소 후 다시 열어 최신 내용을 확인하세요.</div>';
+      forced = true; return warn('다른 직원이 방금 고쳤어요. 아래 안내를 확인해 주세요.');
+    }
+    const o = readMerchant(now); put('merchants', o); render(); toast('저장했어요.'); return true;
+  }, '저장'); wireMerchantForm();
+});
 function viewAllLogs() {
   const mq = (S.lmq || '').trim(); const q = S.lq || '';
   let found = '';
@@ -1013,6 +1035,54 @@ ACT.newDeposit = () => {
   wireMerchantPicker(m => { mer = m; });
 };
 
+
+// ---------- 백업 ----------
+// 1) 서버: 삭제가 막혀 있고(지우면 표시만), 모든 변경은 변경 기록(audit)에 따로 남는다.
+// 2) 바깥 자동 백업: GitHub Actions 가 매일 새벽 전체 자료를 암호화해 90일 보관 (.github/workflows/backup.yml).
+// 3) 관리자 기기: 안드로이드 앱(폰 안 14일치)과 웹(이 PC 안 14일치)이 하루 한 번 저절로 보관 + 언제든 파일로 내려받기.
+const BK_COLLS = ['users', 'tasks', 'notices', 'projects', 'contracts', 'events', 'merchants', 'stock', 'rooms', 'msgs', 'reports', 'profiles', 'costs', 'contacts', 'deposits', 'library', 'mlogs', 'config'];
+async function buildBackup() {
+  const out = {kind: 'nine-family-backup', at: nowStr(), by: S.uid, from: VERSION, skipped: []};
+  for (const c of BK_COLLS) {
+    if (S.data[c] && c !== 'msgs') { out[c] = [...S.data[c].values()]; continue; }
+    if (DEMO) { out[c] = S.data[c] ? [...S.data[c].values()] : []; continue; }
+    try { const snap = await fs.collection(c).get(); out[c] = snap.docs.map(d => { try { return JSON.parse(d.get('j')); } catch (e) { return null; } }).filter(Boolean); } catch (e) { out.skipped.push(c); }
+  }
+  return out;
+}
+const bkName = () => 'ninefamily_backup_' + nowStr().replace(/[-: ]/g, '').replace(/^(\d{8})(\d{4})$/, '$1_$2') + '.json';
+function saveFile(name, text) { const u = URL.createObjectURL(new Blob([text], {type: 'application/json'})); const a = document.createElement('a'); a.href = u; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 5000); }
+ACT.backupDownload = async () => {
+  if (!can('staff_manage')) return toast('관리자만 내려받을 수 있어요.');
+  toast('백업 파일을 만드는 중…');
+  try {
+    const b = await buildBackup(); saveFile(bkName(), JSON.stringify(b, null, 1));
+    toast('내려받았어요. 가맹점 ' + (b.merchants || []).length + '곳 · 업무 ' + (b.tasks || []).length + '건' + (b.skipped.length ? ' (권한 밖이라 뺀 것: ' + b.skipped.join(', ') + ')' : ''));
+  } catch (e) { toast('백업 파일을 만들지 못했어요.'); }
+};
+// 이 PC 안(IndexedDB)에 하루 한 번 저절로 보관 — 관리자가 웹을 열면 실행, 14일치만 남긴다
+function idb() { return new Promise((ok, no) => { const r = indexedDB.open('nine-backup', 1); r.onupgradeneeded = () => r.result.createObjectStore('bk'); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); }); }
+async function idbDo(mode, fn) { const d = await idb(); return new Promise((ok, no) => { const t = d.transaction('bk', mode); const st = t.objectStore('bk'); const r = fn(st); t.oncomplete = () => ok(r && r.result); t.onerror = () => no(t.error); }); }
+async function autoBackup() {
+  try {
+    if (DEMO || !can('staff_manage') || !window.indexedDB) return;
+    const n = list('merchants').length; if (!n || !list('users').length) return; // 아직 다 못 받은 빈 상태는 저장하지 않는다
+    const day = todayStr().replace(/-/g, ''); const prev = Number(LS('bkcnt_' + day) || -1), last = Number(LS('bkt_' + day) || 0);
+    if (prev > n || (prev === n && Date.now() - last < 3 * 3600 * 1000)) return; // 오늘 더 많은 자료로 저장했으면 덮지 않는다
+    const b = await buildBackup(); await idbDo('readwrite', st => st.put(JSON.stringify(b), day));
+    LS('bkcnt_' + day, String(n)); LS('bkt_' + day, String(Date.now()));
+    const keys = await idbDo('readonly', st => st.getAllKeys()); const old = (keys || []).sort().slice(0, -14); if (old.length) await idbDo('readwrite', st => old.forEach(k => st.delete(k)));
+  } catch (e) {}
+}
+ACT.pcBackups = async () => {
+  if (!can('staff_manage')) return;
+  let keys = []; try { keys = (await idbDo('readonly', st => st.getAllKeys())) || []; } catch (e) {}
+  modal('<h3>이 PC에 보관된 자동 백업</h3><div class="sub">관리자가 웹앱을 열면 하루 한 번 이 PC 안에 저절로 보관돼요(14일치). 눌러서 파일로 내려받아요.</div>' +
+    (keys.length ? keys.sort().reverse().map(k => '<button class="mi" data-act="pcBackupGet" data-arg="' + k + '"><span>' + k.replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3') + '</span><em>내려받기 ›</em></button>').join('') : '<div class="empty">아직 보관된 백업이 없어요.</div>') +
+    '<button class="btn full" data-act="close">닫기</button>');
+};
+ACT.pcBackupGet = async k => { try { const t = await idbDo('readonly', st => st.get(k)); if (t) saveFile('ninefamily_autobackup_' + k + '.json', t); } catch (e) { toast('꺼내지 못했어요.'); } };
+
 // ---------- 공지 ----------
 function viewNotices() {
   const ns = list('notices').sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b.t || '').localeCompare(a.t || ''));
@@ -1052,7 +1122,7 @@ function menuItems() {
   add('회사', '사용설명서', '사용설명서 매뉴얼 도움말 사용법 설치', 'nav:all:manual'); add('회사', '버전·업데이트 내역', '버전 업데이트 내역 변경 이력', 'nav:all:about');
   add('회사', '공지사항', '공지사항 공지 알림', 'nav:all:notice', nu ? String(nu) : '');
   if (A) {
-    add('관리자', '데이터 백업 내려받기', '데이터 백업 내려받기 저장 내보내기'); add('관리자', '가맹점 보호·복원', '가맹점 보호 복원 되돌리기 삭제 복구 휴지통');
+    add('관리자', '데이터 백업 내려받기', '데이터 백업 내려받기 저장 내보내기 json', 'act:backupDownload'); add('관리자', 'PC에 보관된 자동 백업', '자동 백업 보관 PC 복원', 'act:pcBackups'); add('관리자', '가맹점 보호·복원', '가맹점 보호 복원 되돌리기 삭제 복구 휴지통');
     add('관리자', '가맹점 수정 암호', '가맹점 수정 암호 잠금 비밀번호 설정 변경', 'act:mlockSet', lk ? '설정됨' : '아직 없음');
     if (lk) add('관리자', '가맹점 수정 암호 끄기', '가맹점 수정 암호 끄기 잠금 해제', 'act:mlockOff');
     add('관리자', '직원과 권한', '직원 권한 등록 사용 중지 관리자');
@@ -1112,6 +1182,7 @@ function viewHome() {
 
 // ---------- 사용설명서 · 버전 내역 (웹) ----------
 const WEB_CHANGES = [
+  ['웹 0.0.6', '2026-10-24', ['저장 상태 표시: 서버에 저장되는 동안 ‘저장 중’, 인터넷이 끊기면 ‘저장 대기 n건’ — 연결되면 자동으로 저장돼요', '가맹점 동시 수정 보호: 수정 창을 연 사이 다른 직원(앱·다른 PC)이 같은 가맹점을 고치면 바뀐 항목을 알려 주고, 덮어쓸지 한 번 더 물어요', '가맹점 등록: 같은 사업자번호가 이미 있으면 알려 줘요', '백업: 관리자 → 데이터 백업 내려받기(PC에 파일로), 관리자가 웹을 열면 하루 한 번 이 PC 안에 자동 보관(14일치)', '매일 새벽 서버 전체 자료를 암호화해 따로 보관하는 자동 백업 준비(관리자가 비밀값을 넣으면 시작)']],
   ['웹 0.0.5', '2026-10-24', ['뒤로가기: 폰 뒤로가기·브라우저 뒤로 버튼이 앱처럼 한 단계씩 닫아요(팝업 → 대화방 → 메뉴 → 하위 화면 → 첫 화면, 첫 화면에서 한 번 더 누르면 나가요)', '빨라짐: 한 번 받은 자료를 기기에 보관해서 다음부터 바로 열리고, 인터넷이 약해도 보여요', '알림: 웹앱을 열어 둔 동안 새 업무·채팅·공지가 오면 소리·진동·안내, PC는 다른 창을 보고 있어도 브라우저 알림(전체 → 알림 받기), 탭 제목에 안 본 개수', '채팅: 사진 보기·저장, 파일 받기, 사진·파일 보내기(+ 버튼, 파일 3MB까지), PC와 아이폰 웹앱끼리 읽음 표시 맞춤', '업무 지시·일정 추가: 모든 칸에 이름표, 가맹점 조회로 거래처·전화·주소 자동 채우기', '일정: 공휴일 빨간색·이름 표시, 토요일 파란색, 오늘 버튼', '전체 메뉴: 아직 앱에서만 되는 기능은 맨 아래에 접어 두기, PC 주 메뉴에 프로젝트', '확인 창을 웹앱 모양으로, 팝업 안 안내가 버튼을 가리지 않게, 채팅 보내기 버튼·말풍선 줄바꿈 고침, 권한이 없을 때 안내']],
   ['웹 0.0.4', '2026-10-24', ['재고: 모델별 재고·출고중 수량, 안전재고 부족 표시, 재고 추가(시리얼 여러 개 한 번에)·수정·삭제, 입고·출고 단가와 보유 재고 자산(실적 권한자)', '바코드: PC는 USB·블루투스 스캐너로 찍으면 바로 입력·검색, 아이폰·휴대폰은 📷 버튼으로 카메라 스캔', '계약 관리: 만료 3개월 이내 계약 따로 보기(D-day), 계약 정보·나간 장비, 장비 추가, 설치 완료(장비가 재고에서 빠짐)', '신규 계약 올리기: 가맹점 찾기(상호·초성·사업자번호), 결제 연동(VAN/PG), 판매·CMS·렌탈과 금액, 재고에서 장비 고르기·스캔·직접 입력, 만료일 +12/24/36개월', '입금 확인: 입금 올리기·확인 처리, ‘입금확인’ 채팅방에 자동 알림', '안드로이드 앱과 같은 서버 자료라 어느 쪽에서 해도 바로 서로 보여요']],
   ['웹 0.0.3', '2026-10-24', ['화면 구성: 아이폰(휴대폰)은 안드로이드 앱과 같은 화면 — 아래 탭 업무·프로젝트·채팅·일정·전체, 나머지 기능은 전체 탭 안에', 'PC: 위쪽 가로줄에 주 메뉴(업무·채팅·일정·가맹점·응대 기록), 왼쪽 위 ☰ 를 누르면 계정·회사·일·관리자로 묶인 전체 메뉴, 왼쪽 위 나인패밀리를 누르면 홈(오늘 현황)', '가맹점 검색 고침: 한글을 치는 중에도 바로 걸러지고, 상호·초성(ㅅㅇㅍ)·사업자번호(- 없이도) 모두 찾아요. 가맹점 목록·응대 기록·채팅·메뉴 검색 모두 같아요', '가맹점: 목록과 PC 표에 전화·휴대폰·VAN사·계약이 보이고, 예전에 한 칸에 넣은 휴대폰 번호는 휴대폰번호 칸으로 이어받아요', '가맹점 삭제: ‘가맹점 등록·수정’ 권한과 암호가 있어야 해요 (목록에서만 사라지고 기록은 남아요)', '전체 메뉴에 사용설명서·버전 내역 추가, 아직 앱에서만 되는 기능은 ‘앱에서’ 로 표시']],
@@ -1136,6 +1207,8 @@ const WEB_MANUAL = [
   ['계약 · 입금', '신규 계약 올리기: 가맹점을 찾아 고르고, 구분(판매·CMS·렌탈)과 금액, 나가는 장비(재고에서 고르기·스캔·직접 입력), 계약일과 만료일을 넣어요. 고른 장비는 ‘출고중’이 돼요.\n계약 관리에서 계약을 눌러 장비를 더 넣거나 ‘설치 완료’를 누르면 장비가 재고에서 빠져요. 만료 3개월 이내 계약은 위에 따로 보여요. 실적 권한이 없으면 내가 올린 계약만 보여요.\n입금 확인: + 로 입금을 올리면 ‘입금확인’ 채팅방에 알림이 가고, 확인한 사람이 ‘확인 처리’를 눌러요.'],
   ['가맹점 응대 기록', '가맹점을 찾아 눌러서 요청사항·처리결과를 남기고 고쳐요. 누가 언제 고쳤는지 남아요.'],
   ['공지사항', '전체(☰) → 공지사항. 읽지 않은 공지는 숫자로 표시돼요.'],
+  ['백업 (관리자)', '자료는 여러 겹으로 지켜져요.\n① 서버: 지우기가 막혀 있어 ‘삭제’해도 표시만 되고, 모든 변경은 변경 기록에 따로 남아요.\n② 매일 새벽 자동 백업: 서버 전체 자료를 암호화해 90일 보관해요(관리자가 비밀값을 넣어 두면 동작).\n③ 관리자 기기: 안드로이드 앱은 폰 안에, 웹은 이 PC 안에 하루 한 번 저절로 14일치 보관해요. 전체 → 관리자 → PC에 보관된 자동 백업.\n④ 언제든 전체 → 관리자 → 데이터 백업 내려받기로 파일을 받아 드라이브 등에 따로 두세요(한 달에 한 번 이상 권장).'],
+  ['저장 상태', '저장하면 화면 위에 ‘저장 중’이 잠깐 보였다가 사라져요. 인터넷이 끊기면 ‘저장 대기’로 바뀌고, 다시 연결되면 저절로 서버에 저장돼요. 이 띠가 남아 있는 동안에는 웹앱을 닫지 마세요.\n가맹점 수정 창을 연 사이 다른 직원이 같은 가맹점을 고치면, 저장할 때 바뀐 항목을 알려 주고 덮어쓸지 한 번 더 물어요.'],
   ['아직 앱에서만 되는 기능', '단체 문자, 실적·수익, 보고, 자료실, 비상연락망, 직원과 권한, 백업, 가맹점 일괄 가져오기 등은 전체 메뉴 맨 아래 ‘아직 안드로이드 앱에서만 되는 기능’에 접혀 있어요. 웹에도 차례로 넣고 있어요.']
 ];
 function viewManual() { return '<h1>사용설명서</h1><div class="sub">나인패밀리 ' + VERSION + ' 기준</div>' + WEB_MANUAL.map(([t, b]) => '<div class="card flat"><div class="t1">' + esc(t) + '</div><div class="mtext">' + esc(b) + '</div></div>').join(''); }

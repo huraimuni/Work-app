@@ -2,7 +2,7 @@ name: Build APK
 on:
   push:
     branches: [main]
-    paths-ignore: ['web/**', '.github/workflows/web.yml']
+    paths-ignore: ['web/**', '.github/workflows/web.yml', 'tools/**', '.github/workflows/backup.yml', '*.md']
   workflow_dispatch:
 permissions:
   contents: write

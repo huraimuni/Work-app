@@ -1,0 +1,61 @@
+name: Daily data backup
+# 매일 새벽 Firestore 전체 자료를 받아 암호화(AES-256)해 90일 보관한다. (폰·PC와 따로 있는 바깥 백업)
+# 필요한 저장소 비밀값(Settings → Secrets and variables → Actions):
+#   FIREBASE_SERVICE_ACCOUNT  Firebase 콘솔 → 프로젝트 설정 → 서비스 계정 → '새 비공개 키 생성'으로 받은 JSON 전체
+#   BACKUP_PASSWORD           백업 파일 암호 (잃어버리면 백업을 열 수 없음)
+# 비밀값이 없으면 아무것도 하지 않고 성공으로 끝난다.
+on:
+  schedule:
+    - cron: '7 18 * * *' # 한국 시간 매일 새벽 3시 7분
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: backup
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check secrets
+        id: chk
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          PW: ${{ secrets.BACKUP_PASSWORD }}
+        run: |
+          if [ -z "$SA" ] || [ -z "$PW" ]; then
+            echo "::warning::백업용 비밀값(FIREBASE_SERVICE_ACCOUNT, BACKUP_PASSWORD)이 아직 없어서 이번 백업은 건너뜁니다."
+            echo "ok=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=1" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.chk.outputs.ok == '1'
+      - uses: actions/setup-node@v4
+        if: steps.chk.outputs.ok == '1'
+        with:
+          node-version: '20'
+      - name: Export Firestore
+        if: steps.chk.outputs.ok == '1'
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          cd tools/backup
+          npm install --no-audit --no-fund --silent
+          node export.js "$RUNNER_TEMP/backup.json"
+      - name: Encrypt
+        if: steps.chk.outputs.ok == '1'
+        env:
+          PW: ${{ secrets.BACKUP_PASSWORD }}
+        run: |
+          STAMP=$(TZ=Asia/Seoul date +%Y%m%d_%H%M)
+          gzip -9 "$RUNNER_TEMP/backup.json"
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -in "$RUNNER_TEMP/backup.json.gz" -out "$RUNNER_TEMP/nine-family_$STAMP.json.gz.enc" -pass env:PW
+          rm -f "$RUNNER_TEMP/backup.json.gz"
+          echo "STAMP=$STAMP" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        if: steps.chk.outputs.ok == '1'
+        with:
+          name: backup-${{ env.STAMP }}
+          path: ${{ runner.temp }}/nine-family_*.json.gz.enc
+          retention-days: 90
+          if-no-files-found: error
