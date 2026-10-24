@@ -2,7 +2,7 @@
 /* 나인패밀리 웹앱 — 앱과 같은 Firebase(nine-family)를 쓴다. 문서는 {j: JSON문자열, u: 시각} 형식. */
 const CFG = {apiKey: 'AIzaSyCsA-M6QGGGk0owyDXzziv1X79TqF5NptI', authDomain: 'nine-family.firebaseapp.com', projectId: 'nine-family',
   storageBucket: 'nine-family.firebasestorage.app', messagingSenderId: '48232341344', appId: '1:48232341344:web:19be016c9c1c1de5a34805'};
-const VERSION = '웹 0.0.4';
+const VERSION = '웹 0.0.5';
 const DEMO = location.hash === '#demo';
 const COLLS = ['users', 'tasks', 'notices', 'projects', 'events', 'merchants', 'rooms', 'msgs', 'profiles', 'mlogs', 'config', 'stock', 'contracts', 'deposits', 'costs'];
 const TYPES = ['신규 설치', 'AS', '영업 방문', '서류 접수', '카드사 서류', '기타'];
@@ -92,6 +92,7 @@ function attach() {
     if (priv) q = q.where('mem', 'array-contains', S.phone);
     if (coll === 'contracts' && !canPerf()) q = q.where('who', '==', S.uid); // 실적 권한이 없으면 내 계약만
     if (srv === 'msgs') q = q.orderBy('u', 'desc').limit(400);
+    let first = true;
     unsubs.push(q.onSnapshot(snap => {
       let ch = false;
       snap.docChanges().forEach(dc => {
@@ -100,14 +101,66 @@ function attach() {
         try {
           const o = JSON.parse(j);
           if (S.pushed[coll + '/' + o.id] === j) return;
+          const prev = S.data[coll].get(o.id);
           S.pushed[coll + '/' + o.id] = j; S.data[coll].set(o.id, o); ch = true;
+          if (!first) watchNew(coll, o, prev);
         } catch (e) {}
       });
+      first = false;
+      if (coll === 'users' && !snap.metadata.fromCache) { refreshMe(); if (!S.me) return noProfile(); }
       if (ch) { S.ready = true; if (S.me === null || coll === 'users') refreshMe(); later(); }
     }, err => console.warn(srv, err.code)));
   });
 }
 function refreshMe() { if (S.uid) { const u = user(S.uid); if (u) S.me = u; } }
+
+
+// ---------- 알림 (웹앱을 열어 둔 동안) ----------
+// 화면이 꺼져 있거나 웹앱을 닫았을 때 오는 진짜 푸시 알림은 Blaze 전환 뒤 서버(FCM)가 있어야 한다.
+// 그 전까지: 열어 둔 동안 새 업무·채팅·공지가 오면 소리·진동·화면 안내, PC는 다른 창을 보고 있어도 브라우저 알림, 탭 제목에 숫자.
+const soundOn = () => LS('snd_' + S.uid) !== '0';
+let actx = null;
+function beep() {
+  if (!soundOn()) return;
+  try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); const o = actx.createOscillator(), g = actx.createGain(); o.frequency.value = 880; g.gain.setValueAtTime(0.15, actx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.35); o.connect(g); g.connect(actx.destination); o.start(); o.stop(actx.currentTime + 0.35); } catch (e) {}
+  if (navigator.vibrate) navigator.vibrate(120);
+}
+function notify(title, body, go) {
+  beep();
+  if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+    try { const n = new Notification(title, {body, icon: 'icon-192.png', tag: title}); n.onclick = () => { window.focus(); go(); n.close(); }; return; } catch (e) {}
+  }
+  toast(title + ' — ' + body);
+}
+function watchNew(coll, o, prev) {
+  if (!S.me || o.deleted) return;
+  if (coll === 'msgs' && !prev && o.who !== S.uid && o.ts > Date.now() - 5 * 60000 && !(S.room === o.room && !document.hidden)) {
+    const r = byId('rooms', o.room); notify('💬 ' + (r ? roomTitle(r) : '채팅'), uname(o.who) + ': ' + msgText(o), () => { S.tab = 'chat'; S.sub = ''; S.room = o.room; render(); });
+  }
+  if (coll === 'tasks' && o.assignee === S.uid && o.status === '지시됨' && o.creator !== S.uid && (!prev || prev.assignee !== S.uid)) {
+    notify('📋 새 업무', o.title + ' (' + uname(o.creator) + ')', () => { S.tab = 'task'; S.sub = ''; render(); ACT.task(o.id); });
+  }
+  if (coll === 'notices' && !prev && o.author !== S.uid) notify('📢 새 공지', o.title, () => { S.tab = 'all'; S.sub = 'notice'; render(); ACT.notice(o.id); });
+}
+function syncTitle(n) { document.title = (n ? '(' + n + ') ' : '') + '나인패밀리'; }
+
+// ---------- 뒤로가기 (폰 뒤로가기 · 브라우저 뒤로 버튼) ----------
+// 안드로이드 앱처럼 한 단계씩 닫는다: 카메라 → 팝업 → 대화방 → 전체 메뉴 → 하위 화면 → 첫 화면. 첫 화면에서 한 번 더 누르면 나간다.
+let navArmed = false;
+function armBack() { if (navArmed || S.exitWarn || DEMO && !S.me) return; try { history.pushState({nine: 1}, ''); navArmed = true; } catch (e) {} }
+function stepBack() {
+  if (window.scanStop) { window.scanStop(); return true; }
+  if ($('#modal')) { closeModal(); return true; }
+  if (S.room) { ACT.leave(); return true; }
+  if (S.menu) { S.menu = false; render(); return true; }
+  if (S.sub) { if (isWide()) ACT.home(); else { S.sub = ''; render(); } return true; }
+  if (S.tab !== 'task') { ACT.home(); return true; }
+  return false;
+}
+window.addEventListener('popstate', () => {
+  navArmed = false; if (!S.me) return;
+  if (stepBack()) armBack(); else { S.exitWarn = true; toast('한 번 더 누르면 나가요.'); }
+});
 
 // ---------- 로그인 ----------
 let confirmation = null, verifier = null;
@@ -165,8 +218,12 @@ async function afterLogin(fu) {
     if (!pd.exists || pd.get('active') !== true) { await auth.signOut(); return loginView('phone', '등록되지 않은 번호입니다. 관리자에게 등록을 요청해 주세요.'); }
     S.uid = Number(pd.get('uid')); S.caps = {perf: !!pd.get('perf'), admin: !!pd.get('admin')};
     attach(); render();
-    setTimeout(() => { if (!S.me) { $('#root').innerHTML = '<div class="login"><h1>처음 오셨나요?</h1><div class="sub">직원 정보가 아직 없어요. 앱에서 한 번 로그인한 뒤 다시 열어 주세요.</div><button class="btn full" id="lo">로그아웃</button></div>'; $('#lo').onclick = logout; } }, 8000);
+    setTimeout(() => { if (!S.me && !S.noProfile) { $('#root').innerHTML = '<div class="login"><h1>불러오는 중…</h1><div class="sub">인터넷이 느려서 시간이 걸리고 있어요. 잠시만 기다려 주세요.</div><button class="btn full" id="rl">다시 불러오기</button></div>'; $('#rl').onclick = () => location.reload(); } }, 12000);
   } catch (e) { toast('내 정보를 불러오지 못했어요.'); loginView('phone', '내 정보를 불러오지 못했어요. 다시 시도해 주세요.'); }
+}
+function noProfile() { // 서버에서 받은 직원 목록에 내가 없을 때만 (느린 인터넷을 '처음 왔다'로 오해하지 않게)
+  S.noProfile = true;
+  $('#root').innerHTML = '<div class="login"><h1>처음 오셨나요?</h1><div class="sub">직원 정보가 아직 없어요. 앱에서 한 번 로그인한 뒤 다시 열어 주세요.</div><button class="btn full" id="lo">로그아웃</button></div>'; $('#lo').onclick = logout;
 }
 async function logout() {
   unsubs.forEach(u => u()); unsubs = [];
@@ -179,7 +236,7 @@ async function logout() {
 // 휴대폰(아이폰)은 안드로이드 앱과 같은 화면: 아래 탭 5개(업무·프로젝트·채팅·일정·전체), 나머지 기능은 '전체' 탭 안에 있다.
 // PC(넓은 화면)는 토스포스 방식: 위쪽 가로줄에 주 메뉴, 왼쪽 위 ☰ 를 누르면 영역별 전체 메뉴가 펼쳐진다.
 const NAVPHONE = [['task', '업무', 'task', ''], ['project', '프로젝트', 'project', ''], ['chat', '채팅', 'chat', ''], ['calendar', '일정', 'calendar', ''], ['all', '전체', 'all', '']];
-const NAVPC = [['task', '업무', 'task', ''], ['chat', '채팅', 'chat', ''], ['calendar', '일정', 'calendar', ''], ['merchants', '가맹점', 'all', 'merchants'], ['logs', '응대 기록', 'all', 'logs']];
+const NAVPC = [['task', '업무', 'task', ''], ['project', '프로젝트', 'project', ''], ['chat', '채팅', 'chat', ''], ['calendar', '일정', 'calendar', ''], ['merchants', '가맹점', 'all', 'merchants'], ['logs', '응대 기록', 'all', 'logs']];
 const isWide = () => window.innerWidth >= 900;
 function newTaskCount() { return list('tasks').filter(t => t.assignee === S.uid && t.status === '지시됨').length; }
 function bodyHTML() {
@@ -196,6 +253,7 @@ function render() {
   const keepScroll = $('.scroll') ? $('.scroll').scrollTop : 0;
   const act = document.activeElement; const focusId = act && act.id; const selPos = act && act.selectionStart; const focusVal = act && act.value;
   const badges = {task: newTaskCount(), all: unreadNotices(), chat: unreadTotal()};
+  syncTitle(badges.task + badges.all + badges.chat); armBack();
   const k = S.sub || S.tab;
   const on = key => wide ? !S.menu && k === key : (key === 'all' ? S.tab === 'all' : k === key);
   const btn = ([key, lb, tab, sub]) => { const n = badges[key]; return '<button data-nav="' + tab + '" data-sub="' + sub + '" class="' + (on(key) ? 'on' : '') + '"><span class="t">' + lb + '</span>' + (n ? '<span class="badge">' + n + '</span>' : '') + '</button>'; };
@@ -211,7 +269,7 @@ function render() {
   syncInstall();
   bind(root);
   const sc = $('.scroll'); if (sc) sc.scrollTop = keepScroll;
-  const ms = $('#msgbox'); if (ms) ms.scrollTop = ms.scrollHeight;
+  const ms = $('#msgbox'); if (ms) { ms.scrollTop = ms.scrollHeight; loadImages(); }
   if (focusId && $('#' + focusId) && $('#' + focusId).closest('#root')) { const el = $('#' + focusId); if (focusVal != null && el.tagName !== 'SELECT') el.value = focusVal; el.focus(); try { el.setSelectionRange(selPos, selPos); } catch (e) {} }
 }
 // 검색칸은 그대로 두고 결과(.qres)만 바꾼다 → 한글을 치는 중(조합 중)에도 바로 걸러지고 입력이 끊기지 않는다
@@ -243,6 +301,7 @@ function fab() {
 }
 function bind(root) {
   root.onclick = ev => {
+    S.exitWarn = false;
     const n = ev.target.closest('[data-nav]'); if (n) { S.tab = n.dataset.nav; S.sub = n.dataset.sub || ''; S.room = 0; S.menu = false; return render(); }
     const a = ev.target.closest('[data-act]'); if (a) { ACT[a.dataset.act] && ACT[a.dataset.act](a.dataset.arg, a, ev); }
   };
@@ -254,6 +313,11 @@ function bind(root) {
   root.addEventListener('compositionend', ev => { S.comp = false; apply(ev.target); });
 }
 const ACT = {};
+ACT.notifyOn = () => {
+  if (!('Notification' in window)) { toast('이 기기는 브라우저 알림을 못 써요. 웹앱을 열어 둔 동안 소리·진동으로 알려 드려요.'); return; }
+  Notification.requestPermission().then(r => { toast(r === 'granted' ? '알림을 켰어요. 웹앱을 열어 둔 동안 새 업무·채팅·공지를 알려 드려요.' : '알림이 꺼져 있어요. 브라우저 설정에서 이 사이트 알림을 허용해 주세요.'); render(); });
+};
+ACT.soundToggle = () => { LS('snd_' + S.uid, soundOn() ? '0' : '1'); toast(soundOn() ? '알림 소리를 켰어요.' : '알림 소리를 껐어요.'); render(); };
 
 // ---------- 업무 ----------
 function stColor(s) { return {'지시됨': ['#fff1db', '#8a5200'], '진행중': ['#f7efd9', '#8f6b14'], '보류': ['#ffe9e5', '#b3261e'], '완료': ['#e3f6ee', '#0b7a55']}[s] || ['#eef0f4', '#4a4f5e']; }
@@ -298,13 +362,13 @@ ACT.tstatus = a => {
   const [id, st] = a.split('|'); const t = byId('tasks', id); if (!t || t.status === st) return;
   t.status = st; tlog(t, '상태 → ' + st); put('tasks', t); closeModal(); render(); toast('바꿨어요.');
 };
-ACT.thold = id => formModal('보류·연기', '<div class="sub">다시 할 날짜를 정하면 일정 달력도 같이 바뀌어요. (정하지 않아도 돼요)</div><input type="date" id="f_d"><input type="time" id="f_t">', () => {
+ACT.thold = id => formModal('보류·연기', '<div class="sub">다시 할 날짜를 정하면 일정 달력도 같이 바뀌어요. (정하지 않아도 돼요)</div><label class="fl" for="f_d">다시 할 날짜 (선택)</label><input type="date" id="f_d"><label class="fl" for="f_t">시간 (선택)</label><input type="time" id="f_t">', () => {
   const t = byId('tasks', id); const d = $('#f_d').value, tm = $('#f_t').value;
   t.status = '보류'; tlog(t, '상태 → 보류');
   if (d) { const nd = d + (tm ? ' ' + tm : ''); tlog(t, '일정 변경 ' + (t.due || '없음') + ' → ' + nd); t.due = nd; }
   put('tasks', t); render(); toast('보류로 바꿨어요.'); return true;
 }, '보류하기');
-ACT.tresched = id => formModal('일정 다시 잡기', '<input type="date" id="f_d"><input type="time" id="f_t">', () => {
+ACT.tresched = id => formModal('일정 다시 잡기', '<label class="fl" for="f_d">날짜 (필수)</label><input type="date" id="f_d"><label class="fl" for="f_t">시간 (선택)</label><input type="time" id="f_t">', () => {
   const d = $('#f_d').value, tm = $('#f_t').value; if (!d) return warn('날짜를 골라 주세요.');
   const t = byId('tasks', id); const nd = d + (tm ? ' ' + tm : ''); tlog(t, '일정 변경 ' + (t.due || '없음') + ' → ' + nd); t.due = nd; put('tasks', t); render(); toast('일정을 바꿨어요.'); return true;
 }, '변경');
@@ -314,7 +378,9 @@ ACT.tdone = id => formModal('완료 처리', '<div class="sub">처리 결과를 
 }, '완료 처리');
 ACT.newTask = () => {
   const staff = list('users').filter(u => u.active !== false && (can('task_assign') || u.id === S.uid));
-  formModal('업무 지시', '<input id="f_t1" placeholder="업무 제목 (필수)"><select id="f_ty">' + TYPES.map(x => '<option>' + x + '</option>').join('') + '</select><input id="f_c" placeholder="거래처(상호)"><input id="f_p" type="tel" placeholder="매장 전화"><input id="f_a" placeholder="매장 주소"><input id="f_d" type="date"><input id="f_tm" type="time"><textarea id="f_m" placeholder="메모"></textarea><div class="sub" style="margin-top:8px">담당 직원</div><select id="f_w">' + staff.map(u => '<option value="' + u.id + '"' + (u.id === S.uid ? ' selected' : '') + '>' + esc(u.name) + '</option>').join('') + '</select>', () => {
+  formModal('업무 지시', '<label class="fl" for="f_t1">업무 제목 (필수)</label><input id="f_t1" placeholder="예: A마트 포스 설치"><label class="fl" for="f_ty">종류</label><select id="f_ty">' + TYPES.map(x => '<option>' + x + '</option>').join('') + '</select>' + MP_FILL +
+    '<label class="fl" for="f_c">거래처 (상호)</label><input id="f_c" placeholder="가맹점을 고르면 자동으로 채워져요"><label class="fl" for="f_p">매장 전화</label><input id="f_p" type="tel" placeholder="예: 062-123-4567"><label class="fl" for="f_a">매장 주소</label><input id="f_a" placeholder="예: 광주 동구 …">' +
+    '<label class="fl" for="f_d">기한 날짜 (선택 — 고르면 일정 달력에도 표시돼요)</label><input id="f_d" type="date"><label class="fl" for="f_tm">기한 시간 (선택)</label><input id="f_tm" type="time"><label class="fl" for="f_m">메모</label><textarea id="f_m" placeholder="메모"></textarea><label class="fl" for="f_w">담당 직원</label><select id="f_w">' + staff.map(u => '<option value="' + u.id + '"' + (u.id === S.uid ? ' selected' : '') + '>' + esc(u.name) + '</option>').join('') + '</select>', () => {
     const ti = $('#f_t1').value.trim(); if (!ti) return warn('업무 제목을 입력해 주세요.');
     const d = $('#f_d').value, tm = $('#f_tm').value; const as = Number($('#f_w').value);
     const t = create('tasks', {title: ti, type: $('#f_ty').value, client: $('#f_c').value.trim(), phone: $('#f_p').value.trim(), addr: $('#f_a').value.trim(), due: d ? d + (tm ? ' ' + tm : '') : '', memo: $('#f_m').value.trim(), assignee: as, creator: S.uid, status: '지시됨', history: []});
@@ -322,6 +388,7 @@ ACT.newTask = () => {
     if (d) { const p = d.split('-'); S.calY = +p[0]; S.calM = +p[1]; S.calSel = d; }
     render(); toast(uname(as) + '님에게 업무를 지시했습니다.'); return true;
   }, '지시하기');
+  wireMerchantPicker(m => { const n = mNums(m); $('#f_c').value = m.name || ''; $('#f_p').value = n.phone || n.mobile || ''; $('#f_a').value = m.addr || ''; });
 };
 
 // ---------- 프로젝트 ----------
@@ -352,7 +419,7 @@ ACT.padd = id => { const v = $('#f_i').value.trim(); if (!v) return; const p = b
 ACT.prevert = id => { const p = byId('projects', id); const it = p.items || []; for (let i = it.length - 1; i >= 0; i--) if (it[i].done) { it[i].done = false; break; } psave(p); ACT.project(id); render(); toast('진행중으로 되돌렸어요.'); };
 ACT.newProject = () => {
   const staff = list('users').filter(u => u.active !== false);
-  formModal('프로젝트 만들기', '<input id="f_t1" placeholder="프로젝트 이름 (필수)"><input id="f_d" type="date"><textarea id="f_m" placeholder="메모"></textarea><textarea id="f_i" placeholder="체크리스트 (한 줄에 항목 하나, 선택)"></textarea><div class="sub" style="margin-top:8px">담당자</div><select id="f_w">' + staff.map(u => '<option value="' + u.id + '"' + (u.id === S.uid ? ' selected' : '') + '>' + esc(u.name) + '</option>').join('') + '</select>', () => {
+  formModal('프로젝트 만들기', '<label class="fl" for="f_t1">프로젝트 이름 (필수)</label><input id="f_t1" placeholder="예: 10월 신규 가맹점 20곳"><label class="fl" for="f_d">마감일 (선택)</label><input id="f_d" type="date"><label class="fl" for="f_m">메모</label><textarea id="f_m" placeholder="메모"></textarea><label class="fl" for="f_i">체크리스트 (한 줄에 항목 하나, 선택)</label><textarea id="f_i" placeholder="예: 리스트 정리&#10;방문 10곳"></textarea><label class="fl" for="f_w">담당자</label><select id="f_w">' + staff.map(u => '<option value="' + u.id + '"' + (u.id === S.uid ? ' selected' : '') + '>' + esc(u.name) + '</option>').join('') + '</select>', () => {
     const ti = $('#f_t1').value.trim(); if (!ti) return warn('프로젝트 이름을 입력해 주세요.');
     const items = $('#f_i').value.split('\n').map(s => s.trim()).filter(Boolean).map(t => ({t, done: false}));
     const p = create('projects', {title: ti, due: $('#f_d').value, memo: $('#f_m').value.trim(), owner: Number($('#f_w').value), pct: 0, check: false, notes: []});
@@ -361,6 +428,9 @@ ACT.newProject = () => {
 };
 
 // ---------- 일정 ----------
+// 공휴일: 앱의 Holidays.java 와 같은 목록 (2026~2028)
+const HOL = {};
+'2026-1-1 신정;2026-2-16 설날 연휴;2026-2-17 설날;2026-2-18 설날 연휴;2026-3-1 삼일절;2026-3-2 대체공휴일;2026-5-5 어린이날;2026-5-24 부처님오신날;2026-5-25 대체공휴일;2026-6-3 지방선거;2026-6-6 현충일;2026-8-15 광복절;2026-8-17 대체공휴일;2026-9-24 추석 연휴;2026-9-25 추석;2026-9-26 추석 연휴;2026-10-3 개천절;2026-10-5 대체공휴일;2026-10-9 한글날;2026-12-25 성탄절;2027-1-1 신정;2027-2-5 설날 연휴;2027-2-6 설날;2027-2-7 설날 연휴;2027-2-8 대체공휴일;2027-3-1 삼일절;2027-5-5 어린이날;2027-5-13 부처님오신날;2027-6-6 현충일;2027-8-15 광복절;2027-8-16 대체공휴일;2027-9-14 추석 연휴;2027-9-15 추석;2027-9-16 추석 연휴;2027-10-3 개천절;2027-10-4 대체공휴일;2027-10-9 한글날;2027-10-11 대체공휴일;2027-12-25 성탄절;2027-12-27 대체공휴일;2028-1-1 신정;2028-1-25 설날 연휴;2028-1-26 설날;2028-1-27 설날 연휴;2028-3-1 삼일절;2028-4-12 국회의원선거;2028-5-2 부처님오신날;2028-5-5 어린이날;2028-6-6 현충일;2028-8-15 광복절;2028-10-2 추석 연휴;2028-10-3 추석·개천절;2028-10-4 추석 연휴;2028-10-5 대체공휴일;2028-10-9 한글날;2028-12-25 성탄절'.split(';').forEach(x => { const [d, ...n] = x.split(' '); const [y, m, dd] = d.split('-'); HOL[y + '-' + pad(+m) + '-' + pad(+dd)] = n.join(' '); });
 function viewCalendar() {
   const now = new Date();
   if (!S.calY) { S.calY = now.getFullYear(); S.calM = now.getMonth() + 1; S.calSel = todayStr(); }
@@ -372,32 +442,54 @@ function viewCalendar() {
   let cells = ''; for (let i = 0; i < first; i++) cells += '<td></td>';
   for (let d = 1; d <= days; d++) {
     const k = S.calY + '-' + pad(S.calM) + '-' + pad(d); const dow = (first + d - 1) % 7;
-    cells += '<td class="' + (k === S.calSel ? 'sel ' : '') + (k === todayStr() ? 'today ' : '') + (dow === 0 ? 'sun' : '') + '" data-act="calsel" data-arg="' + k + '"><div>' + d + (ev[k] ? '<i></i>' : '') + '</div></td>';
+    cells += '<td class="' + (k === S.calSel ? 'sel ' : '') + (k === todayStr() ? 'today ' : '') + (dow === 0 || HOL[k] ? 'sun' : dow === 6 ? 'sat' : '') + '" data-act="calsel" data-arg="' + k + '"' + (HOL[k] ? ' title="' + HOL[k] + '"' : '') + '><div>' + d + (ev[k] ? '<i></i>' : '') + '</div></td>';
     if (dow === 6 && d < days) cells += '</tr><tr>';
   }
   const sel = (ev[S.calSel] || []).sort((a, b) => (a.time || '').localeCompare(b.time || ''));
-  return '<div class="row" style="margin-top:18px"><button class="btn" data-act="calmove" data-arg="-1" style="margin:0">‹</button><div class="grow t1" style="text-align:center;font-size:19px">' + S.calY + '년 ' + S.calM + '월</div><button class="btn" data-act="calmove" data-arg="1" style="margin:0">›</button></div>' +
+  return '<div class="row" style="margin-top:18px"><button class="btn" data-act="calmove" data-arg="-1" style="margin:0" aria-label="이전 달">‹</button><div class="grow t1" style="text-align:center;font-size:19px">' + S.calY + '년 ' + S.calM + '월</div><button class="btn" data-act="caltoday" style="margin:0">오늘</button><button class="btn" data-act="calmove" data-arg="1" style="margin:0" aria-label="다음 달">›</button></div>' +
     '<table class="cal"><tr>' + ['일', '월', '화', '수', '목', '금', '토'].map(x => '<th>' + x + '</th>').join('') + '</tr><tr>' + cells + '</tr></table>' +
-    '<h2>' + esc(S.calSel) + '</h2>' + (sel.length ? sel.map(o => '<div class="card ' + (o.kind === 'e' ? 'flat' : '') + '" ' + (o.kind === 't' ? 'data-act="task" data-arg="' + o.id + '"' : '') + '><div class="row"><div class="tile">' + (o.kind === 't' ? '업무' : '일정') + '</div><div class="grow"><div class="t1">' + esc(o.t) + '</div><div class="t2">' + esc((o.time ? o.time + ' · ' : '') + (o.sub || '')) + '</div></div></div></div>').join('') : '<div class="empty">이 날은 일정이 없어요.</div>');
+    (can('staff_manage') ? '' : '<div class="sub" style="margin-top:6px">일정 추가는 관리자만 할 수 있어요. (업무에 기한 날짜를 넣으면 달력에 표시돼요)</div>') +
+    '<h2>' + esc(S.calSel) + (HOL[S.calSel] ? ' <span style="color:var(--red)">' + esc(HOL[S.calSel]) + '</span>' : '') + '</h2>' + (sel.length ? sel.map(o => '<div class="card ' + (o.kind === 'e' ? 'flat' : '') + '" ' + (o.kind === 't' ? 'data-act="task" data-arg="' + o.id + '"' : '') + '><div class="row"><div class="tile">' + (o.kind === 't' ? '업무' : '일정') + '</div><div class="grow"><div class="t1">' + esc(o.t) + '</div><div class="t2">' + esc((o.time ? o.time + ' · ' : '') + (o.sub || '')) + '</div></div></div></div>').join('') : '<div class="empty">이 날은 일정이 없어요.</div>');
 }
 ACT.calsel = d => { S.calSel = d; render(); };
+ACT.caltoday = () => { const t = todayStr().split('-'); S.calY = +t[0]; S.calM = +t[1]; S.calSel = todayStr(); render(); };
 ACT.calmove = a => { S.calM += Number(a); if (S.calM < 1) { S.calM = 12; S.calY--; } if (S.calM > 12) { S.calM = 1; S.calY++; } render(); };
-ACT.newEvent = () => formModal('일정 추가', '<input id="f_t1" placeholder="일정 제목 (필수)"><input id="f_d" type="date" value="' + (S.calSel || todayStr()) + '"><input id="f_tm" type="time"><input id="f_p" placeholder="장소·주소">', () => {
-  const ti = $('#f_t1').value.trim(), d = $('#f_d').value; if (!ti || !d) return warn('제목과 날짜를 확인해 주세요.');
-  put('events', create('events', {date: d, title: ti, who: S.uid, time: $('#f_tm').value, place: $('#f_p').value.trim()})); S.calSel = d; render(); toast('일정을 남겼어요.'); return true;
-}, '추가');
+ACT.newEvent = () => {
+  let mer = null;
+  formModal('일정 추가', '<label class="fl" for="f_t1">일정 제목 (필수)</label><input id="f_t1" placeholder="예: 본사 회의"><label class="fl" for="f_d">날짜 (필수)</label><input id="f_d" type="date" value="' + (S.calSel || todayStr()) + '"><label class="fl" for="f_tm">시간 (선택)</label><input id="f_tm" type="time">' + MP_FILL.replace('고르면 거래처·전화·주소가 자동으로 채워져요', '고르면 장소에 가맹점 주소가 들어가요') + '<label class="fl" for="f_p">장소·주소</label><input id="f_p" placeholder="예: 광주지사">', () => {
+    const ti = $('#f_t1').value.trim(), d = $('#f_d').value; if (!ti || !d) return warn('제목과 날짜를 확인해 주세요.');
+    const e = create('events', {date: d, title: ti, who: S.uid, time: $('#f_tm').value, place: $('#f_p').value.trim()}); if (mer) e.merchant = mer.id;
+    put('events', e); S.calSel = d; render(); toast('일정을 남겼어요.'); return true;
+  }, '추가');
+  wireMerchantPicker(m => { mer = m; if (m.addr) $('#f_p').value = m.addr; });
+};
 
 // ---------- 채팅 ----------
 const LS = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) {} return null; };
-const readAt = r => { const v = LS('rd_' + S.uid + '_' + r); if (v) return Number(v); let i = LS('rdinit_' + S.uid); if (!i) { i = Date.now(); LS('rdinit_' + S.uid, String(i)); } return Number(i); };
-function markRead(r) { if (!r) return; let mx = readAt(r); list('msgs').forEach(m => { if (m.room === r && m.ts > mx) mx = m.ts; }); LS('rd_' + S.uid + '_' + r, String(mx)); }
+// 읽은 위치: 이 기기(localStorage)와 내 프로필 문서(rd: {방: 시각}) 중 늦은 쪽 → PC에서 읽으면 아이폰 웹앱에서도 읽음으로 바뀐다
+const myProf = () => byId('profiles', S.uid);
+const readAt = r => {
+  const v = Number(LS('rd_' + S.uid + '_' + r) || 0); const pr = myProf(); const sv = pr && pr.rd ? Number(pr.rd[r] || 0) : 0;
+  if (v || sv) return Math.max(v, sv);
+  let i = LS('rdinit_' + S.uid); if (!i) { i = Date.now(); LS('rdinit_' + S.uid, String(i)); } return Number(i);
+};
+let rdQ = {}, rdT = 0;
+function markRead(r) {
+  if (!r) return; const was = readAt(r); let mx = was; list('msgs').forEach(m => { if (m.room === r && m.ts > mx) mx = m.ts; });
+  LS('rd_' + S.uid + '_' + r, String(mx)); if (mx > was) { rdQ[r] = mx; clearTimeout(rdT); rdT = setTimeout(flushRead, 4000); }
+}
+function flushRead() { // 서버에는 모아서 가끔만 쓴다
+  clearTimeout(rdT); const ks = Object.keys(rdQ); if (!ks.length || DEMO || !S.uid) return;
+  const pr = myProf() || {id: S.uid}; pr.rd = Object.assign({}, pr.rd || {}); ks.forEach(k => { if (!(pr.rd[k] >= rdQ[k])) pr.rd[k] = rdQ[k]; }); rdQ = {}; put('profiles', pr);
+}
+document.addEventListener('visibilitychange', () => { if (document.hidden) flushRead(); });
 function unreadMap() { const o = {}, since = {}; list('rooms').forEach(r => since[r.id] = readAt(r.id)); list('msgs').forEach(m => { if (since[m.room] != null && m.ts > since[m.room] && m.who !== S.uid) o[m.room] = (o[m.room] || 0) + 1; }); return o; }
 function unreadTotal() { if (!S.me) return 0; return Object.values(unreadMap()).reduce((a, b) => a + b, 0); }
 function unreadNotices() { return list('notices').filter(n => !(n.readBy || []).includes(S.uid)).length; }
 function dmOther(r) { return (r.members || []).find(x => x !== S.uid) || 0; }
 function roomTitle(r) { return r.dm ? (dmOther(r) ? uname(dmOther(r)) : '나와의 대화') : (r.name || ''); }
 function lastMsg(rid) { let b = null; list('msgs').forEach(m => { if (m.room === rid && (!b || m.ts > b.ts)) b = m; }); return b; }
-function msgText(m) { if (m.kind === 'img') return '📷 사진'; if (m.kind === 'stk') return '스티커'; if (m.kind === 'file') return '📎 ' + (m.fname || '파일'); return m.text || ''; }
+function msgText(m) { if (m.kind === 'img') return '📷 사진'; if (m.kind === 'stk') return '스티커 (앱에서 보여요)'; if (m.kind === 'file') return '📎 ' + (m.fname || '파일'); return m.text || ''; }
 function viewChat() {
   const rooms = list('rooms').map(r => ({r, last: lastMsg(r.id)})).filter(x => x.last || x.r.id === S.room).sort((a, b) => (b.last ? b.last.ts : 0) - (a.last ? a.last.ts : 0));
   const un = unreadMap();
@@ -420,10 +512,70 @@ function viewChat() {
     const d = new Date(m.ts); const day = d.getFullYear() + '년 ' + (d.getMonth() + 1) + '월 ' + d.getDate() + '일';
     if (day !== lastDay) { lastDay = day; html += '<div class="day"><span>' + day + '</span></div>'; }
     const me = m.who === S.uid;
-    html += '<div class="m ' + (me ? 'me' : '') + '"><div>' + (me || room.dm ? '' : '<div class="who">' + esc(uname(m.who)) + '</div>') + '<div class="bub">' + (m.rto ? '<div class="rto">' + esc((uname(m.rto.who)) + ': ' + (m.rto.text || '')) + '</div>' : '') + esc(msgText(m)) + '</div><div class="who" style="' + (me ? 'text-align:right' : '') + '">' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + '</div></div></div>';
+    html += '<div class="m ' + (me ? 'me' : '') + '"><div>' + (me || room.dm ? '' : '<div class="who">' + esc(uname(m.who)) + '</div>') + '<div class="bub' + (m.kind === 'img' ? ' pic' : '') + '">' + (m.rto ? '<div class="rto">' + esc((uname(m.rto.who)) + ': ' + (m.rto.text || '')) + '</div>' : '') + msgBody(m) + '</div><div class="who" style="' + (me ? 'text-align:right' : '') + '">' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + '</div></div></div>';
   });
-  const roomView = '<div class="chatroom"><div class="hdr"><button data-act="leave">‹</button><div class="grow t1">' + esc(roomTitle(room)) + (room.grp ? ' <span class="sub">(' + (room.members || []).length + '명)</span>' : '') + '</div></div><div class="msgs" id="msgbox">' + (html || '<div class="empty">첫 메시지를 남겨 보세요.</div>') + '</div><div class="send"><input id="msgin" placeholder="메시지 입력" autocomplete="off"><button data-act="send">보내기</button></div></div>';
+  const roomView = '<div class="chatroom"><div class="hdr"><button data-act="leave">‹</button><div class="grow t1">' + esc(roomTitle(room)) + (room.grp ? ' <span class="sub">(' + (room.members || []).length + '명)</span>' : '') + '</div></div><div class="msgs" id="msgbox">' + (html || '<div class="empty">첫 메시지를 남겨 보세요.</div>') + '</div><div class="send"><button class="plus" data-act="attach" aria-label="사진·파일 보내기">+</button><input id="msgin" placeholder="메시지 입력" autocomplete="off"><button data-act="send">보내기</button></div><input type="file" id="fpick" hidden></div>';
   return wide ? '<div class="chatwrap">' + lst + roomView + '</div>' : roomView;
+}
+function msgBody(m) {
+  if (m.kind === 'img') return '<img class="cimg" data-blob="' + esc(m.blob) + '" data-n="' + (m.chunks || 0) + '" data-name="' + esc(m.fname || '사진.jpg') + '" alt="사진" data-act="viewImg">';
+  if (m.kind === 'file') return '<button class="fbtn" data-act="openFile" data-arg="' + esc(m.blob + '|' + (m.chunks || 0) + '|' + (m.fname || '파일')) + '">📎 ' + esc(m.fname || '파일') + (m.size ? ' <small>' + Math.max(1, Math.round(m.size / 1024)) + 'KB · 눌러서 받기</small>' : '') + '</button>';
+  return esc(msgText(m));
+}
+// 사진·파일은 서버 보관함(blobs)에 600KB 조각(id_0, id_1 …)으로 들어 있다 — 앱과 같은 형식
+const blobCache = new Map();
+function fetchBlob(id, chunks) {
+  if (blobCache.has(id)) return blobCache.get(id);
+  const n = Math.max(1, chunks || 0); const ids = chunks > 0 ? [...Array(n).keys()].map(i => id + '_' + i) : [id];
+  const pr = Promise.all(ids.map(d => fs.collection('blobs').doc(d).get())).then(docs => {
+    let mime = 'application/octet-stream'; const parts = docs.map(dc => { if (!dc.exists) throw new Error('없음'); mime = dc.get('mime') || mime; const b = atob(dc.get('d')); const u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; });
+    return URL.createObjectURL(new Blob(parts, {type: mime}));
+  });
+  pr.catch(() => blobCache.delete(id)); blobCache.set(id, pr); return pr;
+}
+function loadImages() {
+  if (DEMO) return;
+  document.querySelectorAll('img.cimg:not([src])').forEach(im => { im.src = 'data:image/gif;base64,R0lGODlhAQABAAAAACw='; fetchBlob(im.dataset.blob, Number(im.dataset.n)).then(u => { im.src = u; im.classList.add('ok'); }).catch(() => { im.alt = '사진을 불러오지 못했어요'; im.classList.add('bad'); }); });
+}
+ACT.viewImg = (a, el) => { if (!el.classList.contains('ok')) return; modal('<img src="' + el.src + '" alt="사진" style="width:100%;border-radius:14px"><div class="btns" style="margin-top:10px"><a class="btn tint" style="text-align:center;text-decoration:none" href="' + el.src + '" download="' + esc(el.dataset.name) + '">저장</a><button class="btn" data-act="close">닫기</button></div>'); };
+ACT.openFile = a => {
+  if (DEMO) return toast('데모에서는 파일을 받을 수 없어요.');
+  const [id, ch, name] = a.split('|'); toast('받는 중…');
+  fetchBlob(id, Number(ch)).then(u => { const l = document.createElement('a'); l.href = u; l.download = name; document.body.appendChild(l); l.click(); l.remove(); }).catch(() => toast('파일을 받지 못했어요. 인터넷을 확인해 주세요.'));
+};
+function ensureRoom() {
+  let room = byId('rooms', S.room);
+  if (!room && S.dmDraft && S.dmDraft.id === S.room) { room = S.dmDraft; put('rooms', room); S.dmDraft = null; }
+  return room;
+}
+ACT.attach = () => { const f = $('#fpick'); f.value = ''; f.onchange = () => { if (f.files[0]) sendFile(f.files[0]); }; f.click(); };
+function b64of(u8) { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); }
+function shrinkImage(file) { // 앱과 같이 긴 쪽 1280px, 600KB 이하 JPEG 으로 줄인다
+  return new Promise((ok, no) => {
+    const img = new Image(); img.onload = () => {
+      const k = Math.min(1, 1280 / Math.max(img.width, img.height)); const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(img.src);
+      const go = q => c.toBlob(b => { if (!b) return no(new Error('jpeg')); if (b.size > 600 * 1024 && q > 0.4) return go(q - 0.1); b.arrayBuffer().then(x => ok(new Uint8Array(x))); }, 'image/jpeg', q);
+      go(0.85);
+    }; img.onerror = () => no(new Error('img')); img.src = URL.createObjectURL(file);
+  });
+}
+async function sendFile(file) {
+  if (DEMO) return toast('데모에서는 사진·파일을 보낼 수 없어요.');
+  const isImg = /^image\//.test(file.type) && !/gif|svg/.test(file.type);
+  if (!isImg && file.size > 3 * 1024 * 1024) return toast('파일은 3MB까지 보낼 수 있어요.');
+  const room = ensureRoom(); if (!room) return;
+  toast('보내는 중…');
+  try {
+    const data = isImg ? await shrinkImage(file) : new Uint8Array(await file.arrayBuffer());
+    const d = new Date(), name = isImg ? '사진_' + pad(d.getMonth() + 1) + pad(d.getDate()) + '_' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds()) + '.jpg' : file.name;
+    const mime = isImg ? 'image/jpeg' : (file.type || 'application/octet-stream');
+    const id = String(nextId()), CH = 600 * 1024, n = Math.max(1, Math.ceil(data.length / CH));
+    await Promise.all([...Array(n).keys()].map(i => fs.collection('blobs').doc(id + '_' + i).set({d: b64of(data.subarray(i * CH, (i + 1) * CH)), mime, name, i, n, u: Date.now(), by: S.uid})));
+    const m = create('msgs', {room: room.id, who: S.uid, text: isImg ? '사진' : name, ts: Date.now(), kind: isImg ? 'img' : 'file', blob: id, fname: name, size: data.length, chunks: n});
+    if (room.mem && room.mem.length) m.mem = room.mem.slice();
+    put('msgs', m); render();
+  } catch (e) { toast('보내지 못했어요. 인터넷을 확인해 주세요.'); }
 }
 ACT.room = id => { S.room = Number(id); S.dmDraft = null; render(); };
 ACT.leave = () => { markRead(S.room); S.room = 0; S.dmDraft = null; render(); };
@@ -439,9 +591,7 @@ ACT.dm = uid => {
 };
 ACT.send = () => {
   const inp = $('#msgin'); const text = inp.value.trim(); if (!text) return;
-  let room = byId('rooms', S.room);
-  if (!room && S.dmDraft && S.dmDraft.id === S.room) { room = S.dmDraft; put('rooms', room); S.dmDraft = null; }
-  if (!room) return;
+  const room = ensureRoom(); if (!room) return;
   const m = create('msgs', {room: room.id, who: S.uid, text, ts: Date.now()});
   if (room.mem && room.mem.length) m.mem = room.mem.slice();
   put('msgs', m); inp.value = ''; render(); setTimeout(() => { const i = $('#msgin'); if (i) i.focus(); }, 0);
@@ -476,7 +626,7 @@ function viewMerchants() {
       const n = mNums(m), t = termsShort(m);
       return '<div class="card" data-act="merchant" data-arg="' + m.id + '"><div class="row"><div class="grow"><div class="t1">' + esc(m.name) + '</div><div class="t2">' + esc([m.bizno, n.phone || n.mobile, m.van].filter(Boolean).join(' · ') || '연락처 없음') + '</div>' + (m.addr ? '<div class="t2">' + esc(m.addr) + '</div>' : '') + '</div>' + (t ? '<span class="chip">' + esc(t) + '</span>' : '') + '</div></div>';
     }).join('');
-  return '<h1>가맹점</h1><div class="sub">눌러서 보고' + (canEditMerchant() ? ', 오른쪽 아래 + 로 새로 등록해요.' : '요.') + '</div><input id="mq" data-q="mq" placeholder="🔍 상호·초성·사업자번호·전화 검색" value="' + esc(S.mq) + '">' +
+  return '<h1>가맹점</h1><div class="sub">눌러서 보고' + (canEditMerchant() ? ', 오른쪽 아래 + 로 새로 등록해요.' : '요.') + '</div><input id="mq" data-q="mq" placeholder="🔍 상호·초성·사업자번호·전화" value="' + esc(S.mq) + '">' +
     '<div class="qres" data-for="mq"><div class="sub" style="margin-top:8px;font-weight:700">' + (S.mq.trim() ? '검색 결과 ' : '전체 ') + hits.length + '곳</div>' + rows +
     (hits.length > shown.length ? '<button class="btn full" data-act="mmore">더 보기 (' + (hits.length - shown.length) + '곳 남음)</button>' : '') +
     (!hits.length ? '<div class="empty">' + (S.mq.trim() ? '찾는 가맹점이 없어요.' : '등록된 가맹점이 없습니다.') + '</div>' : '') + '</div>';
@@ -508,7 +658,7 @@ ACT.editLog = a => {
     if (t !== logReq(g) || r !== logRes(g)) { g.editedBy = S.uid; g.editedAt = nowStr(); }
     g.date = d; g.kind = $('#f_k').value; g.req = t; g.res = r; g.text = t + (r ? (t ? '\n' : '') + '→ 처리: ' + r : ''); put('mlogs', g); render(); if (mid && byId('merchants', mid)) ACT.merchant(mid); toast('고쳤어요.'); return true;
   }, '저장');
-  const del = $('#f_del'); if (del) del.onclick = () => { if (!confirm('이 기록을 지울까요?')) return; g.deleted = true; put('mlogs', g); closeModal(); render(); if (mid && byId('merchants', mid)) ACT.merchant(mid); };
+  const del = $('#f_del'); if (del) del.onclick = () => askConfirm('이 기록을 지울까요?', '', '지우기', () => { g.deleted = true; put('mlogs', g); render(); if (mid && byId('merchants', mid)) ACT.merchant(mid); }, true);
 };
 ACT.newLog = mid => formModal('응대 기록', '<input id="f_d" type="date" value="' + todayStr() + '"><select id="f_k">' + KINDS.map(k => '<option>' + k + '</option>').join('') + '</select><div class="lb">요청사항</div><textarea id="f_m" placeholder="고객이 요청한 내용"></textarea><div class="lb g">처리결과</div><textarea id="f_r" placeholder="어떻게 처리했는지"></textarea>', () => {
   const d = $('#f_d').value, t = $('#f_m').value.trim(), r = $('#f_r').value.trim(); if (!d || (!t && !r)) return warn('날짜와 요청사항(또는 처리결과)을 적어 주세요.');
@@ -576,8 +726,7 @@ ACT.newMerchant = () => needLock(() => { formModal('가맹점 등록', merchantF
 ACT.delMerchant = id => needLock(() => {
   const m = byId('merchants', id); if (!m) return;
   const c = list('mlogs').filter(g => g.merchant === m.id).length;
-  if (!confirm('‘' + m.name + '’ 가맹점을 삭제할까요?\n목록에서만 지워지고, 응대 기록 ' + c + '건과 서버의 기록은 그대로 남아요. (앱의 가맹점 보호·복원에서 되살릴 수 있어요)')) return;
-  m.deleted = true; put('merchants', m); closeModal(); render(); toast('삭제했어요.');
+  askConfirm('‘' + m.name + '’ 가맹점을 삭제할까요?', '목록에서만 지워지고, 응대 기록 ' + c + '건과 서버의 기록은 그대로 남아요. (앱의 가맹점 보호·복원에서 되살릴 수 있어요)', '삭제', () => { m.deleted = true; put('merchants', m); render(); toast('삭제했어요.'); }, true);
 });
 ACT.editMerchant = id => needLock(() => { formModal('가맹점 정보 수정', merchantForm(byId('merchants', id)), () => {
   if (!$('#f_n').value.trim()) return warn('상호를 입력해 주세요.');
@@ -592,7 +741,7 @@ function viewAllLogs() {
       (hits.length > 20 ? '<div class="sub">더 있어요. 검색어를 더 적어 주세요.</div>' : '') + (hits.length ? '' : '<div class="empty">찾는 가맹점이 없어요. (상호·초성·사업자번호로 찾아요)</div>');
   }
   const ls = list('mlogs').filter(g => kmatch(logAll(g), q)).sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.created || '').localeCompare(a.created || ''));
-  return '<h1>가맹점 응대 기록</h1><div class="sub">상호·초성·사업자번호로 가맹점을 찾아 눌러서 기록을 보고·추가·수정해요.</div><input id="lmq" data-q="lmq" placeholder="🔍 가맹점 찾기 — 상호·초성·사업자번호" value="' + esc(S.lmq) + '"><div class="qres" data-for="lmq">' + found + '</div>' +
+  return '<h1>가맹점 응대 기록</h1><div class="sub">상호·초성·사업자번호로 가맹점을 찾아 눌러서 기록을 보고·추가·수정해요.</div><input id="lmq" data-q="lmq" placeholder="🔍 상호·초성·사업자번호" value="' + esc(S.lmq) + '"><div class="qres" data-for="lmq">' + found + '</div>' +
     '<h2>최근 기록</h2><input id="lq" data-q="lq" placeholder="가맹점·내용 검색 (초성 가능)" value="' + esc(q) + '"><div class="qres" data-for="lq"><div class="sub" style="margin-top:8px;font-weight:700">기록 ' + ls.length + '건 · 눌러서 수정</div>' +
     ls.slice(0, 100).map(g => logCard(g, 'editLog|' + g.id + '|' + g.merchant).replace('<span class="chip">' + esc(logKind(g.kind)) + '</span>', '<span class="chip">' + esc(logKind(g.kind)) + '</span> <b>' + esc(g.mname) + '</b>')).join('') + (ls.length > 100 ? '<div class="sub">최근 100건만 보여요.</div>' : '') + (ls.length ? '' : '<div class="empty">기록이 없어요.</div>') + '</div>';
 }
@@ -645,8 +794,8 @@ function viewStock() {
     list('stock').forEach(r => { if (r.status !== '재고') return; const c = costOf(r.id); if (!c || !c.buy) noPrice += r.qty || 1; else sum += c.buy * (r.qty || 1); });
     asset = '<div class="card flat"><div class="sub" style="margin:0">보유 재고 자산 (입고 단가 합계)</div><div class="t1" style="font-size:22px;margin-top:2px">' + wonFmt(sum) + '</div>' + (noPrice ? '<div class="sub" style="color:var(--amber)">단가 미입력 ' + noPrice + '대는 빠져 있어요.</div>' : '') + '</div>';
   }
-  return '<h1>재고</h1><div class="sub">장비를 직접 입력해 관리해요. 계약에서 장비를 고르면 ‘출고중’이 되고, 설치 완료하면 재고에서 빠집니다.</div>' + asset +
-    '<div class="row" style="gap:8px"><input id="sq" data-q="sq" placeholder="🔍 모델명·시리얼 검색 (초성도, 스캐너로 찍어도 돼요)" value="' + esc(S.sq || '') + '" autocomplete="off"><button class="btn tint" data-act="scanInto" data-arg="sq" style="flex:none" aria-label="카메라로 바코드 찍기">📷 바코드</button></div>' +
+  return '<h1>재고</h1><div class="sub">장비를 직접 입력해 관리해요. 계약에서 장비를 고르면 ‘출고중’이 되고, 설치 완료하면 재고에서 빠집니다. 검색칸에 바코드 스캐너로 찍으면 그 장비가 바로 열려요.</div>' + asset +
+    '<div class="row" style="gap:8px"><input id="sq" data-q="sq" placeholder="🔍 모델명·시리얼 (초성)" value="' + esc(S.sq || '') + '" autocomplete="off"><button class="btn tint" data-act="scanInto" data-arg="sq" style="flex:none" aria-label="카메라로 바코드 찍기">📷 바코드</button></div>' +
     '<div class="qres" data-for="sq">' + stockGroups() + '</div>';
 }
 function stockGroups() {
@@ -700,11 +849,12 @@ ACT.editStock = id => {
     if (canPerf()) { const b2 = numOf($('#f_b').value), s2 = numOf($('#f_s').value); const cd = costOf(r.id) || (b2 || s2 ? costDoc(r.id) : null); if (cd) { cd.buy = b2; cd.sell = s2; put('costs', cd); } }
     render(); toast('저장했어요.'); return true;
   }, '저장');
-  $('#f_del').onclick = () => { if (!confirm((r.model || '') + ' ' + (r.serial || '') + '\n목록에서 지울까요?')) return; r.deleted = true; put('stock', r); closeModal(); render(); toast('삭제했어요.'); };
+  $('#f_del').onclick = () => askConfirm('이 재고를 지울까요?', (r.model || '') + ' ' + (r.serial || '') + '\n목록에서 지워집니다.', '지우기', () => { r.deleted = true; put('stock', r); render(); toast('삭제했어요.'); }, true);
 };
 
 // ---------- 가맹점 고르기 · 장비 고르기 (팝업 안에서 쓰는 조각) ----------
-const MP_HTML = '<div class="lb">가맹점</div><div id="mpSel" class="sub">아직 고르지 않았어요. 아래에서 찾아 눌러 주세요.</div><input id="mpq" placeholder="🔍 가맹점 찾기 — 상호·초성·사업자번호" autocomplete="off"><div id="mpl" class="picks"></div>';
+const MP_FILL = '<div class="lb">가맹점 조회 (선택 · 고르면 거래처·전화·주소가 자동으로 채워져요)</div><div id="mpSel" class="sub" style="display:none"></div><input id="mpq" placeholder="🔍 상호·초성·사업자번호" autocomplete="off"><div id="mpl" class="picks"></div>';
+const MP_HTML = '<div class="lb">가맹점</div><div id="mpSel" class="sub">아직 고르지 않았어요. 아래에서 찾아 눌러 주세요.</div><input id="mpq" placeholder="🔍 상호·초성·사업자번호" autocomplete="off"><div id="mpl" class="picks"></div>';
 function wireMerchantPicker(onPick) {
   const q = $('#mpq'), l = $('#mpl');
   const fill = () => { // 검색칸은 그대로 두고 목록만 바꾼다 → 한글을 치는 중에도 바로 걸러진다
@@ -713,9 +863,9 @@ function wireMerchantPicker(onPick) {
     l.innerHTML = hits.map(m => { const n = mNums(m); return '<button type="button" class="pick" data-id="' + m.id + '"><b>' + esc(m.name) + '</b><span>' + esc([m.bizno, n.phone || n.mobile].filter(Boolean).join(' · ')) + '</span></button>'; }).join('') || '<div class="sub">찾는 가맹점이 없어요.</div>';
   };
   q.addEventListener('input', fill);
-  l.onclick = ev => { const p = ev.target.closest('.pick'); if (!p) return; const m = byId('merchants', p.dataset.id); const s = $('#mpSel'); s.className = 'picked'; s.innerHTML = '✔ <b>' + esc(m.name) + '</b>' + (m.bizno ? ' · ' + esc(m.bizno) : ''); q.value = ''; l.innerHTML = ''; onPick(m); };
+  l.onclick = ev => { const p = ev.target.closest('.pick'); if (!p) return; const m = byId('merchants', p.dataset.id); const s = $('#mpSel'); s.className = 'picked'; s.style.display = ''; s.innerHTML = '✔ <b>' + esc(m.name) + '</b>' + (m.bizno ? ' · ' + esc(m.bizno) : ''); q.value = ''; l.innerHTML = ''; onPick(m); };
 }
-const EQ_HTML = '<div class="lb">나가는 장비</div><div id="eqSel"></div><div class="row" style="gap:8px"><input id="eqq" placeholder="재고에서 찾기 — 모델명·시리얼 (스캐너로 찍어도 돼요)" autocomplete="off"><button type="button" class="btn tint" id="eqcam" style="flex:none" aria-label="카메라로 바코드 찍기">📷</button></div><div id="eqList" class="picks"></div>' +
+const EQ_HTML = '<div class="lb">나가는 장비</div><div id="eqSel"></div><div class="row" style="gap:8px"><input id="eqq" placeholder="재고에서 찾기 (모델·시리얼)" autocomplete="off"><button type="button" class="btn tint" id="eqcam" style="flex:none" aria-label="카메라로 바코드 찍기">📷</button></div><div id="eqList" class="picks"></div>' +
   '<details class="direct"><summary>재고에 없는 장비 직접 입력</summary><input id="eqm" placeholder="모델명"><input id="eqs" placeholder="시리얼 (선택)"><button type="button" class="btn full" id="eqadd">장비 추가</button></details>';
 function wireEquipPicker(sel) {
   const q = $('#eqq'), L = $('#eqList'), box = $('#eqSel');
@@ -788,11 +938,14 @@ ACT.contract = id => {
     '<div class="btns" style="margin-top:12px"><button class="btn tint" data-act="contractEquip" data-arg="' + c.id + '">장비 추가</button>' + (c.installed ? '' : '<button class="btn gold" data-act="contractDone" data-arg="' + c.id + '">설치 완료</button>') + '<button class="btn" data-act="close">닫기</button></div>');
 };
 ACT.contractDone = id => {
-  const c = byId('contracts', id); if (!c || !confirm('설치 완료로 처리할까요?\n나간 장비가 재고에서 빠집니다.')) return;
+  const c = byId('contracts', id); if (!c) return;
+  askConfirm('설치 완료로 처리할까요?', '나간 장비가 재고에서 빠집니다.', '설치 완료', () => contractDone(c));
+};
+function contractDone(c) {
   c.installed = true; c.installedAt = todayStr();
   (c.equip || []).forEach(e => { const r = byId('stock', e.sid); if (r) { r.status = '설치완료'; put('stock', r); } });
-  put('contracts', c); closeModal(); render(); toast('설치 완료로 처리했어요.');
-};
+  put('contracts', c); render(); toast('설치 완료로 처리했어요.');
+}
 ACT.contractEquip = id => {
   const c = byId('contracts', id); if (!c) return; const sel = [];
   formModal('장비 추가 — ' + c.client, EQ_HTML, () => { if (!sel.length) return warn('추가할 장비를 골라 주세요.'); addEquip(c, sel); render(); setTimeout(() => ACT.contract(id), 0); toast('장비를 추가했어요.'); return true; }, '추가');
@@ -863,14 +1016,14 @@ ACT.newDeposit = () => {
 // ---------- 공지 ----------
 function viewNotices() {
   const ns = list('notices').sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b.t || '').localeCompare(a.t || ''));
-  return '<h1>공지사항</h1>' + (ns.length ? ns.map(n => '<div class="card" data-act="notice" data-arg="' + n.id + '"><div class="t1">' + (n.pinned ? '📌 ' : '') + esc(n.title) + (!(n.readBy || []).includes(S.uid) ? ' <span class="badge">새 글</span>' : '') + '</div><div class="t2">' + esc(uname(n.author) + ' · ' + (n.t || '')) + '</div></div>').join('') : '<div class="empty">공지가 없습니다.</div>');
+  return '<h1>공지사항</h1>' + (can('notice_write') ? '' : '<div class="sub">공지 작성은 권한이 있는 사람만 할 수 있어요.</div>') + (ns.length ? ns.map(n => '<div class="card" data-act="notice" data-arg="' + n.id + '"><div class="t1">' + (n.pinned ? '📌 ' : '') + esc(n.title) + (!(n.readBy || []).includes(S.uid) ? ' <span class="badge">새 글</span>' : '') + '</div><div class="t2">' + esc(uname(n.author) + ' · ' + (n.t || '')) + '</div></div>').join('') : '<div class="empty">공지가 없습니다.</div>');
 }
 ACT.notice = id => {
   const n = byId('notices', id); if (!n) return;
   if (!(n.readBy = n.readBy || []).includes(S.uid)) { n.readBy.push(S.uid); put('notices', n); render(); }
   modal('<h3>' + esc(n.title) + '</h3><div class="sub">' + esc(uname(n.author) + ' · ' + (n.t || '')) + '</div><div style="white-space:pre-wrap;margin:12px 0">' + esc(n.body) + '</div><button class="btn full" data-act="close">닫기</button>');
 };
-ACT.newNotice = () => formModal('공지 작성', '<input id="f_t1" placeholder="제목 (필수)"><textarea id="f_m" placeholder="내용"></textarea><label class="chk"><input type="checkbox" id="f_pin"><span>맨 위에 고정</span></label>', () => {
+ACT.newNotice = () => formModal('공지 작성', '<label class="fl" for="f_t1">제목 (필수)</label><input id="f_t1" placeholder="제목"><label class="fl" for="f_m">내용</label><textarea id="f_m" placeholder="내용"></textarea><label class="chk"><input type="checkbox" id="f_pin"><span>맨 위에 고정</span></label>', () => {
   const t = $('#f_t1').value.trim(); if (!t) return warn('제목을 입력해 주세요.');
   put('notices', create('notices', {title: t, body: $('#f_m').value.trim(), pinned: $('#f_pin').checked, author: S.uid, t: nowStr(), readBy: [S.uid]})); render(); toast('공지를 올렸어요.'); return true;
 }, '올리기');
@@ -904,7 +1057,11 @@ function menuItems() {
     if (lk) add('관리자', '가맹점 수정 암호 끄기', '가맹점 수정 암호 끄기 잠금 해제', 'act:mlockOff');
     add('관리자', '직원과 권한', '직원 권한 등록 사용 중지 관리자');
   }
-  add('계정', '내 프로필 (사진·상태 메시지)', '프로필 사진 상태 메시지 내 정보'); add('계정', '로그아웃', '로그아웃 나가기', 'act:logout');
+  add('계정', '내 프로필 (사진·상태 메시지)', '프로필 사진 상태 메시지 내 정보');
+  const np = 'Notification' in window ? Notification.permission : 'none';
+  add('계정', '알림 받기 (이 기기)', '알림 푸시 소리 새 업무 채팅', 'act:notifyOn', np === 'granted' ? '켜짐' : np === 'none' ? '소리만' : '꺼짐');
+  add('계정', '알림 소리', '알림 소리 진동 끄기 켜기', 'act:soundToggle', soundOn() ? '켜짐' : '꺼짐');
+  add('계정', '로그아웃', '로그아웃 나가기', 'act:logout');
   return it;
 }
 function menuRow(e) {
@@ -917,13 +1074,15 @@ function viewMenu(wide) {
   const q = (S.allQ || '').trim(); const items = menuItems();
   const secs = q ? ['바로가기', '계정', '회사', '일', '관리자'] : ['계정', '회사', '일', '관리자']; // 같은 이름은 한 묶음으로 (앱과 같은 순서)
   const html = secs.map(sec => {
-    const rows = items.filter(e => e.sec === sec && kmatch(e.label + ' ' + e.words, q));
+    const rows = items.filter(e => e.sec === sec && (e.go || q) && kmatch(e.label + ' ' + e.words, q));
     if (sec === '계정' && !q) rows.push({label: '앱으로 설치하기', go: 'act:installApp'});
     return rows.length ? '<div class="msec"><h2>' + sec + '</h2>' + rows.map(e => e.label === '앱으로 설치하기' ? '<button class="mi inst" data-act="installApp" style="display:none"><span>' + (wide ? 'PC에 설치하기' : '앱으로 설치하기') + '</span><em>›</em></button>' : menuRow(e)).join('') + '</div>' : '';
   }).join('');
+  const appOnly = q ? [] : items.filter(e => !e.go);
+  const appSec = appOnly.length ? '<details class="msec appsec"><summary>아직 안드로이드 앱에서만 되는 기능 (' + appOnly.length + '개)</summary>' + appOnly.map(menuRow).join('') + '</details>' : '';
   const search = '<input id="aq" data-q="allQ" placeholder="🔍  기능 검색 (예: 재고, ㅈㄱ, 문자, 수익)" value="' + esc(S.allQ || '') + '">';
-  const note = '<div class="sub" style="margin-top:18px">‘앱에서’ 표시가 있는 기능은 아직 안드로이드 앱에서만 쓸 수 있어요. 웹에도 차례로 넣고 있어요.</div><div class="sub" style="text-align:center;margin:14px 0 30px">나인패밀리 ' + VERSION + '</div>';
-  if (wide) return '<div class="mhead2"><h1>전체 메뉴</h1>' + search + '</div><div class="qres mgrid" data-for="allQ">' + (html || '<div class="empty">찾는 기능이 없어요.</div>') + '</div>' + note;
+  const note = (wide ? '' : appSec) + '<div class="sub" style="margin-top:18px">‘앱에서’ 표시가 있는 기능은 아직 안드로이드 앱에서만 쓸 수 있어요. 웹에도 차례로 넣고 있어요.</div><div class="sub" style="text-align:center;margin:14px 0 30px">나인패밀리 ' + VERSION + '</div>';
+  if (wide) return '<div class="mhead2"><h1>전체 메뉴</h1>' + search + '</div><div class="qres mgrid" data-for="allQ">' + (html || '<div class="empty">찾는 기능이 없어요.</div>') + '</div>' + appSec + note;
   return '<h1>전체</h1><div class="card row prof" data-act="appOnly" data-arg="내 프로필"><div class="tile big">' + esc((S.me.name || '?').slice(0, 1)) + '</div><div class="grow"><div class="t1">' + esc(S.me.name) + '</div><div class="t2">' + (can('staff_manage') ? '관리자' : '직원') + '</div><div class="t2" style="font-size:11px">프로필 사진·상태 메시지는 앱에서 바꿔요</div></div></div>' +
     search + '<div class="qres" data-for="allQ">' + (html || '<div class="empty">찾는 기능이 없어요.</div>') + '</div>' + note;
 }
@@ -931,7 +1090,7 @@ ACT.appOnly = lb => toast('‘' + lb + '’은(는) 아직 안드로이드 앱�
 ACT.back = () => { S.sub = ''; render(); };
 ACT.menu = () => { S.menu = !S.menu; render(); };
 ACT.home = () => { S.tab = 'task'; S.sub = ''; S.room = 0; S.menu = false; render(); };
-ACT.logout = () => { if (confirm('로그아웃할까요?')) logout(); };
+ACT.logout = () => askConfirm('로그아웃할까요?', '', '로그아웃', logout);
 
 // ---------- PC 홈 (오늘 현황) ----------
 function viewHome() {
@@ -953,6 +1112,7 @@ function viewHome() {
 
 // ---------- 사용설명서 · 버전 내역 (웹) ----------
 const WEB_CHANGES = [
+  ['웹 0.0.5', '2026-10-24', ['뒤로가기: 폰 뒤로가기·브라우저 뒤로 버튼이 앱처럼 한 단계씩 닫아요(팝업 → 대화방 → 메뉴 → 하위 화면 → 첫 화면, 첫 화면에서 한 번 더 누르면 나가요)', '빨라짐: 한 번 받은 자료를 기기에 보관해서 다음부터 바로 열리고, 인터넷이 약해도 보여요', '알림: 웹앱을 열어 둔 동안 새 업무·채팅·공지가 오면 소리·진동·안내, PC는 다른 창을 보고 있어도 브라우저 알림(전체 → 알림 받기), 탭 제목에 안 본 개수', '채팅: 사진 보기·저장, 파일 받기, 사진·파일 보내기(+ 버튼, 파일 3MB까지), PC와 아이폰 웹앱끼리 읽음 표시 맞춤', '업무 지시·일정 추가: 모든 칸에 이름표, 가맹점 조회로 거래처·전화·주소 자동 채우기', '일정: 공휴일 빨간색·이름 표시, 토요일 파란색, 오늘 버튼', '전체 메뉴: 아직 앱에서만 되는 기능은 맨 아래에 접어 두기, PC 주 메뉴에 프로젝트', '확인 창을 웹앱 모양으로, 팝업 안 안내가 버튼을 가리지 않게, 채팅 보내기 버튼·말풍선 줄바꿈 고침, 권한이 없을 때 안내']],
   ['웹 0.0.4', '2026-10-24', ['재고: 모델별 재고·출고중 수량, 안전재고 부족 표시, 재고 추가(시리얼 여러 개 한 번에)·수정·삭제, 입고·출고 단가와 보유 재고 자산(실적 권한자)', '바코드: PC는 USB·블루투스 스캐너로 찍으면 바로 입력·검색, 아이폰·휴대폰은 📷 버튼으로 카메라 스캔', '계약 관리: 만료 3개월 이내 계약 따로 보기(D-day), 계약 정보·나간 장비, 장비 추가, 설치 완료(장비가 재고에서 빠짐)', '신규 계약 올리기: 가맹점 찾기(상호·초성·사업자번호), 결제 연동(VAN/PG), 판매·CMS·렌탈과 금액, 재고에서 장비 고르기·스캔·직접 입력, 만료일 +12/24/36개월', '입금 확인: 입금 올리기·확인 처리, ‘입금확인’ 채팅방에 자동 알림', '안드로이드 앱과 같은 서버 자료라 어느 쪽에서 해도 바로 서로 보여요']],
   ['웹 0.0.3', '2026-10-24', ['화면 구성: 아이폰(휴대폰)은 안드로이드 앱과 같은 화면 — 아래 탭 업무·프로젝트·채팅·일정·전체, 나머지 기능은 전체 탭 안에', 'PC: 위쪽 가로줄에 주 메뉴(업무·채팅·일정·가맹점·응대 기록), 왼쪽 위 ☰ 를 누르면 계정·회사·일·관리자로 묶인 전체 메뉴, 왼쪽 위 나인패밀리를 누르면 홈(오늘 현황)', '가맹점 검색 고침: 한글을 치는 중에도 바로 걸러지고, 상호·초성(ㅅㅇㅍ)·사업자번호(- 없이도) 모두 찾아요. 가맹점 목록·응대 기록·채팅·메뉴 검색 모두 같아요', '가맹점: 목록과 PC 표에 전화·휴대폰·VAN사·계약이 보이고, 예전에 한 칸에 넣은 휴대폰 번호는 휴대폰번호 칸으로 이어받아요', '가맹점 삭제: ‘가맹점 등록·수정’ 권한과 암호가 있어야 해요 (목록에서만 사라지고 기록은 남아요)', '전체 메뉴에 사용설명서·버전 내역 추가, 아직 앱에서만 되는 기능은 ‘앱에서’ 로 표시']],
   ['웹 0.0.2', '2026-10-24', ['가맹점 항목 추가(전화·휴대폰·이메일·VAN사·계약구분과 금액), 모든 칸에 이름표', '가맹점 등록·수정 권한과 수정 암호(관리자가 설정)', '한글 검색 입력 끊김 고침, ☰ 전체 메뉴']],
@@ -967,25 +1127,31 @@ const WEB_MANUAL = [
   ['화면 구성', '휴대폰: 안드로이드 앱과 같아요. 아래 탭 업무·프로젝트·채팅·일정·전체, 나머지 기능은 전체 탭에 있어요.\nPC: 위쪽 가로줄이 주 메뉴(업무·채팅·일정·가맹점·응대 기록)예요. 왼쪽 위 ☰ 를 누르면 계정·회사·일·관리자로 묶인 전체 메뉴가 펼쳐지고, ‘나인패밀리’를 누르면 홈(오늘 현황)으로 가요.\n안드로이드 앱·아이폰·PC 는 같은 서버를 써서 바로 서로 반영돼요.'],
   ['업무', '오른쪽 아래 + 로 업무를 지시해요. 업무를 눌러 진행 시작·보류·완료를 바꾸고, 완료할 때는 처리 결과를 한 줄 남겨요.'],
   ['프로젝트', '+ 로 만들고 체크리스트를 채우면 진행률이 자동으로 올라가요.'],
-  ['채팅', '직원을 눌러 1:1 대화, ‘새 그룹 채팅방’으로 단체방을 만들어요. (사진·파일 보내기는 아직 앱에서만)'],
-  ['일정', '달력에서 날짜를 누르면 그날 일정과 기한이 있는 업무가 보여요.'],
+  ['채팅', '직원을 눌러 1:1 대화, ‘새 그룹 채팅방’으로 단체방을 만들어요.\n입력줄 왼쪽 + 로 사진·파일을 보내요(사진은 자동으로 줄여서, 파일은 3MB까지). 사진을 누르면 크게 보고 저장할 수 있어요.\n읽음 표시는 PC와 아이폰 웹앱끼리 맞춰져요. (안드로이드 앱과는 아직 따로예요)'],
+  ['알림', '웹앱을 열어 둔 동안 새 업무·채팅·공지가 오면 소리와 안내로 알려요. PC는 전체(☰) → 알림 받기를 누르고 허용하면 다른 창을 보고 있어도 알림이 떠요. 소리는 전체 → 알림 소리로 끄고 켜요.\n웹앱을 닫았거나 화면이 꺼져 있을 때 오는 알림은 아직 안 돼요(서버 연동 후 가능).'],
+  ['뒤로가기', '폰 뒤로가기나 브라우저 뒤로 버튼을 누르면 팝업 → 대화방 → 메뉴 → 하위 화면 → 첫 화면 순서로 닫혀요. 첫 화면에서 한 번 더 누르면 나가요.'],
+  ['일정', '달력에서 날짜를 누르면 그날 일정과 기한이 있는 업무가 보여요. 일요일·공휴일은 빨간색(공휴일 이름도 보여요), 토요일은 파란색이에요. ‘오늘’로 이번 달에 돌아와요.\n일정 추가는 관리자만 할 수 있어요. 업무에 기한 날짜를 넣으면 달력에 같이 표시돼요.'],
   ['가맹점', '검색칸에 상호, 초성(예: ㅅㅇㅍ), 사업자번호(- 없이도), 전화번호를 치면 바로 걸러져요.\n등록·수정·삭제는 ‘가맹점 등록·수정’ 권한이 있어야 하고, 관리자가 수정 암호를 정해 두면 관리자도 암호를 넣어야 해요(한 번 넣으면 5분 동안은 다시 묻지 않아요).\n계약구분이 임대면 ‘월 CMS 금액’, 판매면 ‘판매 금액’을 적어요.'],
   ['재고', '전체 → 재고. + 로 추가할 때 시리얼을 한 줄에 하나씩 적거나 스캐너로 계속 찍으면 여러 대가 한 번에 들어가요. 시리얼이 없는 물품은 수량만 적어요.\n검색칸에 시리얼을 스캐너로 찍으면 그 장비가 바로 열려요. 휴대폰은 📷 바코드 버튼으로 카메라를 써요(처음에 카메라 권한을 허용해 주세요).\n입고·출고 단가와 재고 자산은 실적 권한이 있는 사람만 보여요.'],
   ['계약 · 입금', '신규 계약 올리기: 가맹점을 찾아 고르고, 구분(판매·CMS·렌탈)과 금액, 나가는 장비(재고에서 고르기·스캔·직접 입력), 계약일과 만료일을 넣어요. 고른 장비는 ‘출고중’이 돼요.\n계약 관리에서 계약을 눌러 장비를 더 넣거나 ‘설치 완료’를 누르면 장비가 재고에서 빠져요. 만료 3개월 이내 계약은 위에 따로 보여요. 실적 권한이 없으면 내가 올린 계약만 보여요.\n입금 확인: + 로 입금을 올리면 ‘입금확인’ 채팅방에 알림이 가고, 확인한 사람이 ‘확인 처리’를 눌러요.'],
   ['가맹점 응대 기록', '가맹점을 찾아 눌러서 요청사항·처리결과를 남기고 고쳐요. 누가 언제 고쳤는지 남아요.'],
   ['공지사항', '전체(☰) → 공지사항. 읽지 않은 공지는 숫자로 표시돼요.'],
-  ['아직 앱에서만 되는 기능', '단체 문자, 실적·수익, 보고, 자료실, 비상연락망, 직원과 권한, 백업, 가맹점 일괄 가져오기 등은 메뉴에 ‘앱에서’ 로 표시돼요. 웹에도 차례로 넣고 있어요.']
+  ['아직 앱에서만 되는 기능', '단체 문자, 실적·수익, 보고, 자료실, 비상연락망, 직원과 권한, 백업, 가맹점 일괄 가져오기 등은 전체 메뉴 맨 아래 ‘아직 안드로이드 앱에서만 되는 기능’에 접혀 있어요. 웹에도 차례로 넣고 있어요.']
 ];
 function viewManual() { return '<h1>사용설명서</h1><div class="sub">나인패밀리 ' + VERSION + ' 기준</div>' + WEB_MANUAL.map(([t, b]) => '<div class="card flat"><div class="t1">' + esc(t) + '</div><div class="mtext">' + esc(b) + '</div></div>').join(''); }
 
 // ---------- 팝업 ----------
 function modal(html) {
   closeModal();
-  const d = document.createElement('div'); d.className = 'modal'; d.id = 'modal'; d.innerHTML = '<div class="sheet">' + html + '</div>';
+  const d = document.createElement('div'); d.className = 'modal'; d.id = 'modal'; document.body.classList.add('hasmodal'); d.innerHTML = '<div class="sheet">' + html + '</div>';
   d.onclick = ev => { if (ev.target === d && !d.querySelector('input:not([type=checkbox]),textarea')) closeModal(); const a = ev.target.closest('[data-act]'); if (a && ACT[a.dataset.act]) { ev.stopPropagation(); ACT[a.dataset.act](a.dataset.arg, a, ev); } };
   document.body.appendChild(d);
 }
-function closeModal() { const m = $('#modal'); if (m) m.remove(); }
+function closeModal() { const m = $('#modal'); if (m) m.remove(); document.body.classList.remove('hasmodal'); }
+function askConfirm(title, msg, okLabel, onOk, danger) { // 브라우저 기본 확인창 대신
+  modal('<h3>' + esc(title) + '</h3>' + (msg ? '<div class="sub" style="white-space:pre-wrap;color:var(--ink);font-size:14px;margin:8px 0">' + esc(msg) + '</div>' : '') + '<div class="btns" style="margin-top:12px"><button class="btn" data-act="close">취소</button><button class="btn ' + (danger ? 'red' : 'gold') + '" id="c_ok">' + esc(okLabel) + '</button></div>');
+  $('#c_ok').onclick = () => { closeModal(); onOk(); };
+}
 ACT.close = closeModal;
 let rej = false;
 function warn(s) { rej = true; toast(s); return false; }
@@ -1029,6 +1195,7 @@ function demoSeed() {
 }
 if (DEMO) { demoSeed(); render(); } else {
   firebase.initializeApp(CFG); auth = firebase.auth(); fs = firebase.firestore(); auth.languageCode = 'ko';
+  fs.enablePersistence({synchronizeTabs: true}).catch(() => {}); // 한 번 받은 자료는 기기에 보관 → 다음부터 바로 열리고, 인터넷이 약해도 보인다
   loginView('phone');
   auth.onAuthStateChanged(u => { if (u && !S.uid) afterLogin(u); });
 }

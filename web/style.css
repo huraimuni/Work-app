@@ -174,3 +174,20 @@ details.direct summary{cursor:pointer;color:var(--deep);font-weight:700;padding:
 .scanbox{position:relative;width:min(78vw,340px);height:min(40vw,170px);border:3px solid var(--gold);border-radius:16px;box-shadow:0 0 0 2000px rgba(0,0,0,.45)}
 .scanmsg{position:relative;color:#fff;margin-top:18px;font-size:15px}
 .scanov .btn{position:absolute;bottom:calc(30px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);min-width:140px}
+/* ---- 웹 0.0.5: 사용성 다듬기 ---- */
+.send .plus{background:var(--field);font-size:22px;padding:0 14px;color:var(--deep)}
+.send button{white-space:nowrap;flex:none}
+.send input{flex:1;min-width:0}
+.m>div{max-width:78%;min-width:0}
+.bub{max-width:100%}
+.bub.pic{padding:4px;background:transparent}
+.m.me .bub.pic{background:transparent}
+.cimg{display:block;max-width:240px;width:100%;min-height:80px;border-radius:14px;background:#ece8dc;cursor:zoom-in}
+.cimg.ok{min-height:0}
+.cimg.bad{min-height:0;padding:10px;font-size:13px;color:var(--gray)}
+.fbtn{border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;padding:0}
+.fbtn small{display:block;font-size:11px;opacity:.75;margin-top:2px}
+body.hasmodal #toast{bottom:auto;top:calc(16px + env(safe-area-inset-top))}
+.cal td.sat div{color:#2b5bd7}
+details.appsec{margin-top:18px}
+details.appsec summary{cursor:pointer;font-size:15px;font-weight:700;color:var(--gray);padding:10px 0;border-bottom:2px solid #e3e5e9}
